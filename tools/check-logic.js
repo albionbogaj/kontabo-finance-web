@@ -1209,6 +1209,12 @@ apiBlock.then(async () => {
   // memo: view() and its arrays stay the same objects between ticks that bring nothing new
   { const v1 = A.view(); await A.ledgerTick(); const v2 = A.view(); A.setState(s => ({ db: { ...s.db, notifRead: { x: 1 } } })); const v3 = A.view();
     eq([v1 === v2, v3 === v1, v3.movements === v1.movements, v3.payments === v1.payments, v3.posReceipts === v1.posReceipts, A.mvIndex(v3) === A.mvIndex(v1)], [true, false, true, true, true, true], 'view(): memoised on the book and the ledger version — derived arrays (and the movement index) survive unrelated book changes'); }
+  // every page and the drawer of every derived document render in ledger mode (summary documents included)
+  { const errs = []; for (const n of A.NAV) for (const pg of n.items) { A.state.admin = false; A.state.section = n.id; A.state.page = pg; try { A.renderVals(); } catch (e) { errs.push(n.id + '/' + pg + ': ' + e.message); } }
+    for (const r of A.view().posReceipts.filter(x => x._srv)) { try { A.openDr('pos', r.id); A.drawerVals(); A.renderVals(); } catch (e) { errs.push('drawer ' + r.id + ': ' + e.message); } }
+    for (const p of A.view().payments.filter(x => x._srv)) { try { A.state.section = 'finance'; A.state.page = 'Pagesa'; const t = A.pageTable('Pagesa'); const rw = t.rows.find(x => JSON.stringify(x.cells).includes(p.no)); if (rw && rw.open) rw.open(); A.drawerVals(); A.renderVals(); } catch (e) { errs.push('payment ' + p.no + ': ' + e.message); } }
+    A.state.dr = null; A.state.drawer = null; A.state.section = 'dashboard'; A.state.page = 'Paneli';
+    eq(errs, [], 'ledger mode: every page, the drawer of every derived document and its payments render without throwing'); }
   // validation helpers and the stock count see the ledger's movements
   { const lim = A.prodOf(A.state.db, 'LIM'); eq([A.unitLocked(A.state.db, lim), A.unitLocked(A.view(), lim)], [false, true], 'unitLocked: LIM has no book movement, but the ledger sold it');
     A.state.toast = null; eq([A.updateProduct('LIM', { unit: 'kg' }), /Njësia nuk ndryshohet/.test(A.state.toast || '')], [false, true], 'updateProduct: the unit of a product the tills sold is locked (view)');

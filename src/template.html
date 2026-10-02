@@ -2594,15 +2594,15 @@ class Component extends DCLogic {
       this._ledger={...cur,...meta,rows:rows||cur.rows,shifts:shifts||cur.shifts,loaded:true,ver:cur.ver+(changed||flip?1:0)}; this.setState(s=>({ledgerTick:(s.ledgerTick||0)+1})); }
     const rt=this._posRt||{}; this.posRt({lastSyncSrv:this.stamp(),cursorSrv:since,...(rt.lastError?{lastError:''}:{})},!rt.lastError);
     return true; }
-  // memoised per (book object, ledger generation/version, the four array lengths); the concatenated arrays are reused while their parts are
+  // memoised per (book object, ledger generation/version, the four book arrays and their lengths); the concatenated arrays are reused while their parts are
   // the same, so the movement index and every render stay cached between ticks that bring nothing new
   view(b){ b=b||this.state.db; if(!this.ledgerLive(b)) return b; const L=this._ledger, len=a=>(a||[]).length;
     const key=L.gen+':'+L.ver+':'+len(b.movements)+':'+len(b.payments)+':'+len(b.posReceipts)+':'+len(b.posShifts);
-    const W=this._vw||(this._vw=new WeakMap()), hit=W.get(b); if(hit&&hit.key===key) return hit.out;
+    const W=this._vw||(this._vw=new WeakMap()), hit=W.get(b); if(hit&&hit.key===key&&hit.mv===b.movements&&hit.pay===b.payments&&hit.rec===b.posReceipts&&hit.sh===b.posShifts) return hit.out;
     const D=this.ledgerDerived(b), C=this._vwCat||(this._vwCat={});
     const cat=(k,a,x,first)=>{ const c=C[k], n=len(a); if(c&&c.a===a&&c.n===n&&c.x===x) return c.out; const out=first?x.concat(a||[]):(a||[]).concat(x); C[k]={a,n,x,out}; return out; };
     const out={...b,posReceipts:cat('rec',b.posReceipts,D.docs,true),posShifts:cat('sh',b.posShifts,D.shifts,true),movements:cat('mv',b.movements,D.moves,false),payments:cat('pay',b.payments,D.pays,true)};
-    W.set(b,{key,out}); return out; }
+    W.set(b,{key,out,mv:b.movements,pay:b.payments,rec:b.posReceipts,sh:b.posShifts}); return out; }
   // the derived halves, memoised per (ledger generation/version, the book's accounts and warehouses — payment accounts and a move without
   // a warehouse fall back to them)
   ledgerDerived(b){ const L=this._ledger, acc=b.accounts, wh=b.warehouses, x=this._ledDer; if(x&&x.gen===L.gen&&x.ver===L.ver&&x.acc===acc&&x.wh===wh) return x.out;
