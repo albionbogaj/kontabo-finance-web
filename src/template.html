@@ -518,6 +518,9 @@ input,select{font-family:inherit}
         </sc-if>
       </div>
     </header>
+    <sc-if value="{{ posLedgerBanner }}" hint-placeholder-val="{{ false }}">
+      <div style="margin:12px 28px 0;padding:10px 14px;border-radius:10px;background:rgba(217,119,6,.10);border:1px solid rgba(217,119,6,.25);color:#B45309;font-size:13px;font-weight:600">{{ posLedgerBanner }}</div>
+    </sc-if>
 
     <div style="flex:1;overflow-y:auto;padding:24px 28px 40px">
 
@@ -1915,9 +1918,14 @@ class Component extends DCLogic {
       invoiceSettings:{...x.invoiceSettings,footer:'Faleminderit për besimin.'},taxSettings:x.taxSettings,notifPrefs:x.notifPrefs,posSettings:{...x.posSettings,receiptPrinter:''},
       emailSettings:{...x.emailSettings,fromName:t.name||'',fromEmail:'',replyTo:'',ccAccountant:false},integrations:[],notifRead:{},
       subscription:{plan:t.plan||'trial',cycle:'m',users:1,nextBilling:'',since:this.fmtDate(this.today()),status:'Aktiv',card:'',cardExp:''},
-      posSync:x.posSync,admin:{plans:x.admin.plans,flags:x.admin.flags,tenants:[],platformInvoices:[],agents:[],admins:[],settings:x.admin.settings,audit:[]}};
+      posSync:x.posSync,admin:{plans:x.admin.plans,flags:x.admin.flags,tenants:[],platformInvoices:[],agents:[],admins:[],settings:x.admin.settings,audit:[]},
+      posLedgerV:1}; // a new company never had POS rows in its book: it starts on the server-side POS ledger (no migration)
   }
-  resetDemo(){ if(this.apiAuthed()){ const seed=this.seedEmpty({name:this.apiCfg().tenantName}); this._pending=[]; this.apiFetch('/state',{method:'PUT',body:{state:seed,baseVersion:this.apiCfg().version}}).then(r=>{ this.saveApi({version:r.version}); this.setState(s=>({db:{...s.db,...seed},drawer:null,dr:null,frm:null})); this.logAudit('Librat e kompanisë u zbrazën (server, v'+r.version+')'); this.toast('Librat e kompanisë u zbrazën (në server)','#8FA3B8'); }).catch(e=>this.toast('Zbrazja dështoi: '+e.message,'#B91C1C')); return; } try{ localStorage.removeItem(this.KEY); localStorage.removeItem('kontabo.finance.v1'); }catch(e){} this.setState({db:this.seedDb(),saved:false,drawer:null,dr:null,frm:null,m:{...this.state.m,sel:{},result:null,xlRows:null,xlText:'',xlName:'',xlError:''}}); this.toast('Të dhënat demo u rivendosën','#8FA3B8'); }
+  // "Zbraz librat": in API mode the books are replaced on the server (PUT /state); with the POS ledger the owner also empties the server-side
+  // POS book (POST /pos/ledger/reset → new epoch) and this page fetches it again from 0
+  resetDemo(){ if(this.apiAuthed()){ const seed=this.seedEmpty({name:this.apiCfg().tenantName}); this._pending=[]; this.apiFetch('/state',{method:'PUT',body:{state:seed,baseVersion:this.apiCfg().version}}).then(async r=>{ this.saveApi({version:r.version}); this.setState(s=>({db:this.bookMerge(s.db,seed),drawer:null,dr:null,frm:null})); this.logAudit('Librat e kompanisë u zbrazën (server, v'+r.version+')');
+      let led=''; if(this.ledgerOn()&&this.state.session&&this.state.session.role==='Pronar'){ try{ await this.apiFetch('/pos/ledger/reset',{method:'POST',timeout:30000}); led=' · libri i POS-it u zbraz'; }catch(e){ led=' · libri i POS-it NUK u zbraz: '+e.message; } this._ledger=this.ledgerFresh(this.apiCfg().tenantId); this.setState(s=>({ledgerTick:(s.ledgerTick||0)+1})); this.ledgerTick(); }
+      this.toast('Librat e kompanisë u zbrazën (në server)'+led,'#8FA3B8'); }).catch(e=>this.toast('Zbrazja dështoi: '+e.message,'#B91C1C')); return; } try{ localStorage.removeItem(this.KEY); localStorage.removeItem('kontabo.finance.v1'); }catch(e){} this.setState({db:this.seedDb(),saved:false,drawer:null,dr:null,frm:null,m:{...this.state.m,sel:{},result:null,xlRows:null,xlText:'',xlName:'',xlError:''}}); this.toast('Të dhënat demo u rivendosën','#8FA3B8'); }
   // Applies a change to db, persists it and re-renders. `patch` may be a function of the current db.
   commit(patch,toast,color){ const cur=this.state.db; const p=typeof patch==='function'?patch(cur):patch; const next={...cur,...p}; this.setState({db:next}); if(this.apiAuthed()) this.apiCommit(p); else this.persist(next); if(toast) this.toast(toast,color); return next; }
 
@@ -1989,7 +1997,7 @@ class Component extends DCLogic {
   // moving-average cost: opening + all inbound movements (purchases, adjustments, returns) so far — opening stock keeps its original valuation,
   // every inbound movement enters at its own cost; transfers move goods, not value; `_srv` rows (server-frozen POS ledger) never move it
   avgCost(db,sku){ const p=this.prodOf(db,sku); if(!p) return 0; const X=this.mvIndex(db); const q=p.opening+(X.inQ.get(sku)??0), v=p.opening*(p.openCost_c??p.cost_c)+(X.inV.get(sku)??0); return q>0?Math.round(v/q):p.cost_c; }
-  stockOf(sku,db){ const d=db||this.state.db; const p=this.prodOf(d,sku); if(!p) return 0; return p.opening+(this.mvIndex(d).qty.get(sku)??0); }
+  stockOf(sku,db){ const d=db||this.view(); const p=this.prodOf(d,sku); if(!p) return 0; return p.opening+(this.mvIndex(d).qty.get(sku)??0); }
   /* ───────── units, recipes, the POS flag ───────── */
   // units: combo in the product form; whole-number units vs. 3 decimals (shown on Produkte › Njësitë)
   UNITS = ['copë','m','m²','m³','kg','l','pako','shishe','gotë','thes','kovë'];
@@ -2036,7 +2044,7 @@ class Component extends DCLogic {
   docStatus(doc){ const s=doc.status; if((s==='Lëshuar'||s==='Pranuar'||s==='Pjesërisht')&&this.rem(doc)>0&&this.toIso(doc.due)<this.today()) return 'Vonuar'; return s; }
   // settlement status from the money side: fully returned → Kthyer, settled (paid + credited) → Paguar, something → Pjesërisht, else the issued status
   settleStatus(doc,issued){ const cr=doc.credited||0, ca=doc.creditApplied||0; if(cr>=doc.total&&doc.total>0) return 'Kthyer'; if(doc.paid+ca>=doc.total) return 'Paguar'; if(doc.paid+ca>0) return 'Pjesërisht'; return issued; }
-  accountBalance(id,db){ const d=db||this.state.db; const a=this.accountsOf(d).find(x=>x.id===id); return (a?a.opening_c:0)+d.payments.filter(p=>p.account===id).reduce((s,p)=>s+(p.dir==='in'?p.amount_c:-p.amount_c),0); }
+  accountBalance(id,db){ const d=db||this.view(); const a=this.accountsOf(d).find(x=>x.id===id); return (a?a.opening_c:0)+d.payments.filter(p=>p.account===id).reduce((s,p)=>s+(p.dir==='in'?p.amount_c:-p.amount_c),0); }
 
   /* ───────── operations that connect the modules ───────── */
   // a payment against a sales invoice (in) or a purchase (out): creates the payment, updates paid/status, hits the account
@@ -2093,7 +2101,7 @@ class Component extends DCLogic {
   // stock count / correction: books the difference as an adjustment at the current average cost
   adjustStock({sku,counted_qm,note,date}){
     if(this.isRecipe(this.prodOf(this.state.db,sku))){ this.toast('Produkti është recetë — nuk ka stok të vetin; rregulloni përbërësit.','#B45309'); return; }
-    this.commit(d=>{ const cur=this.stockOf(sku,d); const diff=counted_qm-cur; if(!diff) return {};
+    this.commit(d=>{ const cur=this.stockOf(sku,this.view(d)); const diff=counted_qm-cur; if(!diff) return {}; // counted against what the page shows (book + POS ledger)
       return {movements:[...d.movements,{date,type:'adjust',sku,qm:diff,ref:'INV-'+this.fmtDate(date).replace(/\./g,''),party:'Inventarizim',unit_c:this.avgCost(d,sku),note:note||''}]}; },'Stoku u rregullua');
   }
   addExpense(e){
@@ -2107,10 +2115,10 @@ class Component extends DCLogic {
   // a recipe product is stored with opening 0 and cost 0 (its cost is derived from the ingredients); `pos` (default true) = shown on the tills; `pack` = info only.
   // Both refuse (toast, false) what productError() rejects: recipe rules, a unit change once the unit is locked
   _recipeNorm(p){ const n={...p}; if(!this.isRecipe(n)) delete n.recipe; if(n.pack===null) delete n.pack; return this.isRecipe(n)?{...n,opening:0,openCost_c:0,cost_c:0,cost_t:0}:n; }
-  addProduct(p){ const err=this.productError(this.state.db,p,null); if(err){ this.toast(err,'#B45309'); return false; }
+  addProduct(p){ const err=this.productError(this.view(),p,null); if(err){ this.toast(err,'#B45309'); return false; } // the rules see the POS ledger's movements too (view)
     this.commit(d=>({products:[...d.products,this._recipeNorm({...p,cat:this.canonCat(d,p.cat)})],categories:this.withCategory(d,p.cat)}),'Produkti “'+p.name+'” u shtua'); return true; }
   // edit of the master data (price/cost stay NET cents; sku is the key of every movement, so it is never changed here); recipe:null / [] removes the recipe
-  updateProduct(sku,patch){ const cur=this.prodOf(this.state.db,sku); if(cur){ const err=this.productError(this.state.db,{...cur,...patch},cur,patch); if(err){ this.toast(err,'#B45309'); return false; } }
+  updateProduct(sku,patch){ const V=this.view(), cur=this.prodOf(V,sku); if(cur){ const err=this.productError(V,{...cur,...patch},cur,patch); if(err){ this.toast(err,'#B45309'); return false; } }
     this.commit(d=>{ const q=patch.cat!==undefined?{...patch,cat:this.canonCat(d,patch.cat)}:patch; return {products:d.products.map(p=>p.sku===sku?this._recipeNorm({...p,...q}):p),categories:this.withCategory(d,patch.cat)}; },'Produkti u përditësua'); return true; }
   /* ───────── categories: a managed list (db.categories = [{id,name,note}]) seeded from the distinct product categories ───────── */
   get CATEGORIES(){ return (this.state.db&&this.state.db.categories)||[]; }
@@ -2149,7 +2157,7 @@ class Component extends DCLogic {
   mainWh(db){ const d=db||this.state.db; const w=(d.warehouses||[]).find(x=>x.main)||(d.warehouses||[])[0]; return w?w.id:'W1'; }
   whName(id,db){ const d=db||this.state.db; const w=(d.warehouses||[]).find(x=>x.id===(id||this.mainWh(d))); return w?w.name:(id||'—'); }
   // stock of one product in one warehouse: opening stock sits in the main warehouse
-  stockOfWh(sku,wh,db){ const d=db||this.state.db; const p=this.prodOf(d,sku); if(!p) return 0; const main=this.mainWh(d), W=this.mvIndex(d).wh, g=k=>W.get(sku+'\u0001'+k)??0; return wh===main?p.opening+g(main)+g(''):(wh?g(wh):0); } // a movement without `wh` sits in the main warehouse
+  stockOfWh(sku,wh,db){ const d=db||this.view(); const p=this.prodOf(d,sku); if(!p) return 0; const main=this.mainWh(d), W=this.mvIndex(d).wh, g=k=>W.get(sku+'\u0001'+k)??0; return wh===main?p.opening+g(main)+g(''):(wh?g(wh):0); } // a movement without `wh` sits in the main warehouse
   transferStock({from,to,items,date,note}){
     const no=this.nextNo('TR')(1);
     this.commit(d=>{ const dt=this.fmtDate(date), movements=[...d.movements];
@@ -2344,16 +2352,18 @@ class Component extends DCLogic {
   apiAuthed(){ return this.apiOn()&&!!this.apiCfg().accessToken&&!(this.state.session&&this.state.session.noTenant); }
   apiSignedIn(){ return this.apiOn()&&!!this.apiCfg().accessToken; }
   apiStatus(status,err){ const c=this.apiCfg(); if(c.status!==status||c.lastError!==(err||'')){ this._api={...c,status,lastError:err||''}; this.setState({apiTick:(this.state.apiTick||0)+1}); } }
+  // every call says it is the ledger-aware ERP (X-Kontabo-Client: 2 — the server ignores an old build's catalogue PUT once the POS ledger is on);
+  // opts.timeout = ms before the call is abandoned (default 8 s; the POS ledger calls use 30 s)
   async apiFetch(path,opts={},retry=true){
-    const cfg=this.apiCfg(), ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),8000);
+    const cfg=this.apiCfg(), ms=opts.timeout||8000, ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),ms);
     try{
-      const r=await fetch(cfg.url.replace(/\/$/,'')+path,{method:opts.method||'GET',body:opts.body===undefined?undefined:JSON.stringify(opts.body),signal:ctl.signal,headers:{'Content-Type':'application/json',...(cfg.accessToken&&!opts.noAuth?{Authorization:'Bearer '+cfg.accessToken}:{})}});
+      const r=await fetch(cfg.url.replace(/\/$/,'')+path,{method:opts.method||'GET',body:opts.body===undefined?undefined:JSON.stringify(opts.body),signal:ctl.signal,headers:{'Content-Type':'application/json','X-Kontabo-Client':'2',...(cfg.accessToken&&!opts.noAuth?{Authorization:'Bearer '+cfg.accessToken}:{})}});
       const j=await r.json().catch(()=>({}));
       if(r.status===401&&retry&&cfg.refreshToken&&!opts.noAuth){ if(await this.apiRefresh()) return this.apiFetch(path,opts,false); }
       if(!r.ok){ const e=new Error(j.message||j.error||('HTTP '+r.status)); e.status=r.status; e.code=j.error; e.data=j; throw e; }
       this.apiStatus('online',''); return j;
     }catch(e){
-      if(e.name==='AbortError'){ const x=new Error('Serveri nuk u përgjigj (8 s)'); x.status=0; this.apiStatus('offline',x.message); throw x; }
+      if(e.name==='AbortError'){ const x=new Error('Serveri nuk u përgjigj ('+Math.round(ms/1000)+' s)'); x.status=0; this.apiStatus('offline',x.message); throw x; }
       if(!e.status){ this.apiStatus('offline','Nuk u lidh dot me '+cfg.url); } throw e;
     }finally{ clearTimeout(t); }
   }
@@ -2366,20 +2376,32 @@ class Component extends DCLogic {
   async apiLoadAll(sess){
     let pend=[]; try{ pend=JSON.parse(localStorage.getItem(this.PENDING_KEY)||'[]'); }catch(e){}
     const sg=this._signupSeed||{}; this._signupSeed=null; // one-shot: NUI/city typed at sign-up, used only if this first load has to seed
+    // the POS ledger (server-side POS book) only when the server says so — otherwise everything below behaves as before
+    const feat=await this.apiFetch('/health',{noAuth:true},false).then(h=>Array.isArray(h&&h.features)&&h.features.includes('posLedger:1')).catch(()=>false);
     const st=await this.apiFetch('/state'); let state=st.state, version=st.version||0;
     if(!state){ const cfg=this.apiCfg(); const seed=this.seedEmpty({name:cfg.tenantName,nui:sg.nui||'',city:sg.city||'',plan:cfg.tenantPlan||(cfg.tenants.find(t=>t.id===cfg.tenantId)||{}).plan}); const r=await this.apiFetch('/state',{method:'PUT',body:{state:seed,baseVersion:0}}); state=seed; version=r.version; }
-    const x=this.seedEmpty({name:this.apiCfg().tenantName}); for(const k in x) if(state[k]===undefined&&!this.SERVER_KEYS.includes(k)) state[k]=x[k];
+    // missing sections come from the empty seed — never the POS-ledger markers (a book without posLedgerV still has to be migrated)
+    const x=this.seedEmpty({name:this.apiCfg().tenantName}); for(const k in x) if(state[k]===undefined&&!this.SERVER_KEYS.includes(k)&&!this.LEDGER_KEYS.includes(k)) state[k]=x[k];
     const m=await this.apiLoadMirrors();
     const needsTaxMig=state.taxV!==2;
     const db=this.migrateCats(this.migrateTax({...state,...m,...this.apiSessionExtras(sess)}));
+    this._ledger=feat?this.ledgerFresh(this.apiCfg().tenantId):null; if(feat) this.posRtLoad();
     this.saveApi({version}); this.setState({db,saved:false});
     if(needsTaxMig) this.apiCommit({products:db.products,taxSettings:db.taxSettings,taxV:2}); // persist the ATK letter migration on the server
     if(db.categories!==state.categories) this.apiCommit({categories:db.categories}); // persist the category list the first time (or whenever a product carried an unknown category)
-    if(pend.length){ this._pending=pend; this.toast(pend.length+' ndryshime të pa-dërguara nga sesioni i kaluar po ridërgohen','#B45309'); this.apiFlush(); }
+    // a book on the POS ledger never takes POS rows again: an unsent patch from an older session that carries receipts/shifts is dropped
+    let dropped=0; if(pend.length&&state.posLedgerV===1){ const keep=pend.filter(p=>!(p&&('posReceipts' in p||'posShifts' in p))); dropped=pend.length-keep.length; if(dropped){ pend=keep; try{ localStorage.setItem(this.PENDING_KEY,JSON.stringify(pend)); }catch(e){} } }
+    const dropMsg=dropped?dropped+(dropped===1?' ndryshim me kuponë POS u hodh':' ndryshime me kuponë POS u hodhën')+' (libri i POS-it mbahet në server)':'';
+    if(pend.length){ this._pending=pend; this.toast(pend.length+' ndryshime të pa-dërguara nga sesioni i kaluar po ridërgohen'+(dropMsg?' · '+dropMsg:''),'#B45309'); this.apiFlush(); }
+    else if(dropMsg) this.toast(dropMsg.charAt(0).toUpperCase()+dropMsg.slice(1),'#B45309');
     return db;
   }
-  async apiReloadState(){ const st=await this.apiFetch('/state'); const m=await this.apiLoadMirrors(); this.saveApi({version:st.version||0}); const raw=st.state||{}; const mig=this.migrateCats(raw.taxV===2?raw:this.migrateTax({...raw,taxV:undefined})); this.setState(s=>({db:{...s.db,...mig,...m}}));
-    if(mig.categories!==raw.categories) this.apiCommit({categories:mig.categories}); } // same as apiLoadAll: a product with an unknown category → the appended record is persisted, not only shown
+  async apiReloadState(){ const st=await this.apiFetch('/state'); const m=await this.apiLoadMirrors(); this.saveApi({version:st.version||0}); const raw=st.state||{}; const mig=this.migrateCats(raw.taxV===2?raw:this.migrateTax({...raw,taxV:undefined})); this.setState(s=>({db:this.bookMerge(s.db,mig,m)}));
+    if(mig.categories!==raw.categories) this.apiCommit({categories:mig.categories}); // same as apiLoadAll: a product with an unknown category → the appended record is persisted, not only shown
+    this.posLedgerAfterLoad(); }
+  // a reload replaces the book with the server's; the POS-ledger markers always follow the server (a discarded local migration must never
+  // leave posLedgerV on top of an unmigrated book — that would count its POS rows twice)
+  bookMerge(cur,srv,m){ const out={...(cur||{}),...(srv||{}),...(m||{})}; for(const k of this.LEDGER_KEYS) if(!(k in (srv||{}))) delete out[k]; return out; }
   // commits: the patch is applied locally first, then sent in order; 409 → the server state wins and is reloaded; offline → pending + retry
   apiCommit(patch){
     const p={}; for(const k in patch) if(!this.SERVER_KEYS.includes(k)) p[k]=patch[k]; if(!Object.keys(p).length) return;
@@ -2392,7 +2414,7 @@ class Component extends DCLogic {
       while((this._pending||[]).length){ const p=this._pending[0], cfg=this.apiCfg();
         try{ const r=await this.apiFetch('/state/commit',{method:'POST',body:{baseVersion:cfg.version,patch:p}}); this.saveApi({version:r.version}); this._pending=this._pending.slice(1); }
         catch(e){
-          if(e.status===409){ const n=this._pending.length; this._pending=[]; this.saveApi({version:(e.data||{}).version||cfg.version}); const m=await this.apiLoadMirrors().catch(()=>null); if(e.data&&e.data.state) this.setState(s=>({db:{...s.db,...e.data.state,...(m||{})}})); else await this.apiReloadState().catch(()=>{}); this.toast('Të dhënat u ndryshuan nga një përdorues tjetër — u ringarkuan nga serveri; '+n+' ndryshim(e) lokale u hodhën. Përsërisni veprimin.','#B91C1C'); }
+          if(e.status===409){ const n=this._pending.length; this._pending=[]; this.saveApi({version:(e.data||{}).version||cfg.version}); const m=await this.apiLoadMirrors().catch(()=>null); if(e.data&&e.data.state){ this.setState(s=>({db:this.bookMerge(s.db,e.data.state,m)})); this.posLedgerAfterLoad(); } else await this.apiReloadState().catch(()=>{}); this.toast('Të dhënat u ndryshuan nga një përdorues tjetër — u ringarkuan nga serveri; '+n+' ndryshim(e) lokale u hodhën. Përsërisni veprimin.','#B91C1C'); }
           else if(e.status>=400&&e.status<500){ this._pending=this._pending.slice(1); this.toast('Serveri refuzoi ndryshimin: '+e.message,'#B91C1C'); }
           else { clearTimeout(this._retryT); this._retryT=setTimeout(()=>this.apiFlush(),15000); break; }
         }
@@ -2402,6 +2424,7 @@ class Component extends DCLogic {
   }
   apiSessionFrom(j,remember){ return {userId:'',globalId:j.user.id,name:j.user.name,email:j.user.email,role:j.tenant.role,branch:j.tenant.branch||'',perms:j.tenant.perms||{},isPlatformAdmin:!!j.user.isPlatformAdmin,at:this.stamp(),remember:!!remember,api:true}; }
   async apiEnter(j,remember,greet){
+    this.ledgerReset(); // a new session / company: the POS ledger is fetched again from 0 (memory only)
     if(!j.tenant){ // platform admin (or a user whose memberships are all invited/suspended): no company books on the server
       this.saveApi({accessToken:j.accessToken||this.apiCfg().accessToken,refreshToken:j.refreshToken||this.apiCfg().refreshToken,tenantId:'',tenantName:'',tenantPlan:'',tenantSince:'',trialEndsAt:'',tenants:j.tenants||[],remember:!!remember,status:'online',lastError:''});
       const isAdmin=!!(j.user&&j.user.isPlatformAdmin);
@@ -2418,7 +2441,7 @@ class Component extends DCLogic {
     this.saveApi({accessToken:j.accessToken||this.apiCfg().accessToken,refreshToken:j.refreshToken||this.apiCfg().refreshToken,tenantId:j.tenant.id,tenantName:j.tenant.name,tenantPlan:j.tenant.plan||'',tenantSince:j.tenant.createdAt||'',trialEndsAt:j.tenant.trialEndsAt||'',tenants:j.tenants||[],remember:!!remember,status:'online',lastError:''});
     const sess=this.apiSessionFrom(j,remember); this.saveSession(sess,!!remember); try{ localStorage.setItem('kontabo.finance.lastEmail',j.user.email); }catch(e){}
     this.setState({session:sess,login:{...this.state.login,pw:'',err:'',busy:false,view:'login'},modal:null,cmdk:false,drawer:null,dr:null,frm:null,...(greet?{admin:false,section:'dashboard',page:'Paneli'}:{})}); // a resumed session keeps the page from the URL hash
-    try{ const db=await this.apiLoadAll(sess); const me=db.users.find(u=>u.email.toLowerCase()===j.user.email.toLowerCase()); if(me){ const s2={...sess,userId:me.id}; this.saveSession(s2,!!remember); this.setState({session:s2}); } if(greet) this.toast('Mirë se erdhe, '+j.user.name.split(' ')[0]+' · '+j.tenant.name,'#22C55E'); }
+    try{ const db=await this.apiLoadAll(sess); const me=db.users.find(u=>u.email.toLowerCase()===j.user.email.toLowerCase()); if(me){ const s2={...sess,userId:me.id}; this.saveSession(s2,!!remember); this.setState({session:s2}); } if(greet) this.toast('Mirë se erdhe, '+j.user.name.split(' ')[0]+' · '+j.tenant.name,'#22C55E'); this.posLedgerStart(); }
     catch(e){ this.setState({session:null,login:{...this.state.login,busy:false,err:'Hyrja u krye, por librat nuk u ngarkuan: '+e.message}}); }
   }
   async apiLogin(email,pw,remember){
@@ -2446,8 +2469,8 @@ class Component extends DCLogic {
     try{ const me=await this.apiFetch('/auth/me'); await this.apiEnter({...me,accessToken:cfg.accessToken,refreshToken:cfg.refreshToken},cfg.remember,false); return true; }
     catch(e){ if(e.status===401||e.status===403){ this.saveApi({accessToken:'',refreshToken:''}); this.setL({busy:false,err:e.status===403?e.message:''}); } else { this.setL({busy:false,err:'Serveri nuk u arrit: '+e.message+' — provoni sërish ose kaloni në modalitet lokal.'}); } return false; }
   }
-  async apiLogout(){ const cfg=this.apiCfg(); try{ if(cfg.refreshToken) await this.apiFetch('/auth/logout',{method:'POST',body:{refreshToken:cfg.refreshToken}}); }catch(e){} this.saveApi({accessToken:'',refreshToken:'',version:0}); this._pending=[]; try{ localStorage.removeItem(this.PENDING_KEY); }catch(e){} }
-  async apiSwitchTenant(tenantId){ try{ const j=await this.apiFetch('/auth/switch-tenant',{method:'POST',body:{tenantId}}); this._pending=[]; await this.apiEnter(j,this.apiCfg().remember,true); }catch(e){ this.toast('Ndërrimi i kompanisë dështoi: '+e.message,'#B91C1C'); } }
+  async apiLogout(){ this.ledgerReset(); const cfg=this.apiCfg(); try{ if(cfg.refreshToken) await this.apiFetch('/auth/logout',{method:'POST',body:{refreshToken:cfg.refreshToken}}); }catch(e){} this.saveApi({accessToken:'',refreshToken:'',version:0}); this._pending=[]; try{ localStorage.removeItem(this.PENDING_KEY); }catch(e){} }
+  async apiSwitchTenant(tenantId){ try{ const j=await this.apiFetch('/auth/switch-tenant',{method:'POST',body:{tenantId}}); this._pending=[]; this.ledgerReset(); await this.apiEnter(j,this.apiCfg().remember,true); }catch(e){ this.toast('Ndërrimi i kompanisë dështoi: '+e.message,'#B91C1C'); } }
   // served by the deployment's Nginx (ERP + /api/v1 on the same origin) → connect to it automatically, no URL typing
   async apiAutoDetect(){
     try{ if(this._apiProbed||this.apiOn()||!/^https?:$/.test(location.protocol)) return; this._apiProbed=true; const base=location.origin+'/api/v1';
@@ -2464,7 +2487,9 @@ class Component extends DCLogic {
   // (no apiFiscal: the web performs no fiscal writes — PUT /fiscal/mode and PUT /fiscal/settings are gone by design)
 
   /* ───────── POS sync: the desktop POS (Python) serves a local API on 127.0.0.1; the ERP page is its client ───────── */
-  posCfg(){ return {url:'http://127.0.0.1:8899',token:'kontabo-local',auto:true,interval:'15',cursor:0,lastSync:'',lastPush:'',lastError:'',status:'unknown',health:null,catalogHash:'',...(this.state.db.posSync||{})}; }
+  // with the POS ledger the runtime fields (cursorSrv, lastSyncSrv, unsyncedSrv, catalogHashSrv, catalogVersionSrv, lastPush, lastError) live in
+  // this._posRt (memory + per-company localStorage) — never in the book; db.posSync keeps only the settings
+  posCfg(){ return {url:'http://127.0.0.1:8899',token:'kontabo-local',auto:true,interval:'15',cursor:0,lastSync:'',lastPush:'',lastError:'',status:'unknown',health:null,catalogHash:'',...(this.state.db.posSync||{}),...(this.ledgerOn()&&this._posRt?this._posRt:{})}; }
   async posFetch(path,opts={}){
     const cfg=this.posCfg(), ctl=new AbortController(), t=setTimeout(()=>ctl.abort(),4000);
     try{ const r=await fetch(cfg.url.replace(/\/$/,'')+path,{...opts,signal:ctl.signal,headers:{'Content-Type':'application/json','Authorization':'Bearer '+cfg.token}}); const j=await r.json().catch(()=>({})); if(!r.ok) throw new Error(j.error||('HTTP '+r.status)); return j; }
@@ -2474,7 +2499,7 @@ class Component extends DCLogic {
   async posHealth(){ const cur=this.posCfg(); try{ const h=await this.posFetch('/health'); this._posSeen=this.stamp(); if(cur.status!=='online'||cur.lastError||JSON.stringify(cur.health)!==JSON.stringify(h)) this.setIn('posSync',{status:'online',health:h,lastError:''}); return h; }catch(e){ const msg=e.name==='AbortError'?'timeout (4 s)':String(e.message||e); if(cur.status!=='offline'||cur.lastError!==msg) this.setIn('posSync',{status:'offline',health:null,lastError:msg}); return null; } }
   // what the POS needs from the ERP: catalogue with live stock, customers, company header, POS rules, operators.
   // NO fiscal block: fiscalization is configured only on each till — the catalog never steers a POS's fiscal mode.
-  posCatalogPayload(){ const d=this.state.db; const br=(d.branches||[]).find(b=>b.main)||(d.branches||[])[0]||{}; return {
+  posCatalogPayload(){ const d=this.view(); const br=(d.branches||[]).find(b=>b.main)||(d.branches||[])[0]||{}; return {
     // price_c = net cents (unchanged contract), price_t = the same net price in ten-thousandths (4 decimals, ATK SEF neni 26)
     // gross_t = the gross shelf price the till prints, verbatim (grossT: the typed 4-decimal gross, else derived from price_t at the effective rate)
     // only products shown on the tills (p.pos!==false); a recipe product's stock = what its ingredients allow (per warehouse); recipe / pack never leave the ERP
@@ -2514,6 +2539,7 @@ class Component extends DCLogic {
   }
   async posSync(manual){
     if(this._syncing) return; if(!this.state.session||this.state.session.noTenant){ if(manual) this.toast('Sinkronizimi i POS-it kërkon hyrjen me një llogari kompanie','#B45309'); return; } this._syncing=true;
+    if(this.apiAuthed()&&this.ledgerOn()){ try{ await this.posSyncLedger(manual); }catch(e){ this.posRt({lastError:String(e.message||e)}); if(manual) this.toast('Sinkronizimi me serverin dështoi: '+(e.message||e),'#B91C1C'); } finally{ this._syncing=false; } return; } // never a commit
     if(this.apiAuthed()){ try{ await this.posSyncServer(manual); }catch(e){ this.setIn('posSync',{lastError:String(e.message||e)}); if(manual) this.toast('Sinkronizimi me serverin dështoi: '+(e.message||e),'#B91C1C'); } finally{ this._syncing=false; } return; }
     try{
       const h=await this.posHealth(); if(!h){ if(manual) this.toast('POS-i nuk u gjet në '+this.posCfg().url+' — nisni run-pos.bat në kompjuterin e arkës','#B45309'); return; }
@@ -2524,6 +2550,160 @@ class Component extends DCLogic {
     }catch(e){ this.setIn('posSync',{lastError:String(e.message||e)}); if(manual) this.toast('Sinkronizimi dështoi: '+(e.message||e),'#B91C1C'); }
     finally{ this._syncing=false; }
   }
+  /* ───────── POS ledger (API mode, server feature "posLedger:1"): the server books every receipt itself (frozen once: costs, accounts,
+     warehouse, recipe consumption) into ledger rows — one per terminal-day, one per receipt with a buyer NUI. This page keeps those rows in
+     memory (this._ledger, fetched from rev 0 on every load) and DERIVES documents, stock movements, payments and shifts from them: view() =
+     the book + the derived rows (`_srv:1`). Reads go through view(); every write path keeps committing the book — nothing derived is ever
+     committed, and the POS tick never commits. ───────── */
+  LEDGER_KEYS = ['posLedgerV','posLegacyNos','posLegacyShifts']; // book markers: on the ledger / receipt nos + shift ids still kept in the book
+  POS_RT_KEYS = ['cursorSrv','lastSyncSrv','unsyncedSrv','catalogHashSrv','catalogVersionSrv','lastPush','lastError'];
+  LEDGER_POLL = 2000; // ms between "is the server's POS book ready?" polls during the migration
+  LEDGER_FS = {fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',failed:'Dështoi'};
+  ledgerFresh(tenantId){ this._ledGen=(this._ledGen||0)+1; return {tenantId:tenantId||'',epoch:null,rev:0,rows:new Map(),shifts:new Map(),ready:false,mode:'off',pending:0,loaded:false,gen:this._ledGen,ver:0}; }
+  ledgerReset(){ this._ledger=null; this._posRt=null; this._ledActivated=''; this._migFail=0; }
+  ledgerOn(){ return !!this._ledger&&this.apiAuthed(); }
+  // the book is shown with the ledger only once it is on the ledger (posLedgerV 1) AND the ledger was loaded this session — never both halves twice
+  ledgerLive(b){ const L=this._ledger; return !!(L&&L.loaded&&b&&b.posLedgerV===1&&this.apiAuthed()); }
+  posPerm(){ const s=this.state.session; return !!s&&(s.role==='Pronar'||!!(s.perms||{}).pos); } // = the server's has_perm('pos')
+  sleep(ms){ return new Promise(r=>setTimeout(r,ms)); }
+  posRtKey(){ return 'kontabo.finance.posrt.'+(this.apiCfg().tenantId||''); }
+  posRtLoad(){ let x={}; try{ x=JSON.parse(localStorage.getItem(this.posRtKey())||'{}')||{}; }catch(e){} const rt={cursorSrv:0,lastSyncSrv:'',unsyncedSrv:0,catalogHashSrv:'',catalogVersionSrv:0,lastPush:'',lastError:''}; for(const k of this.POS_RT_KEYS) if(x[k]!==undefined) rt[k]=x[k]; this._posRt=rt; }
+  posRt(patch,quiet){ this._posRt={...(this._posRt||{}),...patch}; try{ localStorage.setItem(this.posRtKey(),JSON.stringify(this._posRt)); }catch(e){} if(!quiet) this.setState(s=>({posTick:(s.posTick||0)+1})); }
+  // GET /pos/ledger?since=&limit=200 while `more` — single-flight per ledger, dropped when the company changed meanwhile; a new epoch (the server
+  // book was emptied) or a cursor ahead of the server restarts from 0. Resolves true when the ledger in memory is current.
+  ledgerTick(){ const L=this._ledger; if(!L||!this.apiAuthed()) return Promise.resolve(false); if(this._ledgerP&&this._ledgerPG===L.gen) return this._ledgerP;
+    const p=this._ledgerLoad(L).catch(e=>{ if(this._ledger&&this._ledger.gen===L.gen) this.posRt({lastError:'Libri i POS-it: '+(e.message||e)}); return false; }).then(ok=>{ if(this._ledgerP===p) this._ledgerP=null; if(ok) this.posLedgerAfterTick(); return ok; });
+    this._ledgerP=p; this._ledgerPG=L.gen; return p; }
+  async _ledgerLoad(L){
+    const tid=L.tenantId, same=()=>!!this._ledger&&this._ledger.gen===L.gen&&this.apiCfg().tenantId===tid&&this.apiAuthed();
+    let since=L.rev, epoch=L.epoch, rows=null, shifts=null, head=null, restarts=0, changed=false;
+    for(let pages=0;pages<20000;pages++){
+      const pg=await this.apiFetch('/pos/ledger'+this.qs({since,limit:200}),{timeout:30000}); if(!same()) return false;
+      const top=Number(pg.rev)||0;
+      if(since>0&&(pg.epoch!==epoch||top<since)){ if(++restarts>3) throw new Error('epoka ndryshon pa pushim'); since=0; epoch=pg.epoch; rows=new Map(); shifts=new Map(); changed=true; continue; }
+      epoch=pg.epoch; head=pg; const R=pg.rows||[], S=pg.shifts||[];
+      if(R.length||S.length){ if(!rows){ rows=new Map(L.rows); shifts=new Map(L.shifts); } changed=true;
+        for(const r of R){ if(r.removed) rows.delete(r.id); else rows.set(r.id,r); } // a tombstone drops the row
+        for(const s of S){ if(s.removed) shifts.delete(s.id); else shifts.set(s.id,s); } }
+      since=top; if(!pg.more) break; }
+    if(!head||!same()) return false;
+    const cur=this._ledger, meta={epoch,rev:since,ready:!!head.ready,mode:head.mode==='on'?'on':'off',pending:Number(head.pending)||0}, flip=!cur.loaded;
+    if(changed||flip||meta.epoch!==cur.epoch||meta.rev!==cur.rev||meta.ready!==cur.ready||meta.mode!==cur.mode||meta.pending!==cur.pending){
+      this._ledger={...cur,...meta,rows:rows||cur.rows,shifts:shifts||cur.shifts,loaded:true,ver:cur.ver+(changed||flip?1:0)}; this.setState(s=>({ledgerTick:(s.ledgerTick||0)+1})); }
+    const rt=this._posRt||{}; this.posRt({lastSyncSrv:this.stamp(),cursorSrv:since,...(rt.lastError?{lastError:''}:{})},!rt.lastError);
+    return true; }
+  // memoised per (book object, ledger generation/version, the four array lengths); the concatenated arrays are reused while their parts are
+  // the same, so the movement index and every render stay cached between ticks that bring nothing new
+  view(b){ b=b||this.state.db; if(!this.ledgerLive(b)) return b; const L=this._ledger, len=a=>(a||[]).length;
+    const key=L.gen+':'+L.ver+':'+len(b.movements)+':'+len(b.payments)+':'+len(b.posReceipts)+':'+len(b.posShifts);
+    const W=this._vw||(this._vw=new WeakMap()), hit=W.get(b); if(hit&&hit.key===key) return hit.out;
+    const D=this.ledgerDerived(b), C=this._vwCat||(this._vwCat={});
+    const cat=(k,a,x,first)=>{ const c=C[k], n=len(a); if(c&&c.a===a&&c.n===n&&c.x===x) return c.out; const out=first?x.concat(a||[]):(a||[]).concat(x); C[k]={a,n,x,out}; return out; };
+    const out={...b,posReceipts:cat('rec',b.posReceipts,D.docs,true),posShifts:cat('sh',b.posShifts,D.shifts,true),movements:cat('mv',b.movements,D.moves,false),payments:cat('pay',b.payments,D.pays,true)};
+    W.set(b,{key,out}); return out; }
+  // the derived halves, memoised per (ledger generation/version, the book's accounts — payment accounts fall back to them)
+  ledgerDerived(b){ const L=this._ledger, acc=b.accounts, x=this._ledDer; if(x&&x.gen===L.gen&&x.ver===L.ver&&x.acc===acc) return x.out;
+    const rows=[...L.rows.values()].sort((p,q)=>String(q.date||'').localeCompare(String(p.date||''))||String(q.lastTs||'').localeCompare(String(p.lastTs||''))||String(p.id).localeCompare(String(q.id)));
+    const parts=rows.map(r=>this.ledgerRowParts(r,b)), out={docs:parts.map(p=>p.doc),pays:parts.flatMap(p=>p.pays),moves:parts.slice().reverse().flatMap(p=>p.moves),
+      shifts:[...L.shifts.values()].sort((p,q)=>String(q.opened_at||'').localeCompare(String(p.opened_at||''))).map(s=>this.ledgerShift(s))};
+    this._ledDer={gen:L.gen,ver:L.ver,acc,out}; return out; }
+  // fiscal label of a row from its status counts: the worst one wins (failed → pending → other → SIM → fiscalized)
+  ledgerFiscal(f){ const ks=Object.keys(f||{}).filter(k=>Number(f[k])>0); if(!ks.length) return '—'; const rank=k=>k==='failed'?0:k==='pending'?1:k==='fiscalized_sim'?3:k==='fiscalized'?4:2; ks.sort((a,b)=>rank(a)-rank(b)); return this.LEDGER_FS[ks[0]]||ks[0]; }
+  // one ledger row → its document (a day summary or one receipt), its stock movements (docId = row id) and its payments
+  ledgerRowParts(r,b){ const N=v=>Number(v)||0, t=r.terminal||{}, sum=r.kind==='day', T=r.totals||{}, date=this.fmtDate(r.date), posName=t.name||t.posId||'POS', customer=(!sum&&r.customer)||'Klient me shumicë', party=customer+' · '+posName;
+    const items=(r.items||[]).map(i=>({name:i.name,sku:i.sku,unit:i.unit,qty:N(i.qty_q)/10000,qty_q:N(i.qty_q),unit_t:N(i.unit_t),unit_c:this.cOfT(N(i.unit_t)),rate:N(i.rate),tax:i.tax,disc_c:N(i.disc_c),sub:N(i.sub_c),vatc:N(i.vat_c),tot:N(i.tot_c),cost_c:N(i.cost_c),recipe:!!i.recipe}));
+    const doc={id:r.id,kind:'Kupon POS',summary:sum,no:r.no,pos:t.posId||'',posName,branch:t.branch||'',operator:(!sum&&r.operator)||'—',date,time:String(r.lastTs||'').slice(11,16),customer,nui:(!sum&&r.nui)||'—',items,
+      sub:N(T.sub_c),vat:N(T.vat_c),total:N(T.total_c),discount:N(T.discount_c),cash_c:N(T.cash_c),card_c:N(T.card_c),change_c:N(T.change_c),status:r.status||'Finalizuar',fiscal:this.ledgerFiscal(r.fiscal),fiscalRef:(!sum&&r.fiscalRef)||'—',
+      counts:r.counts||{},n:N(r.n),operators:r.operators||{},fiscalOpen:r.fiscalOpen||[],origId:(!sum&&r.origId)||null,origNo:(!sum&&r.origNo)||null,shift:null,_srv:1};
+    const note='POS · '+(sum?'përmbledhje ditore':'kupon'), main=this.mainWh(b);
+    const moves=(r.moves||[]).map(m=>({date,type:m.type||(N(m.qm)<0?'sale':'sale_return'),sku:m.sku,qm:N(m.qm),wh:m.wh||main,ref:r.no,docId:r.id,party,unit_c:N(m.cost_c),via:m.via||null,note,_srv:1}));
+    const A=this.accountsOf(b), base=sum?'POS-'+String(r.date||'').replace(/-/g,'')+'-'+String(t.key||'').slice(0,6):'POS-'+r.no, lbl=sum?'Përmbledhje ditore POS':r.status==='Anulim'?'Anulim POS':r.status==='Kthim'?'Kthim POS':'Kupon POS';
+    const pays=(r.payments||[]).filter(p=>N(p.amount_c)).map(p=>{ const card=p.kind==='card'; let a=A.find(x=>x.id===p.account); if(!a){ const id=card?this.bankAccount(b):this.cashAccountFor(t.posId,b); a=A.find(x=>x.id===id)||{id,type:card?'Bankë':'Arkë'}; } // the frozen account no longer exists → the till's / the bank account of today
+      const amt=N(p.amount_c); return {no:base+(card?'K':''),date,dir:amt>0?'in':'out',kind:'pos',ref:r.no,docId:r.id,party,amount_c:Math.abs(amt),account:a.id,method:a.type,note:lbl+' · '+(card?'kartë':'para'),user:(!sum&&r.operator)||'POS',_srv:1}; });
+    return {doc,moves,pays}; }
+  ledgerShift(s){ const t=s.terminal||{}, N=v=>Number(v)||0; return {id:s.shiftId||s.id,rowId:s.id,pos:t.posId||'',posName:t.name||t.posId||'POS',branch:t.branch||'',operator:s.operator||'—',openedAt:s.opened_at||'',closedAt:s.closed_at||'',opening_c:N(s.opening_c),expected_c:s.expected_c??null,counted_c:s.counted_c??null,diff_c:s.diff_c??null,status:s.status==='open'?'Hapur':'Mbyllur',totals:s.totals||{},_srv:1}; }
+  // after a load: the ledger from 0, then the reconcile (book already on the ledger) or the migration (a user with the POS permission)
+  posLedgerStart(){ if(!this._ledger) return; this.ledgerTick().then(()=>this.posLedgerAfterLoad()).catch(()=>{}); }
+  posLedgerAfterLoad(){ const b=this.state.db; if(!this._ledger||!b||!this.apiAuthed()) return; if(b.posLedgerV===1) this.posLedgerReconcile(); else if(this.posPerm()) this.posLedgerMigrate(); }
+  // after every tick: a book born on the ledger (seedEmpty) switches the server's ledger on once; an unfinished migration is retried
+  posLedgerAfterTick(){ const b=this.state.db, L=this._ledger; if(!b||!L||!L.loaded||!this.apiAuthed()||!this.posPerm()) return;
+    if(b.posLedgerV===1){ if(L.mode==='off'&&this._ledActivated!==L.tenantId){ this._ledActivated=L.tenantId; this.apiFetch('/pos/ledger/activate',{method:'POST',body:{done:true},timeout:30000}).then(()=>this.ledgerTick()).catch(()=>{ this._ledActivated=''; }); } }
+    else if(!this._migrating&&Date.now()-(this._migFail||0)>300000) this.posLedgerMigrate(); }
+  // wait until the server's POS book has processed everything it holds (fresh: a new GET after whatever was in flight)
+  async ledgerWaitReady(ok,fresh){ for(let i=0;i<120;i++){ if(fresh&&!i&&this._ledgerP) await this._ledgerP.catch(()=>false); await this.ledgerTick(); if(!ok()) return false; const L=this._ledger; if(L&&L.loaded&&L.ready) return true; await this.sleep(this.LEDGER_POLL); } return false; }
+  async posFlushed(ok){ for(let i=0;i<600&&((this._pending||[]).length||this._flushing);i++){ await this.sleep(Math.min(this.LEDGER_POLL,250)); if(!ok()) return false; } return !(this._pending||[]).length; }
+  // what the book itself froze for a receipt it had booked: cost per sku (its first stock row), the no-VAT rule, warehouse, cash/card accounts
+  posLedgerEntry(b,r){ const mv=this.mvByRef(b,r.no).filter(m=>m.type==='sale'||m.type==='sale_return'||m.type==='sale_cancel'), costs={};
+    for(const m of mv) if(m.sku&&!(m.sku in costs)) costs[m.sku]=Math.round(Number(m.unit_c)||0);
+    const items=r.items||[], pays=(b.payments||[]).filter(p=>p.kind==='pos'&&p.ref===r.no), card=pays.find(p=>/K$/.test(String(p.no||''))), cash=pays.find(p=>!/K$/.test(String(p.no||'')));
+    return {id:r.id,costs,...(items.length?{noVat:items.every(i=>i.tax==='A'&&!Number(i.vatc))&&!Number(r.vat)}:{}),...(mv.length?{wh:mv[0].wh||this.mainWh(b)}:{}),...(cash?{cash:cash.account}:{}),...(card?{card:card.account}:{})}; }
+  // the one-time move of a book's POS rows to the server's ledger (automatic, a user with the POS permission, after the unsent changes):
+  // ledger ready → which receipts/shifts the server knows → their frozen values from the book (activate) → mode on → ready again → ONE commit
+  // that removes the known receipts with their stock rows, payments, fiscal-queue rows and the known shifts, and marks the book (posLedgerV 1,
+  // posLegacyNos = receipts the server never had, kept in the book). Idempotent; a commit that loses a race (409) runs it again.
+  async posLedgerMigrate(){
+    if(this._migrating||!this._ledger) return false; const tid=this._ledger.tenantId, ok=()=>!!this._ledger&&this._ledger.tenantId===tid&&this.apiCfg().tenantId===tid&&this.apiAuthed();
+    this._migrating=true;
+    try{
+      for(let attempt=0;attempt<3;attempt++){
+        if(!await this.posFlushed(ok)) return false;
+        let b=this.state.db; if(!b||b.posLedgerV===1) return true; if(!this.posPerm()) return false;
+        if(!await this.ledgerWaitReady(ok)) return false;
+        b=this.state.db; if(b.posLedgerV===1) return true;
+        const recs=b.posReceipts||[], shs=b.posShifts||[], ids=recs.map(r=>r.id), sids=shs.map(s=>s.id), known=new Set(), knownSh=new Set();
+        for(let i=0;i<Math.max(ids.length,sids.length);i+=2000){ const j=await this.apiFetch('/pos/receipts/known',{method:'POST',body:{ids:ids.slice(i,i+2000),shiftIds:sids.slice(i,i+2000)},timeout:30000}); if(!ok()) return false; for(const x of j.known||[]) known.add(x); for(const x of j.knownShifts||[]) knownSh.add(x); }
+        const entries=recs.filter(r=>known.has(r.id)).map(r=>this.posLedgerEntry(b,r));
+        for(let i=0;i<entries.length;i+=1000){ await this.apiFetch('/pos/ledger/activate',{method:'POST',body:{receipts:entries.slice(i,i+1000)},timeout:30000}); if(!ok()) return false; }
+        await this.apiFetch('/pos/ledger/activate',{method:'POST',body:{done:true},timeout:30000}); if(!ok()) return false;
+        if(!await this.ledgerWaitReady(ok,true)) return false;
+        let res=null;
+        this.commit(d=>{ if(d.posLedgerV===1) return {};
+          const rs=d.posReceipts||[], gone=rs.filter(r=>known.has(r.id)), keep=rs.filter(r=>!known.has(r.id)), nos=new Set(gone.map(r=>r.no)), T=new Set(['sale','sale_return','sale_cancel']), posShifts=(d.posShifts||[]).filter(s=>!knownSh.has(s.id));
+          res={gone,keep,shifts:(d.posShifts||[]).length-posShifts.length};
+          return {posReceipts:keep,posShifts,movements:(d.movements||[]).filter(m=>!(nos.has(m.ref)&&T.has(m.type))),payments:(d.payments||[]).filter(p=>!(p.kind==='pos'&&nos.has(p.ref))),queue:(d.queue||[]).filter(q=>!nos.has(q.ref)),
+            posLedgerV:1,posLegacyNos:keep.map(r=>r.no),posLegacyShifts:posShifts.map(s=>s.id)}; });
+        if(!res) return true;
+        if(!await this.posFlushed(ok)) return false;
+        if(this.state.db&&this.state.db.posLedgerV===1){ this.posLedgerDone(res); return true; }
+      }
+      return false;
+    }catch(e){ this._migFail=Date.now(); this.toast('Kalimi te libri i ri i POS-it dështoi: '+(e.message||e)+' — provohet sërish më vonë','#B91C1C'); return false; }
+    finally{ this._migrating=false; }
+  }
+  // audit line + a one-time summary: per month, the POS total the old book had vs the server's ledger (receipts that never reached the book now count)
+  posLedgerDone(res){ const L=this._ledger, M=new Map(), add=(ym,k,v)=>{ const x=M.get(ym)||{old:0,now:0}; x[k]+=v; M.set(ym,x); };
+    for(const r of res.gone) add(this.monthOf(r.date),'old',Number(r.total)||0);
+    if(L) for(const r of L.rows.values()) add(String(r.date||'').slice(0,7),'now',Number((r.totals||{}).total_c)||0);
+    const diffs=[...M.entries()].filter(([ym,x])=>/^\d{4}-\d{2}$/.test(ym)&&x.old!==x.now).sort((a,b)=>a[0].localeCompare(b[0])).map(([ym,x])=>this.monthLabel(ym)+': '+this.fmt(x.old)+' → '+this.fmt(x.now)+' ('+(x.now>x.old?'+':'')+this.fmt(x.now-x.old)+')');
+    const sum='Libri i POS-it kaloi në server: '+res.gone.length+' kupona'+(res.shifts?' dhe '+res.shifts+' ndërrime':'')+' u hoqën nga libri i kompanisë'+(res.keep.length?', '+res.keep.length+' kupona që serveri nuk i ka mbetën në libër':'');
+    this._ledgerDiffs=diffs; this.logAudit(sum+(diffs.length?' · diferencat sipas muajve: '+diffs.join('; '):' · totalet përputhen'));
+    if(diffs.length) this.setState({confirm:{title:'Libri i POS-it kaloi në server',body:sum+'. Totalet e POS-it sipas muajve (libri i vjetër → serveri; kuponët që nuk kishin arritur në libër tani numërohen): '+diffs.join(' · '),color:'#2563EB',ok:()=>{}}});
+    else this.toast(sum+' · totalet përputhen','#22C55E'); }
+  // on every load / reload of a book on the ledger: POS rows that are not legacy (posLegacyNos / posLegacyShifts) must not be in the book —
+  // an old build or a replayed patch may have put them back; one commit, only when something is removed
+  posLedgerReconcile(){ const b=this.state.db; if(!b||b.posLedgerV!==1||!this.apiAuthed()) return false;
+    const plan=d=>{ const legacy=new Set(d.posLegacyNos||[]), lsh=new Set(d.posLegacyShifts||[]), out={}, keep=(k,f)=>{ const a=d[k]||[], x=a.filter(f); if(x.length!==a.length) out[k]=x; };
+      const posMv=m=>/^(Kupon POS|Kthim POS|Anulim kuponi POS)/.test(String(m.note||'')), posQ=q=>q.kind==='Kupon POS'||q.kind==='Kthim'||(q.kind==='Anulim'&&!/^ERP\b/.test(String(q.pos||'')));
+      keep('posReceipts',r=>legacy.has(r.no)); keep('posShifts',s=>lsh.has(s.id)); keep('payments',p=>p.kind!=='pos'||legacy.has(p.ref)); keep('movements',m=>!posMv(m)||legacy.has(m.ref)); keep('queue',q=>!posQ(q)||legacy.has(q.ref)); return out; };
+    if(!Object.keys(plan(b)).length) return false;
+    this.commit(d=>d.posLedgerV===1?plan(d):{}); return true; }
+  // the POS sync with the ledger: never a commit, never /pos/sales or /pos/ack. Terminal heartbeats and the catalogue only for the POS permission;
+  // the catalogue (its stock includes the ledger) is PUT only once the ledger has loaded this session and only when its hash changed
+  async posSyncLedger(manual){
+    if(manual) await this.ledgerTick();
+    const L=this._ledger;
+    if(!this.posPerm()){ if(manual) this.toast('Libri i POS-it u rifreskua nga serveri'+(L&&L.loaded?' · rev '+L.rev:''),'#22C55E'); return; }
+    const st=await this.apiFetch('/pos/status').catch(()=>null);
+    if(st){ this.setState(s=>({db:{...s.db,terminals:(s.db.terminals||[]).map(t=>{ const x=(st.terminals||[]).find(y=>y.id===t.id); return x?this.apiTerminalToDb({...t,...x}):t; })}})); if((st.unsyncedReceipts||0)!==(this.posCfg().unsyncedSrv||0)) this.posRt({unsyncedSrv:st.unsyncedReceipts||0}); }
+    const wait=!(L&&L.loaded); let cat=null;
+    if(!wait){ cat=this.posCatalogReady(false); if(cat&&cat.hash!==this.posCfg().catalogHashSrv){ const c=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); this.posRt({catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:c.version||0}); } }
+    this._posSeen=this.stamp();
+    if(manual) this.toast('Sinkronizuar me serverin · libri i POS-it '+(wait?'po ngarkohet':'rev '+L.rev+(L.ready?'':' · '+L.pending+' kupona në përpunim'))+' · '+((st&&st.terminals)||[]).length+' terminale'+(wait||cat?'':' · '+this.CAT_EMPTY),wait||cat?'#22C55E':'#B45309');
+  }
+  // "Dërgo katalogun" (API mode): the runtime fields go to this._posRt with the ledger, to db.posSync without it (as before)
+  async posPushCatalogSrv(manual){ if(this.ledgerOn()&&!this._ledger.loaded){ if(manual) this.toast('Libri i POS-it po ngarkohet nga serveri — katalogu (me stokun) dërgohet pasi të ngarkohet','#B45309'); return null; }
+    const cat=this.posCatalogReady(manual); if(!cat) return null; const r=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); const rt={catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:(r&&r.version)||0};
+    if(this.ledgerOn()) this.posRt(rt); else this.setIn('posSync',rt); return r||{}; }
   // POS receipts become documents of their own (never invoices): stock out at average cost, cash/card into the account of that till,
   // fiscal queue mirrored. Idempotent by receipt id — a re-pull only refreshes status/fiscal fields, never re-posts stock or money.
   // Statuses relayed by the POS: final · return (a return receipt, negative, orig_id → the sale) · returned (the sale it reverses) ·
@@ -2621,15 +2801,16 @@ class Component extends DCLogic {
     this.setState({dr:null,section:'shitje',page:'Fatura',drawer:no});
   }
   // sales documents for reports: issued invoices (not the A4-from-POS copies) + POS receipts (returns negative)
-  salesDocs(db){ const d=db||this.state.db; const inv=d.invoices.filter(r=>r.kind!=='Profaturë'&&r.status!=='Draft'&&r.status!=='Anuluar'&&!r.fromPos).map(r=>({...r,src:'inv'}));
-    const pos=(d.posReceipts||[]).map(r=>({no:r.no,kind:r.status==='Anulim'?'Anulim kuponi POS':'Kupon POS',date:r.date,customer:r.customer,nui:r.nui,sub:r.sub,vat:r.vat,total:r.total,paid:r.total,discount:r.discount||0,items:r.items,status:r.status,fiscal:r.fiscal,src:'pos',id:r.id,ref:r.origNo||undefined}));
+  // `n` = how many receipts a document stands for (a POS-ledger day summary carries many; every other document is 1) — counts sum it
+  salesDocs(db){ const d=db||this.view(); const inv=d.invoices.filter(r=>r.kind!=='Profaturë'&&r.status!=='Draft'&&r.status!=='Anuluar'&&!r.fromPos).map(r=>({...r,src:'inv'}));
+    const pos=(d.posReceipts||[]).map(r=>({no:r.no,kind:r.status==='Anulim'?'Anulim kuponi POS':'Kupon POS',date:r.date,customer:r.customer,nui:r.nui,sub:r.sub,vat:r.vat,total:r.total,paid:r.total,discount:r.discount||0,items:r.items,status:r.status,fiscal:r.fiscal,src:'pos',id:r.id,ref:r.origNo||undefined,n:r._srv?(Number(r.n)||0):1,...(r._srv?{_srv:1,summary:!!r.summary}:{})}));
     // credit notes are negative sales (they reduce revenue, VAT and the totals of every sales report)
     const ret=(d.returns||[]).filter(r=>r.kind==='Kthim shitje'&&r.status!=='Anuluar').map(r=>({no:r.no,kind:'Notë krediti',date:r.date,due:r.date,customer:r.customer,nui:r.nui,sub:-r.sub,vat:-r.vat,total:-r.total,paid:-r.total,items:r.items.map(i=>({...i,qty:-i.qty,sub:-i.sub,vatc:-i.vatc,tot:-i.tot})),status:r.status,fiscal:r.fiscal,src:'ret',ref:r.ref}));
     return inv.concat(pos,ret); }
 
   /* ───────── accounting: every document posts a balanced journal entry (derived, never stored) ───────── */
   journal(db){
-    const d=db||this.state.db, J=[], ACC=this.accountsOf(d); const E=(date,ref,desc,lines)=>J.push({date,ref,desc,lines});
+    const d=db||this.view(), J=[], ACC=this.accountsOf(d); const E=(date,ref,desc,lines)=>J.push({date,ref,desc,lines});
     const openStock=d.products.reduce((a,p)=>a+Math.round(p.opening*(p.openCost_c??p.cost_c)/1000),0), openCash=ACC.reduce((a,x)=>a+x.opening_c,0);
     E('01.01.2026','HAPJE','Gjendja fillestare',[['1300',openStock,0],...ACC.map(a=>[a.type==='Bankë'?'1010':'1000',a.opening_c,0]),['3000',0,openStock+openCash]]);
     for(const inv of d.invoices){ if(inv.status==='Draft'||inv.status==='Anuluar'||inv.kind==='Profaturë'||inv.fromPos) continue; // A4 copies of POS receipts are not sales
@@ -2640,8 +2821,8 @@ class Component extends DCLogic {
     for(const r of (d.posReceipts||[])){ const cashAcc='1000'; const lines=[];
       if(r.cash_c) lines.push(r.cash_c>0?[cashAcc,r.cash_c,0]:[cashAcc,0,-r.cash_c]); if(r.card_c) lines.push(r.card_c>0?['1010',r.card_c,0]:['1010',0,-r.card_c]);
       lines.push(r.sub>=0?['4000',0,r.sub]:['4000',-r.sub,0],r.vat>=0?['2400',0,r.vat]:['2400',-r.vat,0]); // revenue and VAT each by its own sign (a mixed receipt can net them opposite ways)
-      E(r.date,r.no,(r.status==='Kthim'?'Kthim POS · ':r.status==='Anulim'?'Anulim kuponi POS '+(r.origNo||'')+' · ':'Kupon POS · ')+r.customer+' · '+r.posName,lines);
-      const cogs=this.cogsOf(this.mvByRef(d,r.no));
+      E(r.date,r.no,(r.summary?'Përmbledhje ditore POS · ':r.status==='Kthim'?'Kthim POS · ':r.status==='Anulim'?'Anulim kuponi POS '+(r.origNo||'')+' · ':'Kupon POS · ')+r.customer+' · '+r.posName,lines);
+      const cogs=this.cogsOf(r._srv?this.mvByDoc(d,r.id):this.mvByRef(d,r.no)); // a POS-ledger document owns its movements by docId
       if(cogs>0) E(r.date,r.no,'Kosto e mallit · kupon POS',[['5000',cogs,0],['1300',0,cogs]]); else if(cogs<0) E(r.date,r.no,(r.status==='Anulim'?'Anulim kuponi · malli kthehet':'Kthim malli · kupon POS'),[['1300',-cogs,0],['5000',0,-cogs]]); }
     for(const p of d.purchases){ if(p.status==='Draft'||p.status==='Anuluar') continue; E(p.date,p.no,'Blerje · '+p.supplier,[['1300',p.sub,0],['2410',p.vat,0],['2200',0,p.total]]); }
     // credit notes reverse revenue/VAT against the receivable (and cash when refunded) and bring the goods back at cost; purchase returns mirror it
@@ -2808,7 +2989,7 @@ class Component extends DCLogic {
   // render object for the open form (fields + handlers + submit), or null
   formVals(){
     const f=this.state.frm; if(!f) return null;
-    const db=this.state.db, K=f.kind, set=p=>this.setF(p), plural=(n,a,b)=>n+' '+(n===1?a:b);
+    const db=this.view(), K=f.kind, set=p=>this.setF(p), plural=(n,a,b)=>n+' '+(n===1?a:b);
     const txt=(key,label,o={})=>({key,label,isText:true,value:f[key]??'',set:o.set||(e=>set({[key]:e.target.value})),ph:o.ph||'',err:o.err?'1':'',span:o.half?'auto':'1 / -1',mode:o.decimal?'decimal':'text',hint:o.hint||'',dis:!!o.dis,itype:o.secret?'password':'text'});
     const date=(key,label,o={})=>({key,label,isDate:true,value:f[key]||'',set:e=>{if(e.target.value)set({[key]:e.target.value});},err:o.err?'1':'',span:o.half?'auto':'1 / -1',hint:o.hint||''});
     const seg=(key,label,opts,o={})=>({key,label,isSeg:true,opts:opts.map(([v,l])=>({label:l,on:f[key]===v?'1':'',go:()=>o.pick?o.pick(v):set({[key]:v})})),span:o.half?'auto':'1 / -1',hint:o.hint||''});
@@ -3056,7 +3237,7 @@ class Component extends DCLogic {
     return o;
   }
   _drawerVals(){
-    const d=this.state.dr; if(!d) return null; const db=this.state.db; const close=()=>this.setState({dr:null});
+    const d=this.state.dr; if(!d) return null; const db=this.view(); const close=()=>this.setState({dr:null});
     if(d.kind==='purchase'){
       const p=db.purchases.find(x=>x.no===d.id); if(!p) return null; const status=this.docStatus(p), st=this.st(status);
       const actions=[];
@@ -3229,7 +3410,7 @@ class Component extends DCLogic {
   // switches and performs no fiscal writes; it only renders what the tills report. (Owner's architecture rule.)
   // card-based pages: company data, account, settings, admin overview/flags/platform. Returns null for other pages.
   settingsPage(key){
-    const s=this.state, db=s.db, money=c=>this.fmt(c), plural=(n,a,b)=>n+' '+(n===1?a:b), C=(t,o)=>this.cell(t,o), M=(c,o)=>this.moneyCell(c,o), B=(st,o)=>this.badgeCell(st,o);
+    const s=this.state, db=this.view(), money=c=>this.fmt(c), plural=(n,a,b)=>n+' '+(n===1?a:b), C=(t,o)=>this.cell(t,o), M=(c,o)=>this.moneyCell(c,o), B=(st,o)=>this.badgeCell(st,o);
     // field helpers bound to a db section (autosave through setIn / setAdmin)
     const bind=(get,put)=>({
       txt:(k,label,o={})=>({label,isText:true,value:get()[k]??'',set:e=>put({[k]:e.target.value}),ph:o.ph||'',err:o.err?'1':'',span:o.half?'auto':'1 / -1',mode:o.decimal?'decimal':'text',hint:o.hint||'',dis:!!o.dis}),
@@ -3281,7 +3462,7 @@ class Component extends DCLogic {
         const terms=db.terminals||[];
         P.cards=[this.apiAuthed()?card('Sinkronizimi përmes serverit',{wide:true,rows:[{k:'Serveri',v:this.apiCfg().url+' · '+(this.apiCfg().status==='online'?'online':'offline'),color:this.apiCfg().status==='online'?'#15803D':'#B91C1C'},{k:'Terminale',v:terms.length+' të regjistruar · '+terms.filter(t=>t.online).length+' online'},{k:'Tërheqja e fundit',v:(cfg.lastSyncSrv||'—')+' · kursor '+(cfg.cursorSrv||0)+(cfg.unsyncedSrv?' · '+cfg.unsyncedSrv+' kupona presin në server':'')},{k:'Katalogu në server',v:(cfg.lastPush||'—')+(cfg.catalogVersionSrv?' · v'+cfg.catalogVersionSrv:'')},{k:'Kupona të marra',v:String((db.posReceipts||[]).length)+' · ndërrime '+String((db.posShifts||[]).length)}],
           fields:[sy.txt('interval','Intervali i sinkronizimit (sekonda)',{half:true,decimal:true,hint:'hyn në fuqi pas rifreskimit të faqes'})],toggles:[sy.tog('auto','Sinkronizim automatik','Sa kohë kjo faqe është e hapur, ERP-ja tërheq nga serveri çdo '+(cfg.interval||15)+' s')],
-          actions:[{label:'Sinkronizo tani',primary:true,go:()=>this.posSync(true)},{label:'Dërgo katalogun',go:()=>{ const cat=this.posCatalogReady(true); if(!cat) return; this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}).then(r=>{ this.setIn('posSync',{catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:r.version||0}); this.toast('Katalogu u dërgua në server · v'+(r.version||'?')+' — terminalet e marrin me heartbeat-in e radhës','#22C55E'); }).catch(e=>this.toast('Dërgimi dështoi: '+e.message,'#B91C1C')); }},{label:'Arkat (terminalet)',go:()=>this.go('pos','Arkat')}],
+          actions:[{label:'Sinkronizo tani',primary:true,go:()=>this.posSync(true)},{label:'Dërgo katalogun',go:()=>{ this.posPushCatalogSrv(true).then(r=>{ if(r) this.toast('Katalogu u dërgua në server · v'+(r.version||'?')+' — terminalet e marrin me heartbeat-in e radhës','#22C55E'); }).catch(e=>this.toast('Dërgimi dështoi: '+e.message,'#B91C1C')); }},{label:'Arkat (terminalet)',go:()=>this.go('pos','Arkat')}],
           note:'Çdo terminal POS lidhet vetë me serverin (Cilësimet e POS-it: adresa + token-i i terminalit) — dërgon kuponët/ndërrimet dhe merr katalogun, stokun, klientët dhe PIN-et. Fiskalizimi konfigurohet në vetë arkën (POS › Cilësimet, PIN i menaxherit) — katalogu nuk e prek. Kjo faqe i regjistron kuponët në libra (stok, arkë, ditar, radhë fiskale) sa herë tërheq nga serveri.'})
         :card('Sinkronizimi me POS-in desktop',{wide:true,rows:[{k:'Statusi',v:on?'Online · '+h.pos_name+' · v'+h.version+(h.shift?' · ndërrimi i hapur ('+h.shift.operator+')':' · pa ndërrim'):'Offline · '+(cfg.lastError||'POS-i nuk është hapur'),color:on?'#15803D':'#B91C1C'},{k:'Sinkronizimi i fundit',v:(this._posSeen||cfg.lastSync||'—')+' · kursor '+(cfg.cursor||0)+' · katalogu dërguar '+(cfg.lastPush||'—')},{k:'Kupona të marra',v:String((db.posReceipts||[]).length)+' · ndërrime '+String((db.posShifts||[]).length)}],
           fields:[sy.txt('url','Adresa e API-së lokale të POS-it',{half:true,hint:'127.0.0.1 · porta te Cilësimet e POS-it'}),sy.txt('token','Token (i njëjti si në POS)',{half:true}),sy.txt('interval','Intervali i sinkronizimit (sekonda)',{half:true,decimal:true,hint:'hyn në fuqi pas rifreskimit të faqes'})],
@@ -3397,7 +3578,8 @@ class Component extends DCLogic {
     const period=()=>{ T.period=[['month','Ky muaj'],['prev','Muaji i kaluar'],['year','Ky vit'],['all','Gjithçka']].map(([id,label])=>({label,on:s.rp===id?'1':'',go:()=>this.setState({rp:id})})); };
     const tabs=(list)=>{ const cur=s.rTab&&list.includes(s.rTab)?s.rTab:list[0]; T.tabs=list.map(t=>({label:t,n:'',go:()=>this.setState({rTab:t}),fg:t===cur?'#2563EB':'#526477',line:t===cur?'#2563EB':'transparent'})); return cur; };
     const group=(list,key)=>{ const m=new Map(); for(const x of list){ const k=key(x); if(!m.has(k)) m.set(k,[]); m.get(k).push(x); } return [...m.entries()]; };
-    const cogsOf=inv=>this.cogsOf(this.mvByRef(db,inv.no));
+    const cogsOf=inv=>this.cogsOf(inv._srv?this.mvByDoc(db,inv.id):this.mvByRef(db,inv.no)); // a POS-ledger document owns its movements by docId
+    const docN=list=>list.reduce((a,r)=>a+(r.n??1),0); // documents counted by the receipts they stand for (a POS day summary = n)
     const aging=(docs,party)=>{ const buckets=['Pa skaduar','1–30 ditë','31–60 ditë','61–90 ditë','> 90 ditë']; const rows=group(docs,d=>d[party]).map(([name,ds])=>{ const b=[0,0,0,0,0]; for(const d of ds){ const rem=this.rem(d); const late=this.daysBetween(this.toIso(d.due),today); b[late<=0?0:late<=30?1:late<=60?2:late<=90?3:4]+=rem; } return {name,b,total:sum(b)}; }).sort((a,x)=>x.total-a.total);
       T.cols=[{label:party==='customer'?'Klienti':'Furnitori'},...buckets.map(l=>({label:l,align:'right'})),{label:'Gjithsej',align:'right'}];
       T.rows=rows.map(r=>({cells:[C(r.name,{b:true}),...r.b.map((v,i)=>v?M(v,{color:i>=2?'#B91C1C':i===1?'#B45309':'#10243A'}):C('—',{align:'right',color:'#8FA3B8'})),M(r.total,{b:true})]}));
@@ -3408,20 +3590,20 @@ class Component extends DCLogic {
       /* ───── Raporte ───── */
       case 'R:Shitje': {
         period(); const cur=tabs(['Sipas klientit','Sipas artikullit','Sipas muajit','Faturat']);
-        const inv=sales.filter(r=>inPeriod(r.date)); T.title='Raporti i shitjeve'; T.sub=periodLabel+' · faturat e lëshuara + kuponët POS (kthimet negative; pa drafte, profatura, të anuluara)'; T.count=inv.length;
+        const inv=sales.filter(r=>inPeriod(r.date)); T.title='Raporti i shitjeve'; T.sub=periodLabel+' · faturat e lëshuara + kuponët POS (kthimet negative; pa drafte, profatura, të anuluara)'; T.count=docN(inv);
         const net=sum(inv,'sub'), cogs=sum(inv.map(cogsOf));
-        T.kpis=[{label:'Shitje neto',value:money(net)},{label:'TVSH',value:money(sum(inv,'vat'))},{label:'Fitimi bruto',value:money(net-cogs),sub:net?'marzhi '+Math.round((net-cogs)/net*100)+'%':'',c:'#15803D'},{label:'Mesatarja / faturë',value:inv.length?money(Math.round(sum(inv,'total')/inv.length)):'—',sub:plural(new Set(inv.map(r=>r.customer)).size,'klient','klientë')}];
+        T.kpis=[{label:'Shitje neto',value:money(net)},{label:'TVSH',value:money(sum(inv,'vat'))},{label:'Fitimi bruto',value:money(net-cogs),sub:net?'marzhi '+Math.round((net-cogs)/net*100)+'%':'',c:'#15803D'},{label:'Mesatarja / faturë',value:docN(inv)?money(Math.round(sum(inv,'total')/docN(inv))):'—',sub:plural(new Set(inv.map(r=>r.customer)).size,'klient','klientë')}];
         if(cur==='Sipas klientit'){ T.cols=[{label:'Klienti'},{label:'Fatura',align:'right'},{label:'Neto',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'},{label:'Paguar',align:'right'},{label:'Mbetur',align:'right'},{label:'Pjesa',align:'right'}];
-          const rows=group(inv,r=>r.customer).map(([k,rs])=>({k,n:rs.length,sub:sum(rs,'sub'),vat:sum(rs,'vat'),tot:sum(rs,'total'),paid:sum(rs.map(r=>r.src==='inv'?r.paid+(r.credited||0):r.paid))})).sort((a,b)=>b.tot-a.tot); const all=sum(rows,'tot');
+          const rows=group(inv,r=>r.customer).map(([k,rs])=>({k,n:docN(rs),sub:sum(rs,'sub'),vat:sum(rs,'vat'),tot:sum(rs,'total'),paid:sum(rs.map(r=>r.src==='inv'?r.paid+(r.credited||0):r.paid))})).sort((a,b)=>b.tot-a.tot); const all=sum(rows,'tot');
           T.rows=rows.map(r=>({open:()=>this.openDr('customer',r.k),cells:[C(r.k,{b:true}),C(String(r.n),{align:'right'}),M(r.sub),M(r.vat,{color:'#526477'}),M(r.tot,{b:true}),M(r.paid,{color:'#15803D'}),r.tot-r.paid?M(r.tot-r.paid,{color:'#B91C1C'}):C('—',{align:'right',color:'#8FA3B8'}),C(all?Math.round(r.tot/all*100)+'%':'—',{align:'right',color:'#526477'})]}));
-          T.foot=[C('Gjithsej',{b:true}),C(String(inv.length),{align:'right',b:true}),M(net,{b:true}),M(sum(inv,'vat'),{b:true}),M(all,{b:true}),M(sum(rows,'paid'),{b:true}),M(all-sum(rows,'paid'),{b:true}),C('100%',{align:'right',b:true})]; }
+          T.foot=[C('Gjithsej',{b:true}),C(String(docN(inv)),{align:'right',b:true}),M(net,{b:true}),M(sum(inv,'vat'),{b:true}),M(all,{b:true}),M(sum(rows,'paid'),{b:true}),M(all-sum(rows,'paid'),{b:true}),C('100%',{align:'right',b:true})]; }
         else if(cur==='Sipas artikullit'){ T.cols=[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Neto',align:'right'},{label:'Kosto',align:'right'},{label:'Fitimi bruto',align:'right'},{label:'Marzhi',align:'right'}];
-          const items=inv.flatMap(r=>r.items.map(i=>({...i,ref:r.no}))); // cost = each document's 'sale' movements for the article, once per document: its own (no `via`), or for a RECIPE product its ingredients (`via` === sku)
-          const rows=group(items,i=>i.sku).map(([sku,its])=>{ const p=this.prodOf(db,sku)||{name:its[0].name,unit:its[0].unit}; const qty=sum(its.map(i=>Math.round(i.qty*1000))); const net=sum(its,'sub'); const cost=sum([...new Set(its.map(i=>i.ref))].map(ref=>sum(this.mvByRef(db,ref).filter(m=>m.type==='sale'&&(m.via?m.via===sku:m.sku===sku)).map(m=>Math.round(-m.qm*m.unit_c/1000))))); return {sku,name:p.name,unit:p.unit,qty,net,cost}; }).sort((a,b)=>b.net-a.net);
+          const items=inv.flatMap(r=>r.items.map(i=>({...i,ref:r.no,...(r._srv?{docId:r.id}:{})}))); // cost = each document's 'sale' movements for the article, once per document: its own (no `via`), or for a RECIPE product its ingredients (`via` === sku)
+          const rows=group(items,i=>i.sku).map(([sku,its])=>{ const p=this.prodOf(db,sku)||{name:its[0].name,unit:its[0].unit}; const qty=sum(its.map(i=>Math.round(i.qty*1000))); const net=sum(its,'sub'); const cost=sum([...new Map(its.map(i=>[i.docId||i.ref,i])).values()].map(i=>sum((i.docId?this.mvByDoc(db,i.docId).filter(m=>this.isCogs(m)):this.mvByRef(db,i.ref).filter(m=>m.type==='sale')).filter(m=>m.via?m.via===sku:m.sku===sku).map(m=>Math.round(-m.qm*m.unit_c/1000))))); return {sku,name:p.name,unit:p.unit,qty,net,cost}; }).sort((a,b)=>b.net-a.net); // a POS-ledger document (docId): its net cost of goods (a day nets its returns)
           T.rows=rows.map(r=>({open:()=>this.openProduct(r.sku),cells:[C(r.name,{b:true}),C(r.sku,{mono:true,color:'#3C5268'}),C(this.fmtQ(r.qty)+' '+r.unit,{align:'right'}),M(r.net,{b:true}),M(r.cost,{color:'#526477'}),M(r.net-r.cost,{color:'#15803D'}),C(r.net?Math.round((r.net-r.cost)/r.net*100)+'%':'—',{align:'right',b:true})]}));
           T.foot=[C('Gjithsej',{b:true}),C(''),C(''),M(sum(rows,'net'),{b:true}),M(sum(rows,'cost'),{b:true}),M(sum(rows,'net')-sum(rows,'cost'),{b:true}),C(net?Math.round((net-cogs)/net*100)+'%':'—',{align:'right',b:true})]; }
         else if(cur==='Sipas muajit'){ T.cols=[{label:'Muaji'},{label:'Fatura',align:'right'},{label:'Neto',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'},{label:'Fitimi bruto',align:'right'}];
-          const rows=group(sales.slice().sort((a,b)=>this.toIso(b.date).localeCompare(this.toIso(a.date))),r=>this.monthOf(r.date)).map(([ym,rs])=>({ym,n:rs.length,sub:sum(rs,'sub'),vat:sum(rs,'vat'),tot:sum(rs,'total'),gp:sum(rs,'sub')-sum(rs.map(cogsOf))}));
+          const rows=group(sales.slice().sort((a,b)=>this.toIso(b.date).localeCompare(this.toIso(a.date))),r=>this.monthOf(r.date)).map(([ym,rs])=>({ym,n:docN(rs),sub:sum(rs,'sub'),vat:sum(rs,'vat'),tot:sum(rs,'total'),gp:sum(rs,'sub')-sum(rs.map(cogsOf))}));
           T.rows=rows.map(r=>({cells:[C(this.monthLabel(r.ym),{b:true}),C(String(r.n),{align:'right'}),M(r.sub),M(r.vat,{color:'#526477'}),M(r.tot,{b:true}),M(r.gp,{color:'#15803D'})]})); T.sub='Të gjithë muajt · faturat e lëshuara'; }
         else { T.cols=[{label:'Numri'},{label:'Lloji'},{label:'Data'},{label:'Klienti'},{label:'NUI'},{label:'Neto',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'},{label:'Statusi'},{label:'Fiskalizimi'}];
           T.rows=inv.map(r=>({open:()=>openDoc(r),cells:[C(r.no,{mono:true}),B(r.src==='pos'?'Kupon POS':r.src==='ret'?'Notë krediti':'Faturë',{}),C(r.date,{color:'#526477'}),C(r.customer,{b:true}),C(r.nui,{mono:true,color:'#526477'}),M(r.sub),M(r.vat,{color:'#526477'}),M(r.total,{b:true}),B(r.src==='pos'?this.posBadge(r.status):r.src==='ret'?'Kthyer':this.docStatus(r)),B(/SIM/.test(r.fiscal)?'Në proces':r.fiscal)]})); }
@@ -3488,10 +3670,10 @@ class Component extends DCLogic {
         const sl=sales.filter(r=>inPeriod(r.date)), pu=receivedP.filter(p=>inPeriod(p.date)), ex=db.expenses.filter(e=>inPeriod(e.date)&&e.vat>0);
         const out=sum(sl,'vat'), inn=sum(pu,'vat')+sum(ex,'vat');
         T.title='Raporti i TVSH-së'; T.sub=periodLabel+' · libri i shitjes dhe i blerjes; eksporti nuk është deklarim automatik në ATK'; T.count='';
-        T.kpis=[{label:'TVSH e mbledhur',value:money(out),c:'#B91C1C',sub:plural(sl.length,'faturë','fatura')},{label:'TVSH e zbritshme',value:money(inn),c:'#15803D',sub:plural(pu.length+ex.length,'dokument','dokumente')},{label:out-inn>=0?'Për pagesë':'Kredit TVSH',value:money(Math.abs(out-inn))},{label:'Shitje neto / Blerje neto',value:money(sum(sl,'sub'))+' / '+money(sum(pu,'sub')+sum(ex,'net'))}];
+        T.kpis=[{label:'TVSH e mbledhur',value:money(out),c:'#B91C1C',sub:plural(docN(sl),'faturë','fatura')},{label:'TVSH e zbritshme',value:money(inn),c:'#15803D',sub:plural(pu.length+ex.length,'dokument','dokumente')},{label:out-inn>=0?'Për pagesë':'Kredit TVSH',value:money(Math.abs(out-inn))},{label:'Shitje neto / Blerje neto',value:money(sum(sl,'sub'))+' / '+money(sum(pu,'sub')+sum(ex,'net'))}];
         if(cur==='Përmbledhje'){ T.cols=[{label:'Zëri'},{label:'Dokumente',align:'right'},{label:'Baza (neto)',align:'right'},{label:'TVSH',align:'right'}];
           // sales split by the ATK rate of each LINE (one document may mix 18% / 8% / 0%); POS items use *_c keys
-          const agg={}; for(const r of sl){ const seen={}; for(const i of (r.items||[])){ const rt=i.rate||0, a=agg[rt]||(agg[rt]={docs:0,sub:0,vat:0}); a.sub+=(i.sub!=null?i.sub:i.sub_c)||0; a.vat+=(i.vatc!=null?i.vatc:i.vat_c)||0; if(!seen[rt]){ a.docs++; seen[rt]=1; } } }
+          const agg={}; for(const r of sl){ const seen={}; for(const i of (r.items||[])){ const rt=i.rate||0, a=agg[rt]||(agg[rt]={docs:0,sub:0,vat:0}); a.sub+=(i.sub!=null?i.sub:i.sub_c)||0; a.vat+=(i.vatc!=null?i.vatc:i.vat_c)||0; if(!seen[rt]){ a.docs+=r.n??1; seen[rt]=1; } } } // a POS day summary counts its receipts
           const letters=rt=>Object.keys(this.TAX).filter(k=>this.TAX[k].rate===rt).join('/');
           const rateRows=Object.keys(agg).map(Number).sort((a,b)=>b-a).map(rt=>({cells:[C('Shitje me TVSH '+rt+'% ('+letters(rt)+')',{b:true}),C(String(agg[rt].docs),{align:'right'}),M(agg[rt].sub),M(agg[rt].vat,{color:agg[rt].vat?'#B91C1C':'#526477'})]}));
           T.rows=[...rateRows,{cells:[C('Blerje mallrash',{b:true}),C(String(pu.length),{align:'right'}),M(sum(pu,'sub')),M(sum(pu,'vat'),{color:'#15803D'})]},{cells:[C('Shpenzime me TVSH',{b:true}),C(String(ex.length),{align:'right'}),M(sum(ex,'net')),M(sum(ex,'vat'),{color:'#15803D'})]}];
@@ -3624,7 +3806,7 @@ class Component extends DCLogic {
   PAGE_ROWS = 500;
   // every list/report page under Blerje, Financë, Stok and Kontabilitet
   pageTable(page){
-    const s=this.state, db=s.db, money=c=>this.fmt(c), plural=(n,a,b)=>n+' '+(n===1?a:b), today=this.today(), thisMonth=today.slice(0,7);
+    const s=this.state, db=this.view(), money=c=>this.fmt(c), plural=(n,a,b)=>n+' '+(n===1?a:b), today=this.today(), thisMonth=today.slice(0,7);
     const C=(t,o)=>this.cell(t,o), M=(c,o)=>this.moneyCell(c,o), B=(st,o)=>this.badgeCell(st,o);
     const byDateDesc=(a,b)=>this.toIso(b.date).localeCompare(this.toIso(a.date));
     const acc=id=>this.ACCOUNTS.find(a=>a.id===id);
@@ -4049,10 +4231,12 @@ class Component extends DCLogic {
     // desktop POS sync: poll the local API while the page is open (auto-sync can be switched off in Cilësime › POS)
     this._posT=setTimeout(()=>this.posSync(false),1500);
     this._posI=setInterval(()=>{ const c=this.state.db&&this.posCfg(); if(c&&c.auto) this.posSync(false); },(parseInt((this.state.db&&this.state.db.posSync||{}).interval,10)||15)*1000);
+    // the server's POS ledger: every member of the company reads it (no POS permission needed), every 15 s — never a commit
+    this._ledI=setInterval(()=>{ if(this.ledgerOn()) this.ledgerTick(); },15000);
     this._k=(e)=>{ if(!this.state.session) return; if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();this.setState(s=>({cmdk:!s.cmdk}));} if(e.key==='Escape')this.setState({cmdk:false,drawer:null,modal:null,confirm:null,dr:null,frm:null}); };
     window.addEventListener('keydown',this._k);
   }
-  componentWillUnmount(){ window.removeEventListener('keydown',this._k); window.removeEventListener('hashchange',this._h); clearTimeout(this._posT); clearInterval(this._posI); }
+  componentWillUnmount(){ window.removeEventListener('keydown',this._k); window.removeEventListener('hashchange',this._h); clearTimeout(this._posT); clearInterval(this._posI); clearInterval(this._ledI); }
   routeHash(){
     const h=(location.hash||'').replace('#','');
     const map={fatura:['shitje','Fatura'],'faturim-masiv':['shitje','Faturim masiv'],kliente:['shitje','Klientë'],produkte:['produkte','Produktet'],kategorite:['produkte','Kategoritë'],fiskalizimi:['settings','Fiskalizimi'],abonimi:['settings','Abonimi'],kontabilist:['kompania','Kompanitë e mia'],perdoruesit:['kompania','Përdoruesit'],dashboard:['dashboard','Paneli'],raporte:['raporte','Shitje'],kompania:['kompania','Të dhënat e kompanisë'],cilesime:['settings','Llogaria']};
@@ -4092,7 +4276,7 @@ class Component extends DCLogic {
     const total=isNaN(since)?fallback:Math.max(1,Math.round((ends-since)/DAY)); return {left:Math.max(0,Math.ceil((ends-Date.now())/DAY)),total}; }
   renderVals(){
     const s=this.state, trial=this.trialInfo(), trialDays=trial.left;
-    const page=s.page, db=s.db||{invoices:[],purchases:[],payments:[],expenses:[],movements:[],products:[],customers:[],suppliers:[],queue:[],...this.seedExtras()};
+    const page=s.page, db=(s.db&&this.view())||{invoices:[],purchases:[],payments:[],expenses:[],movements:[],products:[],customers:[],suppliers:[],queue:[],...this.seedExtras()};
     const plan=db.subscription?db.subscription.plan:(this.props.plan??'pro');
     // platform feature flags (set by Kontabo admins) hide modules and pages for every company; the company's own module toggles apply on top
     const flags=db.admin.flags, modFlag={pos:'pos',hr:'hr',prodhim:'prodhim',kontab:'kontab'};
@@ -4177,7 +4361,7 @@ class Component extends DCLogic {
     const up={tbg:'rgba(21,128,61,.10)',tfg:'#15803D'},down={tbg:'rgba(220,38,38,.10)',tfg:'#B91C1C'},neutral={tbg:'rgba(16,36,58,.06)',tfg:'#3C5268'};
     const gross=salesNow-cogsM, vs=prevLabel?'vs. '+prevLabel+' · ':'';
     const periodWord={'Sot':'sot','Këtë javë':'këtë javë','Këtë muaj':'këtë muaj','Këtë vit':'këtë vit','Gjithçka':'gjithsej'}[R];
-    const kpis=[{label:'Shitjet (pa TVSH)',value:money(salesNow),trend:pct(salesNow,salesPrev),sub:vs+plural(salesM.filter(r=>r.src==='inv').length,'faturë','fatura')+(salesM.some(r=>r.src==='pos')?' · '+plural(salesM.filter(r=>r.src==='pos').length,'kupon POS','kupona POS'):'')+(salesM.some(r=>r.src==='ret')?' · '+plural(salesM.filter(r=>r.src==='ret').length,'notë krediti','nota krediti'):''),...(salesNow>=salesPrev?up:down)},
+    const kpis=[{label:'Shitjet (pa TVSH)',value:money(salesNow),trend:pct(salesNow,salesPrev),sub:vs+plural(salesM.filter(r=>r.src==='inv').length,'faturë','fatura')+(salesM.some(r=>r.src==='pos')?' · '+plural(salesM.filter(r=>r.src==='pos').reduce((a,r)=>a+(r.n??1),0),'kupon POS','kupona POS'):'')+(salesM.some(r=>r.src==='ret')?' · '+plural(salesM.filter(r=>r.src==='ret').length,'notë krediti','nota krediti'):''),...(salesNow>=salesPrev?up:down)},
       {label:'Blerjet (pa TVSH)',value:money(sumT(purchM,'sub')),trend:prevLabel?pct(sumT(purchM,'sub'),purchPrev):plural(purchM.length,'blerje','blerje'),sub:(prevLabel?vs:'')+plural(purchM.length,'blerje e pranuar','blerje të pranuara')+' '+periodWord,...neutral},
       {label:'Fitimi bruto',value:money(gross),trend:salesNow?'marzhi '+Math.round(gross/salesNow*100)+'%':'—',sub:'shitje − kosto e mallit të shitur · '+periodWord,...(gross>=0?up:down)},
       {label:'Fatura të papaguara',value:money(remSum(openInv)),trend:plural(openInv.length,'faturë','fatura'),sub:plural(overdue.length,'e vonuar','të vonuara')+' · '+money(remSum(overdue)),...(overdue.length?down:neutral)},
@@ -4366,6 +4550,8 @@ class Component extends DCLogic {
       lSgNuiBad:!!(L.sgNui||'').trim()&&!/^\d{6,12}$/.test((L.sgNui||'').trim()),lSgPwMismatch:!!L.sgPw2&&L.sgPw!==L.sgPw2,lCanSignup:this.signupValid(L)&&!L.busy,lSignupLabel:L.busy?'Po krijohet…':'Krijo kompaninë dhe hyr →',
       lSgKey:e=>{ if(e.key==='Enter'&&this.signupValid(this.state.login)&&!this.state.login.busy) this.apiSignup(); },lDoSignup:()=>this.apiSignup()};
     const apiC=this.apiCfg();
+    // the company's book has not moved to the server's POS ledger yet: a user without the POS permission sees only the old book meanwhile
+    const posLedgerBanner=(!s.admin&&s.db&&this.ledgerOn()&&s.db.posLedgerV!==1)?(this.posPerm()?'Libri i POS-it po kalon në server — kuponët e arkave shfaqen sapo të përfundojë kalimi.':'Libri i kompanisë pret kalimin te libri i ri i POS-it në server — e kryen automatikisht pronari ose një përdorues me leje POS kur hap ERP-në. Deri atëherë shitjet e reja të arkave nuk shfaqen këtu.'):'';
     const apiLine=this.apiHosted()?(apiC.status==='offline'?'Pa lidhje me serverin — ndryshimet presin':(this._pending||[]).length?(this._pending||[]).length+' ndryshime po dërgohen…':''):this.apiAuthed()?'Serveri · '+(apiC.status==='online'?'online':'offline')+' · libri v'+apiC.version+((this._pending||[]).length?' · '+(this._pending||[]).length+' në pritje':''):'Ndërtim lokal · të dhënat në këtë shfletues';
     const tenantList=(apiC.tenants||[]).map(t=>({id:t.id,name:t.name,role:t.role||'',on:t.id===apiC.tenantId?'1':'',go:()=>{ if(t.id!==apiC.tenantId) this.apiSwitchTenant(t.id); }}));
 
@@ -4373,7 +4559,7 @@ class Component extends DCLogic {
       rail,subnav,sectionTitle:sec.label,sectionIcon:this.I[s.admin?sec.icon:sec.id],page,company:s.company||db.company.name,
       isAdmin:s.admin,canAdmin:!this.apiSignedIn()||!!(s.session&&s.session.isPlatformAdmin),enterAdmin:()=>this.enterAdmin(),exitAdmin:()=>this.exitAdmin(),showUserMenu:s.modal==='user',openUserMenu:()=>this.setState({modal:s.modal==='user'?null:'user'}),goLlogaria:()=>this.go('settings','Llogaria'),logoutToast:()=>this.setState({confirm:{title:'Dil nga sistemi?',body:'Sesioni mbyllet në këtë shfletues; të dhënat lokale mbeten.',color:'#B91C1C',ok:()=>this.logout()}}),
       userInitials:me.name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase(),userName:me.name,userRole:me.role,
-      ...loginVals,apiLine,apiOnline:apiC.status==='online',apiAuthed:this.apiAuthed(),tenantList,hasTenants:tenantList.length>1,
+      ...loginVals,apiLine,posLedgerBanner,apiOnline:apiC.status==='online',apiAuthed:this.apiAuthed(),tenantList,hasTenants:tenantList.length>1,
       railBg:s.admin?'#10243A':'rgba(255,255,255,.55)',logoMb:s.admin?'4px':'10px',railBorder:s.admin?'rgba(255,255,255,.08)':'rgba(16,36,58,.06)',
       isTrial:plan==='trial'&&!s.admin,trialDays,trialPct:Math.round(trialDays/trial.total*100)+'%',goAbonimi:()=>this.go('settings','Abonimi'),
       isDashboard,isFatura,isKliente,isProdukte,isFiskal,isAbonimi,isKontabilist,isPerdorues,isGeneric,isTable,tbl:tbl||{},isStg,stg:stg||{},

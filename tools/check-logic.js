@@ -457,13 +457,15 @@ c.openDr('user', 'u2'); c.drawerVals(); c.setUserPassword('u2', c.DEFAULT_PW, 'r
 c.state.session = null;
 
 // ── API mode (kontabo-backend client) against a mocked server: login, state load/seed, commits with compare-and-set, 409 reload, server-owned mutations ──
-(async () => {
+// (this server's /health lists no features → no POS ledger: the old /pos/sales relay below is the "feature off" behaviour; the ledger tests follow at the end)
+const apiBlock = (async () => {
   const mem = {}; const store = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
   ctx.localStorage = store; ctx.sessionStorage = store; ctx.AbortController = class { constructor() { this.signal = {}; } abort() {} };
   const srv = { version: 0, state: null, users: [{ id: 'm1', userId: 'u1', name: 'Arben Berisha', email: 'arben@abc-ks.com', role: 'Pronar', branch: 'Dega Prishtinë', dept: 'Drejtoria', status: 'Aktiv', last: '—', pinSalt: 'a1b2c3d4', pinHash: 'x' }, { id: 'm2', userId: 'u2', name: 'Fjolla Kastrati', email: 'fjolla@abc-ks.com', role: 'Kasier', branch: 'Dega Prizren', dept: 'Shitje', status: 'Aktiv' }], roles: { Pronar: { fatura_shiko: true }, Kasier: { pos: true } }, fiscal: { mode: 'ATK_ELECTRONIC', version: 3, changedAt: '01.03.2026 10:12', changedBy: 'Arben B.', env: 'TEST', settings: { atk: { appId: 'APP-1' }, tremol: {}, flink: {} }, unresolved: 0 }, audit: [{ id: 1, t: '01.09.2026 08:30', u: 'Arben B.', a: 'seed' }], calls: [] };
   const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
   ctx.fetch = async (url, o = {}) => {
     const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''), m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : {}; srv.calls.push(m + ' ' + path);
+    (srv.hdr = srv.hdr || []).push((o.headers || {})['X-Kontabo-Client']); if (path === '/state/commit' && JSON.stringify(body.patch || {}).includes('"_srv"')) srv.srvCommitted = true;
     const authed = (o.headers || {}).Authorization === 'Bearer acc-1';
     if (path === '/health') return json(200, { ok: true, app: 'Kontabo Backend', version: '0.1.0', db: 'sqlite' });
     if (path === '/auth/login') return body.password === 'kontabo' ? json(200, { accessToken: 'acc-1', refreshToken: 'ref-1', expiresIn: 3600, user: { id: 'u1', name: 'Arben Berisha', email: 'arben@abc-ks.com', isPlatformAdmin: false }, tenant: { id: 't1', name: 'ABC SH.P.K.', role: 'Pronar', branch: 'Dega Prishtinë', perms: { fatura_shiko: true } }, tenants: [{ id: 't1', name: 'ABC SH.P.K.', role: 'Pronar' }, { id: 't2', name: 'Drini Market SH.P.K.', role: 'Kontabilist' }] }) : body.password === 'i-pesti' ? json(401, { error: 'invalid_credentials', message: 'gabim', failsLeft: 0, retryAfter: 30 }) : json(401, { error: 'invalid_credentials', message: 'gabim', failsLeft: 4 });
@@ -539,6 +541,7 @@ c.state.session = null;
   await a.posSync(true); for (let i = 0; i < 30 && (a._pending || []).length; i++) await wait();
   eq([srv.calls.includes('PUT /pos/catalog'), srv.calls.some(x => x.startsWith('GET /pos/sales')), srv.calls.includes('POST /pos/ack'), a.state.db.posReceipts.length, a.state.db.posReceipts[0].posName, a.posCfg().cursorSrv, srv.posReceipts[0].acked, !!srv.catalog && srv.catalog.products.length], [true, true, true, 1, 'Arka 1', 1, true, 1], 'api relay: catalogue pushed, receipt pulled into the books, acked, cursor saved');
   await a.posSync(true); eq(a.state.db.posReceipts.length, 1, 'api relay: second pull is idempotent');
+  eq([a._ledger, srv.calls.includes('GET /health'), srv.calls.some(x => x.startsWith('GET /pos/ledger')), srv.hdr.every(v => v === '2'), !!srv.srvCommitted], [null, true, false, true, false], 'feature off (/health without posLedger:1): no POS ledger, the relay above works as before; X-Kontabo-Client: 2 on every call');
   // the till's heartbeat fiscal block is kept on the terminal and rendered by the read-only monitor
   { const t0 = a.state.db.terminals[0]; eq([!!t0.fiscal, t0.fiscal.mode, t0.fiscal.env, t0.pendingReceipts], [true, 'TREMOL_ETHERNET', 'PROD', 1], 'api: apiTerminalToDb keeps the heartbeat fiscal block'); }
   { a.state.admin = false; a.state.section = 'settings'; a.state.page = 'Fiskalizimi'; const v = a.renderVals();
