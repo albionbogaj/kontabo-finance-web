@@ -1122,7 +1122,7 @@ apiBlock.then(async () => {
       const since = +q.since || 0, lim = Math.min(+q.limit || 200, T.led.cap), all = [...[...T.led.rows.values()].map(x => ['r', x]), ...[...T.led.shifts.values()].map(x => ['s', x])].filter(([, x]) => x.rev > since).sort((a, b) => a[1].rev - b[1].rev);
       const page = all.slice(0, lim), more = all.length > lim, ready = !(T.led.notReady > 0 && T.led.notReady--);
       return json(200, { epoch: T.led.epoch, rev: more ? page[page.length - 1][1].rev : T.led.top, mode: T.led.mode, ready, pending: ready ? 0 : 2, rows: page.filter(x => x[0] === 'r').map(x => x[1]), shifts: page.filter(x => x[0] === 's').map(x => x[1]), more }); }
-    if (p === '/pos/receipts/known') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.knownCalls.push(body); const seen = new Set(); return json(200, { known: (body.ids || []).filter(x => T.known.has(x) && !seen.has(x) && seen.add(x)), knownShifts: (body.shiftIds || []).filter(x => T.knownShifts.has(x)) }); }
+    if (p === '/pos/receipts/known') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.knownCalls.push(body); if (T.onKnown) T.onKnown(body); const seen = new Set(); return json(200, { known: (body.ids || []).filter(x => T.known.has(x) && !seen.has(x) && seen.add(x)), knownShifts: (body.shiftIds || []).filter(x => T.knownShifts.has(x)) }); }
     if (p === '/pos/ledger/activate') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.activates.push(body); if (T.onActivate) T.onActivate(body); if (body.done) { T.led.mode = 'on'; T.led.notReady = T.notReadyAfterDone; } return json(200, { updated: (body.receipts || []).filter(r => T.known.has(r.id)).length, mode: T.led.mode }); }
     if (p === '/pos/ledger/reset') { if (u.role !== 'Pronar') return json(403, { error: 'forbidden', message: 'Vetëm pronari' }); T.resets++; T.led.epoch += '-r' + T.resets; for (const [id, r] of [...T.led.rows]) if (!r.removed) tomb(T, id); for (const s of [...T.led.shifts.values()]) if (!s.removed) pubShift(T, { ...s, removed: true }); return json(200, { epoch: T.led.epoch, resetSeq: 99 }); }
     return json(404, { error: 'not_found', message: path });
@@ -1208,7 +1208,9 @@ apiBlock.then(async () => {
   { const n0 = T1.tries; await A.ledgerTick(); await A.posSync(false); await A.ledgerTick(); await A.posSync(true); eq(T1.tries - n0, 0, 'ticks of the owner (ledger + POS sync, timer and manual) commit nothing'); }
   // memo: view() and its arrays stay the same objects between ticks that bring nothing new
   { const v1 = A.view(); await A.ledgerTick(); const v2 = A.view(); A.setState(s => ({ db: { ...s.db, notifRead: { x: 1 } } })); const v3 = A.view();
-    eq([v1 === v2, v3 === v1, v3.movements === v1.movements, v3.payments === v1.payments, v3.posReceipts === v1.posReceipts, A.mvIndex(v3) === A.mvIndex(v1)], [true, false, true, true, true, true], 'view(): memoised on the book and the ledger version — derived arrays (and the movement index) survive unrelated book changes'); }
+    eq([v1 === v2, v3 === v1, v3.movements === v1.movements, v3.payments === v1.payments, v3.posReceipts === v1.posReceipts, A.mvIndex(v3) === A.mvIndex(v1)], [true, false, true, true, true, true], 'view(): memoised on the book and the ledger version — derived arrays (and the movement index) survive unrelated book changes');
+    const m1 = { type: 'adjust', sku: 'KAFE', qm: -1000, unit_c: 30, date: '20.09.2026' }, m2 = { ...m1, qm: -2000 }, b2 = { ...A.state.db, movements: [m1] }; const w1 = A.view(b2); b2.movements = [m2]; const w2 = A.view(b2);
+    eq([w1.movements[0] === m1, w2.movements[0] === m2, A.stockOf('KAFE', w2), w2.posReceipts === w1.posReceipts], [true, true, 93000 - 2000, true], 'view(): a book array replaced in place (same length) is not served stale'); }
   // every page and the drawer of every derived document render in ledger mode (summary documents included)
   { const errs = []; for (const n of A.NAV) for (const pg of n.items) { A.state.admin = false; A.state.section = n.id; A.state.page = pg; try { A.renderVals(); } catch (e) { errs.push(n.id + '/' + pg + ': ' + e.message); } }
     for (const r of A.view().posReceipts.filter(x => x._srv)) { try { A.openDr('pos', r.id); A.drawerVals(); A.renderVals(); } catch (e) { errs.push('drawer ' + r.id + ': ' + e.message); } }
@@ -1276,12 +1278,12 @@ apiBlock.then(async () => {
   const K0 = M3.stockOf('KAFE'), C0 = M3.accountBalance('cash1'), B0 = M3.accountBalance('bank1'), U0 = M3.stockOf('UJE');
   eq([K0, C0, B0, U0, M3.view() === M3.state.db, /pret kalimin te libri i ri i POS-it/.test(M3.renderVals().posLedgerBanner), T3.knownCalls.length + T3.activates.length, T3.tries], [98000, 300, 100, 4000, true, true, 0, 0], 'not migrated + no POS permission: banner, book-only view, no known/activate, no commit');
   // the owner opens the ERP: flush → ready → known → activate (the book\'s own frozen values) → done → ready → ONE commit
-  T3.onActivate = body => { if (!body.done) S.mid = [P3.stockOf('KAFE'), P3.accountBalance('cash1'), P3.view() === P3.state.db]; };
+  S.mid = []; T3.onActivate = () => S.mid.push([P3.stockOf('KAFE'), P3.accountBalance('cash1'), P3.view() === P3.state.db]); T3.onKnown = () => S.mid.push([P3.stockOf('KAFE'), P3.accountBalance('cash1'), P3.view() === P3.state.db]);
   const P3 = mk(); await enter(P3, 'own', 't3'); await until(() => P3.state.db.posLedgerV === 1 && T3.state.posLedgerV === 1 && !P3._migrating);
   { const known = st3.posReceipts.filter(r => T3.known.has(r.id)), mvOf = no => st3.movements.find(m => m.ref === no);
     eq(T3.knownCalls, [{ ids: st3.posReceipts.map(r => r.id), shiftIds: st3.posShifts.map(s => s.id) }], 'migration: POST /pos/receipts/known with the book\'s receipt and shift ids');
     eq(T3.activates, [{ receipts: [{ id: 'rC', costs: { KAFE: mvOf('BAR-1/0003').unit_c }, noVat: false, wh: 'W2', cash: 'cash1' }, { id: 'rB', costs: { UJE: 20 }, noVat: false, wh: 'W2', card: 'bank1' }, { id: 'rA', costs: { KAFE: 30 }, noVat: false, wh: 'W2', cash: 'cash1' }] }, { done: true }], 'migration: activate with the book\'s frozen cost per sku, no-VAT rule, warehouse and cash/card accounts, then {done:true}');
-    eq([known.length, S.mid], [3, [K0, C0, true]], 'migration: while the server freezes, the page still shows the old book alone');
+    eq([known.length, S.mid], [3, [[K0, C0, true], [K0, C0, true], [K0, C0, true]]], 'migration: at known, at activate and at done the page still shows the old book alone (no double counting)');
     eq([T3.commits.length, Object.keys(T3.commits[0]).sort()], [1, ['movements', 'payments', 'posLedgerV', 'posLegacyNos', 'posLegacyShifts', 'posReceipts', 'posShifts', 'queue']], 'migration: ONE commit');
     const s = T3.state; eq([s.posLedgerV, s.posLegacyNos, s.posLegacyShifts, s.posReceipts.map(r => r.id), s.posShifts.map(x => x.id), s.movements.map(m => m.ref), s.payments.filter(p => p.kind === 'pos').map(p => p.ref), s.queue.map(q => q.ref)], [1, ['BAR-1/0004'], ['SH-OLD'], ['rL'], ['SH-OLD'], ['BAR-1/0004'], ['BAR-1/0004'], ['BAR-1/0004']], 'migration: the known receipts leave the book with their movements, payments, queue rows and shifts; the legacy one stays');
     eq([P3.stockOf('KAFE'), P3.accountBalance('cash1'), P3.accountBalance('bank1'), P3.stockOf('UJE')], [K0 - 1000, C0 + 150, B0, U0], 'migration: no double counting — the same totals as before, plus only the receipt that never reached the old book');
@@ -1295,6 +1297,14 @@ apiBlock.then(async () => {
   { const P4 = mk(); await enter(P4, 'kas', 't4'); await until(() => T4.state.posLedgerV === 1 && !P4._migrating);
     eq([T4.raced, T4.knownCalls.length, T4.activates.filter(a => a.done).length, T4.commits.length, T4.state.posLegacyNos, P4.state.db.company.phone, P4.stockOf('KAFE'), P4.accountBalance('cash1')], [true, 2, 2, 1, ['BAR-1/0004'], '+383 49 000 000', 97000, 450], 'migration after a 409: the server book is reloaded, the whole migration runs again (idempotent), one commit lands, no double counting');
     P4.logout(); done(P4); }
+
+  // the server refuses the migration commit (4xx): the local copy had already dropped the rows → the server's book is reloaded, retried later
+  const T8 = mig('t8'); T8.onCommit = patch => { if ('posLedgerV' in patch && !T8.refused) { T8.refused = true; return json(413, { error: 'payload_too_large', message: 'Kërkesa është shumë e madhe' }); } return null; };
+  { const P8 = mk(); await enter(P8, 'own', 't8'); await until(() => T8.refused && !P8._migrating && P8.state.db.posReceipts.length === 4);
+    eq([P8.state.db.posLedgerV, P8.state.db.posReceipts.length, P8.view() === P8.state.db, P8.stockOf('KAFE'), P8.accountBalance('cash1'), /Kalimi te libri i ri i POS-it dështoi: serveri e refuzoi/.test(P8.state.toast || ''), T8.commits.length, P8._migFail > 0], [undefined, 4, true, 98000, 300, true, 0, true], 'migration refused by the server: the book is reloaded (rows back, book-only view, no double counting), retried later');
+    P8._migFail = 0; P8.posLedgerAfterTick(); await until(() => T8.state.posLedgerV === 1 && !P8._migrating);
+    eq([T8.commits.length, T8.state.posLegacyNos, P8.stockOf('KAFE'), P8.accountBalance('cash1')], [1, ['BAR-1/0004'], 97000, 450], 'migration retried after the back-off: one commit, no double counting');
+    P8.logout(); done(P8); }
 
   // ── reconcile on load + replayed unsent patches: a book on the ledger never keeps POS rows that are not legacy
   const st5 = book({ posLegacyNos: ['L-1'], posLegacyShifts: ['S-L'],
