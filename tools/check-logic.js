@@ -10,7 +10,13 @@ const m = html.match(/<script type="text\/x-dc"[^>]*>([\s\S]*?)<\/script>/);
 if (!m) throw new Error('logic script not found');
 let src = m[1].replace(/&quot;/g, '"');
 
-const ctx = { window: {}, document: {}, localStorage: null, console, setTimeout, clearTimeout, TextEncoder };
+// a fixed calendar inside the vm: "now" starts at 2026-09-20 12:00 local time (it keeps ticking, so ids and lock timers stay unique) —
+// month-bound reports, due dates and the year in nextNo never depend on the day the checks run; the trial tests below use the same clock
+const RealDate = Date, T0 = RealDate.now(), NOW0 = new RealDate(2026, 8, 20, 12, 0, 0).getTime(), clockNow = () => NOW0 + (RealDate.now() - T0);
+class FakeDate extends RealDate { constructor(...a) { super(...(a.length ? a : [clockNow()])); } static now() { return clockNow(); } }
+// query string of a mocked request: the vm has no URL / URLSearchParams — the app builds them with c.qs(), the mock server reads them with this
+const qsOf = (path) => Object.fromEntries((String(path).split('?')[1] || '').split('&').filter(Boolean).map(kv => { const [k, v = ''] = kv.split('='); return [decodeURIComponent(k), decodeURIComponent(v)]; }));
+const ctx = { window: {}, document: {}, localStorage: null, console, setTimeout, clearTimeout, TextEncoder, Date: FakeDate };
 vm.createContext(ctx);
 try {
   vm.runInContext('class DCLogic{constructor(p){this.props=p||{};this.state={}} setState(u){const p=typeof u==="function"?u(this.state):u;this.state={...this.state,...p}} forceUpdate(){} }\n' + src + '\n;globalThis.C=Component;', ctx, { filename: 'template.html#logic' });
@@ -479,7 +485,7 @@ c.state.session = null;
     if (path === '/terminals' && m === 'POST') { srv.terminals = [...(srv.terminals || []), { id: 'tm1', name: body.name, branch: body.branch, posId: body.posId, warehouse: body.warehouse, status: 'Aktiv', lastSeen: '' }]; return json(200, { terminal: srv.terminals[0], token: 'kt_secret123' }); }
     if (/^\/terminals\/tm1$/.test(path) && m === 'PATCH') { srv.terminals[0] = { ...srv.terminals[0], ...body }; return json(200, { terminal: srv.terminals[0] }); }
     if (path === '/pos/status') return json(200, { terminals: (srv.terminals || []).map(t => ({ id: t.id, lastSeen: '13.09.2026 12:00', appVersion: '0.6.0', catalogVersion: srv.catVersion || 0, shift: null, fiscal: { mode: 'TREMOL_ETHERNET', env: 'PROD', version: 2, simulator: false, pending: 1 }, pendingReceipts: 1 })), catalogVersion: srv.catVersion || 0, unsyncedReceipts: (srv.posReceipts || []).filter(r => !r.acked).length });
-    if (path.startsWith('/pos/sales')) { const since = +(path.split('since=')[1] || 0); const rows = (srv.posReceipts || []).filter(r => r.seq > since); return json(200, { receipts: rows.map(r => r.payload), shifts: [], cursor: rows.length ? rows[rows.length - 1].seq : since }); }
+    if (path.startsWith('/pos/sales')) { const since = +(qsOf(path).since || 0); const rows = (srv.posReceipts || []).filter(r => r.seq > since); return json(200, { receipts: rows.map(r => r.payload), shifts: [], cursor: rows.length ? rows[rows.length - 1].seq : since }); }
     if (path === '/pos/ack') { for (const r of (srv.posReceipts || [])) if (body.ids.includes(r.payload.id)) r.acked = true; return json(200, { acked: body.ids.length }); }
     if (path === '/pos/catalog' && m === 'PUT') { srv.catVersion = (srv.catVersion || 0) + 1; srv.catalog = body.catalog; return json(200, { version: srv.catVersion }); }
     if (path === '/auth/logout') return json(200, { ok: true });
@@ -574,7 +580,7 @@ c.state.session = null;
   // API mode: the mocked server answers /auth/signup; the new tenant (acc-9) has no state yet → the ERP seeds empty books
   const sg = { calls: [], bodies: [], reply: null, state: null, version: 0 };
   ctx.fetch = async (url, o = {}) => { const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''), m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : {};
-    if (path === '/auth/signup') { srv.calls.push(m + ' ' + path); sg.bodies.push({ body, auth: (o.headers || {}).Authorization || null }); return sg.reply || json(200, { accessToken: 'acc-9', refreshToken: 'ref-9', expiresIn: 3600, user: { id: 'u7', name: 'Blerta Gashi', email: 'blerta@firma-re.com', isPlatformAdmin: false }, tenant: { id: 't9', name: 'Firma e Re SH.P.K.', role: 'Pronar', branch: '', perms: { fatura_shiko: true }, plan: 'trial', status: 'Provë', createdAt: new Date(Date.now() - 23 * 3600000).toISOString(), trialEndsAt: new Date(Date.now() + 13 * 86400000 + 3600000).toISOString(), trialDaysLeft: 14 }, tenants: [{ id: 't9', name: 'Firma e Re SH.P.K.', role: 'Pronar', status: 'Aktiv' }] }); }
+    if (path === '/auth/signup') { srv.calls.push(m + ' ' + path); sg.bodies.push({ body, auth: (o.headers || {}).Authorization || null }); return sg.reply || json(200, { accessToken: 'acc-9', refreshToken: 'ref-9', expiresIn: 3600, user: { id: 'u7', name: 'Blerta Gashi', email: 'blerta@firma-re.com', isPlatformAdmin: false }, tenant: { id: 't9', name: 'Firma e Re SH.P.K.', role: 'Pronar', branch: '', perms: { fatura_shiko: true }, plan: 'trial', status: 'Provë', createdAt: new RealDate(clockNow() - 23 * 3600000).toISOString(), trialEndsAt: new RealDate(clockNow() + 13 * 86400000 + 3600000).toISOString(), trialDaysLeft: 14 }, tenants: [{ id: 't9', name: 'Firma e Re SH.P.K.', role: 'Pronar', status: 'Aktiv' }] }); }
     if ((o.headers || {}).Authorization === 'Bearer acc-9') { srv.calls.push(m + ' ' + path);
       if (path === '/state' && m === 'GET') return json(200, { version: sg.version, state: sg.state });
       if (path === '/state' && m === 'PUT') { if (body.baseVersion !== sg.version) return json(409, { error: 'version_conflict', version: sg.version }); sg.state = body.state; sg.version++; return json(200, { version: sg.version }); }
@@ -619,8 +625,8 @@ c.state.session = null;
   eq([a.state.admin, a.state.section, a.state.page, a.state.login.view, a.state.login.busy, a.state.login.err, a.state.login.sgPw, a.state.login.sgPw2], [false, 'dashboard', 'Paneli', 'login', false, '', '', ''], 'signup: lands on Paneli, login view reset, passwords cleared');
   { const L = a.state.login; eq([L.sgCompany, L.sgNui, L.sgCity, L.sgName, L.sgEmail], ['', '', '', '', ''], 'signup: the whole form is emptied after success (a second company never inherits the old NUI/city)'); }
   { const v = a.renderVals(); eq([a.apiCfg().tenantPlan, !!a.apiCfg().trialEndsAt, v.isTrial, v.trialDays, v.trialPct], ['trial', true, true, 14, '100%'], 'signup: trial banner counts from the server tenant (createdAt + trialEndsAt → 14 days left of 14)'); }
-  { const cfg = a.apiCfg(); const keep = { tenantSince: cfg.tenantSince, trialEndsAt: cfg.trialEndsAt }; a.saveApi({ tenantSince: new Date(Date.now() - 10 * 86400000).toISOString(), trialEndsAt: new Date(Date.now() + 4 * 86400000 - 3600000).toISOString() }); eq([a.renderVals().trialDays, a.renderVals().trialPct], [4, '29%'], 'trial banner: 10 days into a 14-day trial → 4 left');
-    a.saveApi({ trialEndsAt: new Date(Date.now() - 3 * 86400000).toISOString() }); eq(a.renderVals().trialDays, 0, 'trial banner: an ended trial shows 0, never negative'); a.saveApi(keep); }
+  { const cfg = a.apiCfg(); const keep = { tenantSince: cfg.tenantSince, trialEndsAt: cfg.trialEndsAt }; a.saveApi({ tenantSince: new RealDate(clockNow() - 10 * 86400000).toISOString(), trialEndsAt: new RealDate(clockNow() + 4 * 86400000 - 3600000).toISOString() }); eq([a.renderVals().trialDays, a.renderVals().trialPct], [4, '29%'], 'trial banner: 10 days into a 14-day trial → 4 left');
+    a.saveApi({ trialEndsAt: new RealDate(clockNow() - 3 * 86400000).toISOString() }); eq(a.renderVals().trialDays, 0, 'trial banner: an ended trial shows 0, never negative'); a.saveApi(keep); }
   eq([srv.calls.slice(callsBefore).includes('GET /state'), srv.calls.slice(callsBefore).includes('PUT /state'), sg.version, sg.state.invoices.length, sg.state.customers.length, sg.state.products.length, sg.state.company.name, sg.state.company.nui, sg.state.company.city, sg.state.users, a._signupSeed], [true, true, 1, 0, 0, 0, 'Firma e Re SH.P.K.', '811223344', 'Prishtinë', undefined, null], 'signup: first load → /state empty → seeded empty books on the server (no demo), company card from the form');
   eq([a.state.db.invoices.length, a.state.db.customers.length, a.state.db.company.name, a.state.db.users.length, a.state.db.users[0].email, a.state.db.fiscal, /Mirë se erdhe, Blerta/.test(a.state.toast || '') && /Firma e Re SH.P.K./.test(a.state.toast || '')], [0, 0, 'Firma e Re SH.P.K.', 1, 'blerta@firma-re.com', undefined, true], 'signup: empty books + server mirrors (no fiscal mirror), greeting names the new company');
   a.setL({ sgCompany: 'Tjetra', sgNui: '812345678', sgCity: 'Gjakovë' }); a.logout(); await wait(); eq([a.state.session, a.apiAuthed(), a.state.login.sgCompany, a.state.login.sgNui, a.state.login.sgCity], [null, false, '', '', ''], 'signup: logout after signup also empties the signup form');
@@ -857,3 +863,211 @@ eq([c.vatOn(), c.evalLine(c.state.m.lines[0]).taxCode, c.evalLine(c.state.m.line
   eq(db().posReceipts.find(r => r.id === 'r-q5').source, undefined, 'ordinary receipts carry no source/block fields');
   c.importPosSales([{ ...RB, block_no: '000124' }], []); eq(db().posReceipts.find(r => r.id === 'r-b1').blockNo, '000124', 're-pull refreshes the block fields, never the books');
   const J = c.journal(); eq(J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal still balanced after 4-decimal, cancel-reason and block receipts'); }
+// ══ Faza B · E0 + E-P: fixed clock, movement index, paging, units, recipes, the POS flag, the catalogue ══
+c.state.db = c.seedDb(); c.state.dr = null; c.state.frm = null; c.state.drawer = null; c.state.admin = false; c.state.pdq = ''; c.state.fq = ''; c.state.pFilter = 'Të gjitha';
+eq([c.today(), new ctx.Date().getFullYear(), c.nextNo('FSH')(1)], ['2026-09-20', 2026, 'FSH-2026-00126'], 'clock: the vm runs on the fixed calendar (2026-09-20) — reports and numbering never depend on the real day');
+eq([c.qs({ since: 5, limit: 200, q: 'a b&c', x: '', y: null, z: undefined }), c.qs({}), qsOf('/pos/ledger' + c.qs({ since: 7, q: 'ë/1' }))], ['?since=5&limit=200&q=a%20b%26c', '', { since: '7', q: 'ë/1' }], 'qs(): query string without URL/URLSearchParams (empty values skipped), read back by the mock server');
+// ── movement index: the same numbers as the old O(M) scans, on the seed and on random books; it follows pushes and replaced arrays
+{ const oldStock = (d, sku) => { const p = d.products.find(x => x.sku === sku); if (!p) return 0; return p.opening + d.movements.filter(m => m.sku === sku).reduce((a, m) => a + m.qm, 0); };
+  const oldStockWh = (d, sku, wh) => { const p = d.products.find(x => x.sku === sku); if (!p) return 0; const main = c.mainWh(d); return (wh === main ? p.opening : 0) + d.movements.filter(m => m.sku === sku && (m.wh || main) === wh).reduce((a, m) => a + m.qm, 0); };
+  const oldAvg = (d, sku) => { const p = d.products.find(x => x.sku === sku); if (!p) return 0; let q = p.opening, v = p.opening * (p.openCost_c ?? p.cost_c); for (const m of d.movements) { if (m.sku === sku && m.qm > 0 && m.type !== 'transfer') { q += m.qm; v += m.qm * m.unit_c; } } return q > 0 ? Math.round(v / q) : p.cost_c; };
+  const same = (d, what) => { const skus = [...new Set([...d.products.map(p => p.sku), ...d.movements.map(m => m.sku), 'NOPE'])], whs = [...(d.warehouses || []).map(w => w.id), 'W9', '', undefined]; const bad = [];
+    for (const s of skus) { if (c.stockOf(s, d) !== oldStock(d, s)) bad.push('stock ' + s); if (c.avgCost(d, s) !== oldAvg(d, s)) bad.push('avg ' + s); for (const w of whs) if (c.stockOfWh(s, w, d) !== oldStockWh(d, s, w)) bad.push('wh ' + s + '@' + w); }
+    eq(bad, [], 'movement index = old O(M) scans: ' + what + ' (' + skus.length + ' skus × ' + whs.length + ' warehouses, ' + d.movements.length + ' movements)'); };
+  same(c.state.db, 'seed');
+  c.transferStock({ from: 'W1', to: 'W2', items: [{ name: 'Panel', sku: 'PS-050', unit: 'm²', qty: 12 }], date: '2026-09-20', note: '' });
+  c.adjustStock({ sku: 'LED-18', counted_qm: 20000, note: '', date: '20.09.2026' }); same(c.state.db, 'seed after a transfer + an adjustment');
+  let seed = 7; const rnd = n => { seed = (seed * 1103515245 + 12345) % 2147483648; return seed % n; };
+  for (let run = 0; run < 3; run++) {
+    const products = Array.from({ length: 12 }, (_, i) => ({ sku: 'R' + i, opening: rnd(4) ? rnd(50) * 1000 : 0, cost_c: 1 + rnd(900), ...(rnd(3) ? { openCost_c: rnd(2) ? rnd(700) : 0 } : rnd(2) ? { openCost_c: null } : {}) }));
+    products.push({ sku: 'R3', opening: 999000, cost_c: 1 }); // a duplicate sku: the first record wins (like Array.find)
+    const T = ['sale', 'purchase', 'adjust', 'transfer', 'sale_return', 'sale_cancel', 'return_cancel', 'purchase_return'], W = ['W1', 'W2', 'W3', '', undefined, null];
+    const movements = Array.from({ length: 600 }, () => ({ sku: 'R' + rnd(14), qm: (rnd(2) ? 1 : -1) * rnd(20000), type: T[rnd(T.length)], wh: W[rnd(W.length)], unit_c: rnd(1500), ref: 'D' + rnd(40), date: '01.09.2026' }));
+    same({ products, movements, warehouses: run === 2 ? [{ id: 'W2', name: 'B' }, { id: 'W1', name: 'A', main: true }] : [{ id: 'W1', name: 'A' }, { id: 'W2', name: 'B' }, { id: 'W3', name: 'C' }] }, 'random books #' + (run + 1)); }
+  const d = { products: [{ sku: 'A', opening: 1000, cost_c: 100 }], movements: [{ sku: 'A', qm: 1000, type: 'purchase', unit_c: 300, wh: 'W2', ref: 'BL-1', docId: 'x1' }], warehouses: [{ id: 'W1', main: true }, { id: 'W2' }] };
+  const x0 = c.mvIndex(d); eq([c.stockOf('A', d), c.avgCost(d, 'A'), c.stockOfWh('A', 'W2', d), c.mvByDoc(d, 'x1').length, c.mvByRef(d, 'BL-1').length], [2000, 200, 1000, 1, 1], 'index: built once per movements array');
+  d.movements.push({ sku: 'A', qm: -500, type: 'sale', unit_c: 200, wh: 'W2', ref: 'FSH-1', docId: 'x2' });
+  eq([c.stockOf('A', d), c.stockOfWh('A', 'W2', d), c.mvByRef(d, 'FSH-1').length, c.mvByDoc(d, 'x2').length, c.mvIndex(d) === x0], [1500, 500, 1, 1, true], 'index: a push into the same array extends it in place');
+  d.movements = [d.movements[0], { sku: 'A', qm: 2000, type: 'purchase', unit_c: 600, ref: 'BL-2' }];
+  eq([c.stockOf('A', d), c.stockOfWh('A', 'W1', d), c.avgCost(d, 'A'), c.mvByRef(d, 'FSH-1').length, c.mvByRef(d, 'BL-2').length, c.mvByDoc(d, 'x2').length], [4000, 3000, 400, 0, 1, 0], 'index: a replaced array (same length) is indexed afresh — the movement without `wh` sits in the main warehouse');
+  d.movements.pop(); eq([c.stockOf('A', d), c.avgCost(d, 'A'), c.mvByRef(d, 'BL-2').length], [2000, 200, 0], 'index: an array that shrank in place is rebuilt');
+  d.products.push({ sku: 'B', opening: 5000, cost_c: 70 }); eq([c.stockOf('B', d), c.prodOf(d, 'B').cost_c], [5000, 70], 'prodOf: a product pushed into the same array is found');
+  // `_srv` rows (the server ledger) move the stock but never the average cost
+  d.movements.push({ sku: 'A', qm: 1000, type: 'sale_return', unit_c: 99999, ref: 'POS-1', _srv: 1 }, { sku: 'A', qm: -300, type: 'sale', unit_c: 200, ref: 'POS-2', docId: 'D:k:2026-09-20', _srv: 1 });
+  eq([c.stockOf('A', d), c.avgCost(d, 'A'), c.mvByDoc(d, 'D:k:2026-09-20').length], [2700, 200, 1], 'avgCost ignores `_srv` rows (stock still counts them; indexed by docId too)'); }
+// ── paging: Lëvizjet / Hyrje në stok / Dalje nga stok, Hyrje / Dalje / Pagesa and Ditari show the newest 500 rows + "Shfaq më shumë"
+c.state.db = c.seedDb();
+{ const all = t => (t.fullRows ? t.fullRows().length : -1), more = t => t.more && t.more(); const many = Array.from({ length: 1150 }, (_, i) => ({ date: '15.09.2026', type: i % 2 ? 'sale' : 'purchase', sku: 'LED-18', qm: i % 2 ? -1000 : 1000, wh: 'W1', ref: 'X-' + i, party: 'Test', unit_c: 510, note: '' }));
+  c.state.db = { ...db(), movements: [...db().movements, ...many] }; const n = db().movements.length;
+  c.go('stok', 'Lëvizjet'); let t = c.pageTable('Lëvizjet');
+  eq([t.rows.length, t.hasMore, /^Shfaq më shumë \(500 nga 669 të tjera\)$/.test(t.moreLabel), t.footer.startsWith('Shfaqen 500 nga ' + n + ' lëvizje'), all(t)], [500, true, true, true, n], 'Lëvizjet: the newest 500 of ' + n + ' rows, "Shfaq më shumë", the export carries all');
+  eq(t.rows[0].cells.some(x => x.t === 'X-1149'), true, 'Lëvizjet: newest first');
+  more(t); t = c.pageTable('Lëvizjet'); eq([t.rows.length, t.hasMore], [1000, true], 'Shfaq më shumë → 1000 rows'); more(t); t = c.pageTable('Lëvizjet'); eq([t.rows.length, t.hasMore, t.moreLabel, t.footer.startsWith('Shfaqen')], [n, false, '', false], 'all rows → the button goes away');
+  c.go('stok', 'Hyrje në stok'); t = c.pageTable('Hyrje në stok'); eq([t.rows.length, t.hasMore, c.state.mvLimit], [500, true, 0], 'go() starts a paged page again from 500 rows (Hyrje në stok)');
+  c.state.db = c.seedDb(); c.state.payLimit = 4; t = c.pageTable('Pagesa'); eq([t.rows.length, t.hasMore, all(t), t.footer.startsWith('Shfaqen 4 nga ' + db().payments.length)], [4, true, db().payments.length, true], 'Pagesa: paged the same way');
+  c.state.payLimit = 0; t = c.pageTable('Hyrje'); eq([t.rows.length, t.hasMore], [db().payments.filter(p => p.dir === 'in').length, false], 'Hyrje (payments): a short list has no button');
+  const J = c.journal(); c.state.jLimit = 10; t = c.pageTable('Ditari'); const maxL = Math.max(...J.map(e => e.lines.length));
+  eq([t.rows.length >= 10 && t.rows.length < 10 + maxL, t.hasMore, /regjistrime të tjera\)$/.test(t.moreLabel), all(t), /^Shfaqen \d+ nga 28 regjistrime$/.test(t.footer)], [true, true, true, J.reduce((a, e) => a + e.lines.length, 0), true], 'Ditari: whole entries up to the limit (an entry is never split), the export carries every line');
+  t = c.pageTable('Hyrjet kontabël'); eq([t.rows.length, t.hasMore, all(t)], [10, true, J.length], 'Hyrjet kontabël: 10 entries of ' + J.length);
+  c.go('kontab', 'Ditari'); t = c.pageTable('Ditari'); eq([t.rows.length, t.hasMore, c.state.jLimit], [J.reduce((a, e) => a + e.lines.length, 0), false, 0], 'Ditari: the seed (under 500 lines) shows everything');
+  eq([html.includes('{{ tbl.moreLabel }}'), html.includes('sc-camel-on-click="{{ tbl.more }}"')], [true, true], 'table template: the "Shfaq më shumë" button is bound'); }
+// ── units: the full list, whole-number vs. 3-decimal units, the product form's unit combo
+c.state.db = c.seedDb();
+eq(c.UNITS, ['copë', 'm', 'm²', 'm³', 'kg', 'l', 'pako', 'shishe', 'gotë', 'thes', 'kovë'], 'units: copë, m, m², m³, kg, l, pako, shishe, gotë, thes, kovë');
+eq(c.UNITS.map(u => c.unitDecimals(u)), [0, 3, 3, 3, 3, 3, 0, 0, 0, 0, 0], 'units: copë/pako/shishe/gotë/thes/kovë whole numbers, the others 3 decimals');
+{ const t = c.pageTable('Njësitë'); eq([/shishe, gotë/.test(t.sub), /cl \/ ml/.test(t.sub), t.rows.find(r => r.cells[0].t === 'kovë').cells[5].t, t.rows.find(r => r.cells[0].t === 'm²').cells[5].t], [true, true, '0', '3'], 'Njësitë page: the list, recipe note, decimals per unit');
+  c.openForm('product'); const u = fld('unit'); eq([u.isCombo, u.opts.map(o => o.label), u.opts.find(o => o.label === 'gotë').sub, u.opts.find(o => o.label === 'l').sub], [true, c.UNITS, 'numra të plotë', 'deri në 3 decimale'], 'product form: the unit is a combo with all 11 units'); c.state.frm = null; }
+// ── recipe products: rules, storage, unit lock
+c.state.db = c.seedDb(); c.state.toast = null;
+const P = (sku, name, unit, opening, cost_c, extra = {}) => ({ name, sku, barcode: '—', cat: 'Pije', unit, tax: 'E', price_c: 300, cost_c, openCost_c: cost_c, opening, minStock: 0, ...extra });
+eq([c.addProduct(P('VOD', 'Vodka', 'l', 7000, 1200)), c.addProduct(P('LIM', 'Limon', 'copë', 20000, 10)), c.addProduct(P('SYR', 'Shurup', 'l', 0, 300))], [true, true, true], 'ingredients added (vodka 7 l, 20 limonë, shurup pa stok)');
+eq(c.addProduct(P('KOK', 'Koktej', 'gotë', 0, 250, { price_c: 450, openCost_c: 250, cost_t: 25000, recipe: [{ sku: 'VOD', qm: 40 }, { sku: 'LIM', qm: 500 }] })), true, 'recipe product added: 4 cl vodka + ½ limon per gotë');
+{ const k = c.prodOf(db(), 'KOK'); eq([k.opening, k.openCost_c, k.cost_c, k.cost_t, k.recipe, k.pos, c.isRecipe(k), c.recipeCost(k, db()), c.makeQm(k, db())], [0, 0, 0, 0, [{ sku: 'VOD', qm: 40 }, { sku: 'LIM', qm: 500 }], undefined, true, Math.round((1200 * 40 + 10 * 500) / 1000), 40000], 'recipe product stored with opening/cost 0; cost from the ingredients (€0.53), 40 can be made (limons run out first)'); }
+const refused = (r, re, what) => { const msg = String(c.state.toast || ''); eq([r, re.test(msg)], [false, true], what + ' → “' + msg.slice(0, 70) + '…”'); c.state.toast = null; };
+refused(c.addProduct(P('X1', 'X1', 'gotë', 0, 0, { recipe: [{ sku: 'KOK', qm: 1000 }] })), /ka vetë recetë/, 'recipe rule: an ingredient cannot itself be a recipe');
+refused(c.updateProduct('LIM', { recipe: [{ sku: 'VOD', qm: 10 }] }), /përbërës te “Koktej”/, 'recipe rule: a product used as an ingredient cannot get a recipe');
+refused(c.addProduct(P('X2', 'X2', 'gotë', 0, 0, { recipe: [{ sku: 'X2', qm: 1000 }] })), /vetvetes/, 'recipe rule: no self');
+refused(c.addProduct(P('X3', 'X3', 'gotë', 0, 0, { recipe: [{ sku: 'NOPE', qm: 1000 }] })), /nuk ekziston/, 'recipe rule: ingredients must exist');
+for (const qm of [0, -40, 1.5, '40']) refused(c.addProduct(P('X4', 'X4', 'gotë', 0, 0, { recipe: [{ sku: 'VOD', qm }] })), /më e madhe se 0/, 'recipe rule: qm must be a positive integer (' + JSON.stringify(qm) + ')');
+refused(c.addProduct(P('X5', 'X5', 'gotë', 0, 0, { recipe: [{ sku: 'VOD', qm: 40 }, { sku: 'VOD', qm: 10 }] })), /përsëritet/, 'recipe rule: an ingredient only once');
+c.addProduct(P('GIN', 'Xhin', 'l', 3000, 900)); refused(c.updateProduct('GIN', { recipe: [{ sku: 'SYR', qm: 10 }] }), /gjendje fillestare, stok ose lëvizje/, 'recipe rule: a product with opening stock cannot become a recipe');
+refused(c.updateProduct('PS-050', { recipe: [{ sku: 'SYR', qm: 10 }] }), /gjendje fillestare, stok ose lëvizje/, 'recipe rule: a product with opening + movements cannot become a recipe');
+c.addProduct(P('TON', 'Tonik', 'shishe', 0, 80)); c.adjustStock({ sku: 'TON', counted_qm: 6000, note: '', date: '20.09.2026' });
+refused(c.updateProduct('TON', { recipe: [{ sku: 'SYR', qm: 10 }] }), /gjendje fillestare, stok ose lëvizje/, 'recipe rule: opening 0 but stock from a movement → refused');
+eq([db().products.filter(p => /^X\d$/.test(p.sku)).length, c.isRecipe(c.prodOf(db(), 'LIM')), c.isRecipe(c.prodOf(db(), 'VOD'))], [0, false, false], 'refused changes leave the books untouched');
+// unit lock: opening / any movement / used in a recipe
+eq(c.updateProduct('SYR', { unit: 'kg' }), true, 'unit change allowed while the product has no opening, movement or recipe use'); c.updateProduct('SYR', { unit: 'l' });
+c.addProduct(P('KOK2', 'Koktej me shurup', 'gotë', 0, 0, { recipe: [{ sku: 'SYR', qm: 20 }] }));
+refused(c.updateProduct('SYR', { unit: 'kg' }), /Njësia nuk ndryshohet/, 'unit lock: an ingredient of a recipe');
+refused(c.updateProduct('VOD', { unit: 'shishe' }), /Njësia nuk ndryshohet/, 'unit lock: opening stock');
+refused(c.updateProduct('TON', { unit: 'l' }), /Njësia nuk ndryshohet/, 'unit lock: a movement');
+eq([c.updateProduct('VOD', { unit: 'l', name: 'Vodka 40%' }), c.prodOf(db(), 'VOD').name], [true, 'Vodka 40%'], 'unit lock: saving the same unit is fine');
+eq([c.updateProduct('KOK2', { recipe: null }), c.prodOf(db(), 'KOK2').recipe, 'recipe' in c.prodOf(db(), 'KOK2'), c.unitLocked(db(), c.prodOf(db(), 'SYR'))], [true, undefined, false, false], 'recipe:null removes the recipe (and frees the ingredient\'s unit)');
+c.updateProduct('KOK2', { recipe: [{ sku: 'SYR', qm: 20 }] });
+eq(c.recipeQm('4 cl', 'l') + ' ' + c.recipeQm('40 ml', 'l') + ' ' + c.recipeQm('0.04', 'l') + ' ' + c.recipeQm('0,5 cl', 'l') + ' ' + c.recipeQm('1.5', 'copë') + ' ' + c.recipeQm('2', 'gotë'), '40 40 40 5 1500 2000', 'recipeQm: 4 cl = 40 ml = 0.04 l → 40; ½ cl → 5; other units in their own unit');
+eq([c.recipeQm('4 cl', 'kg'), c.recipeQm('1.5 ml', 'l'), c.recipeQm('0.0405', 'l'), c.recipeQm('0', 'l'), c.recipeQm('abc', 'l')], [null, null, null, null, null], 'recipeQm: cl/ml only for litres, never below 1 ml, > 0');
+// the product form: Lloji = Recetë → ingredient lines (no cost / opening / minimum), the cost and margin from the ingredients, "Shfaqe në POS"
+c.openForm('product'); c.setF({ name: 'Gotë vere', sku: 'gl-ver', cat: 'Pije', catQ: 'Pije', unit: 'gotë', unitQ: 'gotë', tax: 'E' });
+fld('rec').opts.find(o => o.label.startsWith('Recetë')).go();
+{ const v = c.formVals(); eq([v.hasLines, v.noPrice, v.linesTitle, ['cost', 'costG', 'opening', 'minStock', 'packUnit'].some(k => v.fields.some(f => f.key === k)), v.fields.some(f => f.label === 'Kosto nga receta'), v.actions[0].disabled], [true, true, 'Përbërësit e recetës', false, true, true], 'product form (recipe): ingredient lines, no cost/opening/minimum fields, recipe cost shown, blocked until filled');
+  eq(v.lines[0].opts.map(o => o.sku).filter(s => ['KOK', 'KOK2', 'VOD'].includes(s)), ['VOD'], 'recipe picker: stock products only (no recipe products)'); }
+c.setFormLine(c.state.frm.lines[0].id, { sku: 'VOD', artQ: 'Vodka', qty: '12 cl' }); typeF('price', '3.00');
+{ const v = c.formVals(); eq([v.lines[0].ev.qm, v.lines[0].srcLabel, v.fields.find(f => f.label === 'Kosto nga receta').value.startsWith(c.fmt(144)), v.actions[0].disabled], [120, 'Kosto e përbërësit (kosto mes.)', true, false], 'recipe line: "12 cl" → 120 ml; cost €1.44 per gotë; ready'); }
+fld('pos').opts.find(o => o.label.startsWith('Jo')).go(); c.formVals().actions[0].go();
+{ const g = c.prodOf(db(), 'GL-VER'); eq([!!g, g && g.recipe, g && g.opening, g && g.cost_c, g && g.pos, c.state.frm], [true, [{ sku: 'VOD', qm: 120 }], 0, 0, false, null], 'product form (recipe): saved with its recipe, opening/cost 0, hidden from the tills'); }
+c.openForm('product', { name: 'Gabim', sku: 'GB-1', cat: 'Pije', catQ: 'Pije', unit: 'gotë', unitQ: 'gotë', tax: 'E', rec: true, lines: [{ ...c.newLine(), fresh: false, sku: 'VOD', artQ: 'Vodka', qty: '4 kg' }] }); typeF('price', '1.00');
+{ const v = c.formVals(); eq([v.actions[0].disabled, /Kontrolloni sasinë te rreshti 1/.test(v.msg)], [true, true], 'recipe line: a quantity in the wrong unit blocks the save'); c.state.frm = null; }
+c.openProduct('VOD'); c.drawerVals().actions[0].go(); { const v = c.formVals(); eq([fld('unit'), v.fields.some(f => f.label === 'Njësia' && f.isInfo && /nuk ndryshohet/.test(f.value)), v.fields.some(f => f.label === 'Lloji' && f.isInfo)], [undefined, true, true], 'edit form: a locked unit is an info field; an ingredient with stock cannot switch to a recipe'); c.state.frm = null; }
+c.openProduct('KOK'); c.drawerVals().actions[0].go(); { const v = c.formVals(); eq([c.state.frm.rec, v.lines.map(l => [l.L.sku, l.L.qty, l.ev.qm]), v.lines[0].opts.some(o => o.sku === 'KOK'), v.actions[0].disabled], [true, [['VOD', '0.04', 40], ['LIM', '0.5', 500]], false, false], 'edit form of a recipe: pre-filled ingredient lines (qty in the ingredient unit), the product itself not offered'); c.state.frm = null; }
+// drawers: the recipe, "përdoret në …", no stock actions on a recipe
+c.openProduct('KOK'); { const d = c.drawerVals(); eq([d.badge.text, d.actions.map(a => a.label), d.meta.find(m => m.k === 'Mund të përgatiten').v, d.sections[0].title, d.sections[0].rows.length, d.totals[0].v], ['Recetë', ['Redakto', 'Faturo', 'Etiketë / barkod'], '40 gotë', 'Receta · për 1 gotë', 2, c.fmt(53)], 'recipe drawer: makeable qty, the recipe, no Rregullo stokun / Blerje e re / Transfero'); }
+c.openProduct('LIM'); { const d = c.drawerVals(); eq([d.meta.find(m => m.k === 'Përdoret në').v, d.actions.some(a => a.label === 'Rregullo stokun')], ['Koktej', true], 'ingredient drawer: "Përdoret në Koktej"'); } c.state.dr = null;
+// ── pickers: a recipe is never bought, ordered from a supplier, transferred or counted
+{ const L = [{ ...c.newLine(), fresh: false, sku: '', artQ: 'Koktej' }]; const has = (kind) => { c.openForm(kind, { lines: L }); const r = c.formVals().lines[0].opts.some(o => o.sku === 'KOK'); c.state.frm = null; return r; };
+  eq([has('purchase'), has('po'), has('transfer'), has('invoice'), has('quote'), has('order')], [false, false, false, true, true, true], 'pickers: recipe excluded from purchase / purchase order / transfer, offered on invoice / quote / order');
+  c.openForm('adjust', { artQ: 'Koktej' }); eq(fld('art').opts.some(o => o.label === 'Koktej'), false, 'adjust: a recipe is not in the product list'); c.state.frm = null;
+  eq([c.evalLine({ ...L[0], sku: 'KOK', qty: '1' }, 'purchase').err, c.evalLine({ ...L[0], sku: 'KOK', qty: '1' }, 'transfer').err, c.evalLine({ ...L[0], sku: 'KOK', qty: '1' }, 'sale').err], ['recipe', 'recipe', null], 'evalLine: a recipe line is an error only when buying / transferring');
+  c.openForm('purchase', { supplier: db().suppliers[0].name, supplierQ: db().suppliers[0].name, lines: [{ ...L[0], sku: 'KOK', artQ: 'Koktej' }] }); eq([c.formVals().actions[0].disabled, /është recetë/.test(c.formVals().msg)], [true, true], 'purchase form: a recipe line blocks with a message'); c.state.frm = null;
+  const t0 = c.stockOf('KOK'); c.adjustStock({ sku: 'KOK', counted_qm: 5000, note: '', date: '20.09.2026' }); eq([c.stockOf('KOK'), /recetë/.test(c.state.toast || '')], [t0, true], 'adjustStock refuses a recipe product'); c.state.toast = null; }
+// ── invoices: a recipe line moves its ingredients (rounded half away from zero, `via`), never itself; makeable stock warns
+const cust = db().customers[0];
+const iline = (sku, qty, unit_c = 450) => { const l = c.calcLine({ unit_c, qm: Math.round(qty * 1000), rate: 18, bp: 0 }); return { name: (c.prodOf(db(), sku) || {}).name, sku, unit: 'gotë', qty, unit_c, rate: 18, tax: 'E', disc: 0, sub: l.sub, vatc: l.vatc, tot: l.tot }; };
+const mvOf = ref => db().movements.filter(m => m.ref === ref).map(m => [m.type, m.sku, m.qm, m.via || '', m.unit_c]);
+{ const v0 = c.stockOf('VOD'), l0 = c.stockOf('LIM');
+  const [n1] = c.issueBatch([{ cust, items: [iline('KOK', 3)], note: '' }], 'issue', { date: '2026-09-20', due: '2026-10-05' });
+  eq(mvOf(n1), [['sale', 'VOD', -120, 'KOK', 1200], ['sale', 'LIM', -1500, 'KOK', 10]], 'invoice: 3 × Koktej → 120 ml vodka + 1.5 limon out at their average cost, via KOK (no movement of KOK itself)');
+  eq([c.stockOf('VOD') - v0, c.stockOf('LIM') - l0, c.stockOf('KOK')], [-120, -1500, 0], 'invoice: ingredient stock down, the recipe holds none');
+  const [n2] = c.issueBatch([{ cust, items: [iline('KOK', 0.333)], note: '' }], 'issue', { date: '2026-09-20', due: '2026-10-05' });
+  eq(mvOf(n2).map(m => m[2]), [-13, -167], 'invoice: 0.333 gotë → 13.32 → 13 ml, 166.5 → 167 (half away from zero)');
+  const J = c.journal().filter(e => e.ref === n1); eq(J.find(e => /Kosto e mallit/.test(e.desc)).lines, [['5000', 159, 0], ['1300', 0, 159]], 'journal: the recipe sale posts the ingredients\' cost (144 + 15)');
+  // R:Shitje › Sipas artikullit: the recipe product's cost = its ingredients (via), the ingredient's own row only its direct sales
+  const [n3] = c.issueBatch([{ cust, items: [iline('VOD', 1, 2500)], note: '' }], 'issue', { date: '2026-09-20', due: '2026-10-05' });
+  c.state.rp = 'all'; c.state.rTab = 'Sipas artikullit'; const t = c.pageTable('R:Shitje'); const row = sku => t.rows.find(r => r.cells[1].t === sku);
+  eq([row('KOK').cells[4].t, row('VOD').cells[4].t], [c.fmt(159 + Math.round(13 * 1200 / 1000) + Math.round(167 * 10 / 1000)), c.fmt(1200)], 'R:Shitje by article: Koktej costs its ingredients (via), Vodka only its own sale');
+  c.state.rTab = ''; c.state.rp = 'month';
+  // the invoice form warns against the makeable quantity (40 − 3.333 sold → 36.667 → 36)
+  c.openForm('invoice', { customer: cust.name, customerQ: cust.name, lines: [{ ...c.newLine(), fresh: false, sku: 'KOK', artQ: 'Koktej', qty: '50' }] });
+  { const v = c.formVals(); eq([v.actions[2].disabled, /Koktej ka 36 gotë për t’u përgatitur nga përbërësit/.test(v.msg)], [false, true], 'invoice form: recipe stock warning uses the makeable quantity'); } c.state.frm = null;
+  // cancel mirrors the ORIGINAL movements even after the recipe changed
+  c.updateProduct('KOK', { recipe: [{ sku: 'VOD', qm: 60 }] });
+  const v1 = c.stockOf('VOD'), l1 = c.stockOf('LIM'); c.cancelInvoice(n1);
+  eq([mvOf(n1).filter(m => m[0] === 'sale_cancel'), c.stockOf('VOD') - v1, c.stockOf('LIM') - l1], [[['sale_cancel', 'VOD', 120, 'KOK', 1200], ['sale_cancel', 'LIM', 1500, 'KOK', 10]], 120, 1500], 'cancelInvoice: mirrors the invoice\'s own movements (old recipe, same cost), not the current recipe');
+  c.updateProduct('KOK', { recipe: [{ sku: 'VOD', qm: 40 }, { sku: 'LIM', qm: 500 }] });
+  // credit note: the ingredients come back pro rata, as they left; cancelling it mirrors the note
+  const [n4] = c.issueBatch([{ cust, items: [iline('KOK', 4)], note: '' }], 'issue', { date: '2026-09-20', due: '2026-10-05' });
+  c.updateProduct('KOK', { recipe: [{ sku: 'SYR', qm: 10 }] });
+  const v2 = c.stockOf('VOD'), l2 = c.stockOf('LIM'), s2 = c.stockOf('SYR');
+  const kr = c.createReturn({ kind: 'sale', ref: n4, items: [{ li: 0, qty: 1 }], date: '2026-09-20', reason: '', account: 'bank1' });
+  eq([mvOf(kr), c.stockOf('VOD') - v2, c.stockOf('LIM') - l2, c.stockOf('SYR') - s2], [[['sale_return', 'VOD', 40, 'KOK', 1200], ['sale_return', 'LIM', 500, 'KOK', 10]], 40, 500, 0], 'credit note on a recipe line: ¼ of the ingredients back, at their original cost (never the current recipe)');
+  eq(c.journal().filter(e => e.ref === kr).find(e => /Kthim malli/.test(e.desc)).lines, [['1300', 53, 0], ['5000', 0, 53]], 'credit note: goods back at cost in the journal');
+  c.cancelReturn(kr); eq([mvOf(kr).filter(m => m[0] === 'return_cancel').map(m => [m[1], m[2]]), c.stockOf('VOD') - v2, c.stockOf('LIM') - l2], [[['VOD', -40], ['LIM', -500]], 0, 0], 'cancelReturn: mirrors the note\'s own movements (ingredients out again)');
+  c.updateProduct('KOK', { recipe: [{ sku: 'VOD', qm: 40 }, { sku: 'LIM', qm: 500 }] }); }
+// ── local POS import: recipe lines move their ingredients; returns restock nothing; cancels mirror the original
+{ const kit = (sku, qty_q, extra = {}) => ({ ...it(sku, (c.prodOf(db(), sku) || {}).name, Math.round(qty_q / 10), 450), qty_q, ...extra });
+  const v0 = c.stockOf('VOD'), l0 = c.stockOf('LIM'), cash0 = c.accountBalance('cash1');
+  c.importPosSales([rcpt('r-k1', 'POS-0001/000201', 'final', 'fiscalized_sim', [kit('KOK', 15000)], 797, 0)], []);
+  eq(mvOf('POS-0001/000201'), [['sale', 'VOD', -60, 'KOK', 1200], ['sale', 'LIM', -750, 'KOK', 10]], 'POS import: 1.5 Koktej → qty_q × qm / 10000 of each ingredient, via KOK');
+  c.importPosSales([rcpt('r-k1r', 'POS-0001/000202', 'return', 'fiscalized_sim', [kit('KOK', -10000)], -531, 0, { orig_id: 'r-k1' })], []);
+  eq([mvOf('POS-0001/000202'), c.stockOf('VOD') - v0, c.stockOf('LIM') - l0, c.accountBalance('cash1') - cash0], [[], -60, -750, 797 - 531], 'POS return of a recipe item: money back, NO ingredient restock (served = waste)');
+  c.updateProduct('KOK', { recipe: [{ sku: 'VOD', qm: 60 }] });
+  c.importPosSales([rcpt('r-k2', 'POS-0001/000203', 'final', 'fiscalized_sim', [kit('KOK', 20000), it('LED-18', 'LED', 1000, 890)], 1950, 0)], []);
+  c.updateProduct('KOK', { recipe: [{ sku: 'VOD', qm: 40 }, { sku: 'LIM', qm: 500 }] });
+  const v1 = c.stockOf('VOD'), l1 = c.stockOf('LIM'), d1 = c.stockOf('LED-18');
+  c.importPosSales([{ ...rcpt('r-k2c', 'POS-0001/000204', 'cancel', 'fiscalized_sim', [], 0, 0, { orig_id: 'r-k2' }), sub_c: 0, vat_c: 0, total_c: 0 }], []);
+  eq([mvOf('POS-0001/000204').map(m => [m[0], m[1], m[2], m[3]]), c.stockOf('VOD') - v1, c.stockOf('LIM') - l1, c.stockOf('LED-18') - d1], [[['sale_cancel', 'VOD', 120, 'KOK'], ['sale_cancel', 'LED-18', 1000, '']], 120, 0, 1000], 'POS cancel (no lines): mirrors the original\'s movements — the recipe as it was sold, the plain item too');
+  c.importPosSales([rcpt('r-k3', 'POS-0001/000205', 'final', 'fiscalized_sim', [kit('KOK', 30000)], 1593, 0)], []);
+  c.importPosSales([rcpt('r-k3c', 'POS-0001/000206', 'cancel', 'fiscalized_sim', [kit('KOK', 10000)], 531, 0, { orig_id: 'r-k3' })], []);
+  eq([mvOf('POS-0001/000205').map(m => m[2]), mvOf('POS-0001/000206').map(m => [m[0], m[1], m[2]])], [[-120, -1500], [['sale_cancel', 'VOD', 40], ['sale_cancel', 'LIM', 500]]], 'POS cancel with its own (partial) lines: the original movements pro rata');
+  const v4 = c.stockOf('VOD');
+  c.importPosSales([rcpt('r-k4c', 'POS-0001/000207', 'cancel', 'fiscalized_sim', [kit('KOK', 10000)], 531, 0, { orig_id: 'r-not-here' })], []);
+  eq([mvOf('POS-0001/000207').map(m => [m[0], m[1], m[2]]), c.stockOf('VOD') - v4], [[['sale_cancel', 'VOD', 40], ['sale_cancel', 'LIM', 500]], 40], 'POS cancel whose original is not in the books: its own lines, reversed through the recipe');
+  const J = c.journal(); eq(J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal balanced with recipe receipts, returns and cancels'); }
+// ── journal: POS revenue (4000) and VAT (2400) each by its own sign
+{ const mixed = rcpt('r-mx', 'POS-0001/000210', 'final', 'fiscalized_sim', [{ sku: 'LED-18', name: 'LED', unit: 'copë', qty_m: 1000, unit_c: 1000, rate: 0, tax: 'A', sub_c: 1000, vat_c: 0, tot_c: 1000 }, { sku: 'KB-325', name: 'Kabllo', unit: 'm', qty_m: -1000, unit_c: 500, rate: 18, tax: 'E', sub_c: -500, vat_c: -90, tot_c: -590 }], 410, 0);
+  c.importPosSales([mixed], []); const e = c.journal().find(x => x.ref === 'POS-0001/000210' && x.lines.some(l => l[0] === '4000'));
+  eq([e.lines.find(l => l[0] === '4000'), e.lines.find(l => l[0] === '2400'), e.lines.every(l => l[1] >= 0 && l[2] >= 0), e.lines.reduce((a, l) => a + l[1] - l[2], 0)], [['4000', 0, 500], ['2400', 90, 0], true, 0], 'journal: a mixed receipt (sale at 0 % + return at 18 %) posts revenue as a credit and the VAT refund as a debit — no negative amounts'); }
+// ── stock pages: recipe rows only where stock makes sense; makeable quantity per warehouse in the catalogue
+c.state.db = { ...db(), products: [...db().products, P('OLD', 'Recetë e vjetër', 'gotë', 3000, 100, { minStock: 9000, recipe: [{ sku: 'VOD', qm: 10 }] })] }; // legacy books: a recipe that still carries an opening / minimum
+{ const has = (t, sku) => t.rows.some(r => r.cells.some(x => x.t === sku));
+  eq([has(c.pageTable('Gjendja'), 'KOK'), has(c.pageTable('Inventar'), 'KOK'), has(c.pageTable('Gjendja'), 'OLD'), has(c.pageTable('Gjendja'), 'VOD')], [false, false, false, true], 'Gjendja / Inventar: no recipe rows');
+  eq([has(c.pageTable('Lista e çmimeve'), 'KOK'), has(c.pageTable('Barkodet'), 'KOK')], [true, true], 'Lista e çmimeve / Barkodet still list recipe products');
+  const dep = c.pageTable('Depo').rows.find(r => r.cells[0].t === 'W1'); eq(dep.cells[3].t, String(db().products.filter(p => !c.isRecipe(p) && c.stockOfWh(p.sku, 'W1') !== 0).length), 'Depo: article counts without recipe products');
+  c.state.rTab = 'Lëvizjet sipas artikullit'; eq([has(c.pageTable('R:Stok'), 'OLD'), has(c.pageTable('R:Stok'), 'KOK'), has(c.pageTable('R:Stok'), 'LIM')], [false, false, true], 'R:Stok: no recipe rows'); c.state.rTab = '';
+  c.state.section = 'dashboard'; c.state.page = 'Paneli'; const al = c.renderVals().alerts.find(a => /Stok i ulët/.test(a.t)); eq([!!al, /Recetë|Koktej/.test(al ? al.s : '')], [true, false], 'low-stock alert: never a recipe product (even one with a legacy minimum)');
+  c.state.section = 'produkte'; c.state.page = 'Produktet'; const pr = c.renderVals().products.find(p => p.sku === 'KOK'); eq([!!pr, /recetë/.test(pr.stock), pr.low], [true, true, false], 'Produktet: the recipe product is listed (makeable qty, marked "recetë")');
+  const cat = c.pageTable('Kategoritë').rows.find(r => r.cells[0].t === 'Pije'); eq(cat.cells[1].t, String(db().products.filter(p => p.cat === 'Pije').length), 'Kategoritë: recipe products counted in their category'); }
+c.state.db = { ...db(), products: db().products.filter(p => p.sku !== 'OLD') };
+{ const k = () => c.prodOf(db(), 'KOK'), wh = (sku, w) => c.stockOfWh(sku, w);
+  eq([c.makeQm(k(), db(), 'W1'), c.makeQm(k(), db(), 'W2'), c.makeQm(k(), db())], [Math.min(Math.floor(wh('VOD', 'W1') / 40), Math.floor(wh('LIM', 'W1') / 500)) * 1000, 0, Math.min(Math.floor(c.stockOf('VOD') / 40), Math.floor(c.stockOf('LIM') / 500)) * 1000], 'makeQm: per warehouse and in total (nothing in W2)');
+  c.transferStock({ from: 'W1', to: 'W2', items: [{ name: 'Vodka', sku: 'VOD', unit: 'l', qty: 0.2 }, { name: 'Limon', sku: 'LIM', unit: 'copë', qty: 2 }], date: '2026-09-20', note: '' });
+  eq(c.makeQm(k(), db(), 'W2'), 4000, 'makeQm: 200 ml + 2 limonë in W2 → 4 cocktails');
+  c.issueBatch([{ cust, items: [iline('LIM', 5, 20)], note: '' }], 'issue', { date: '2026-09-20', due: '2026-10-05', wh: 'W2' });
+  eq([wh('LIM', 'W2'), c.makeQm(k(), db(), 'W2')], [-3000, 0], 'makeQm: clamped at 0 when an ingredient is negative');
+  const cp = c.posCatalogPayload().products.find(p => p.sku === 'KOK');
+  eq([cp.stock_qm, cp.stock_by_wh, Object.keys(cp).some(x => x === 'recipe' || x === 'pack')], [c.makeQm(k(), db()), { W1: c.makeQm(k(), db(), 'W1'), W2: 0 }, false], 'catalogue: a recipe ships its makeable quantity (per warehouse), never the recipe itself');
+  c.updateProduct('LIM', { pack: { unit: 'thes', qm: 50000 } }); eq([c.prodOf(db(), 'LIM').pack, 'pack' in c.posCatalogPayload().products.find(p => p.sku === 'LIM')], [{ unit: 'thes', qm: 50000 }, false], 'pack: stored as info only, never sent to the tills');
+  c.openProduct('LIM'); eq(c.drawerVals().meta.find(m => m.k === 'Paketimi').v, '1 thes = 50 copë', 'pack: shown in the product drawer'); c.state.dr = null;
+  eq([c.posCatalogPayload().products.some(p => p.sku === 'GL-VER'), c.posCatalogPayload().products.some(p => p.sku === 'VOD'), c.posCatalogPayload().products.length, db().products.filter(p => p.pos !== false).length], [false, true, db().products.filter(p => p.pos !== false).length, db().products.length - 1], 'catalogue: only products shown on the tills (pos !== false)'); }
+// zero visible products: never sent — silent on the timer, a toast only by hand
+{ const all = db(); c.state.db = { ...all, products: all.products.map(p => ({ ...p, pos: false })) }; c.state.toast = null; c._catRefused = null;
+  const h = c.posCatalogHash(); eq([c.posCatalogReady(false), c.state.toast, c._catRefused === h], [null, null, true], 'catalogue with zero visible products: refused silently on the timer, hash remembered');
+  eq([c.posCatalogReady(true), c.state.toast], [null, c.CAT_EMPTY], 'catalogue with zero visible products: a manual push says why'); c.state.toast = null; c.state.db = all; }
+// local / server sync with stubbed transports: nothing is pushed while nothing is visible, the manual sync names it, the timer stays quiet
+(async () => {
+  const off = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' };
+  const p = new C({}); p._api = off; p.state.db = p.seedDb(); p.state.session = { name: 'Arben Berisha', role: 'Pronar', userId: 'u1' }; const calls = [];
+  p.posFetch = async (path, o = {}) => { calls.push((o.method || 'GET') + ' ' + path.split('?')[0]); if (path === '/health') return { pos_name: 'Arka test', pos_id: 'POS-0001', version: '1', pending_sync: 0, fiscal: { pending: 0, mode: 'ATK_ELECTRONIC' } }; if (path.startsWith('/sales')) return { receipts: [], shifts: [], cursor: 0 }; if (path === '/catalog') return { imported: { products: JSON.parse(o.body).products.length, customers: 5 } }; return {}; };
+  const hidden = p.state.db.products.map(x => ({ ...x, pos: false })); p.state.db = { ...p.state.db, products: hidden };
+  await p.posSync(false); eq([calls.includes('POST /catalog'), p.state.toast, p._catRefused === p.posCatalogHash()], [false, null, true], 'local sync (timer), zero visible: no push, no toast');
+  calls.length = 0; await p.posSync(false); eq(calls.filter(x => x === 'POST /catalog'), [], 'local sync (timer): the refused catalogue is not retried');
+  await p.posSync(true); eq([calls.includes('POST /catalog'), p.state.toast.includes(p.CAT_EMPTY), p.state.toastColor], [false, true, '#B45309'], 'local sync (manual): the closing toast says the catalogue was not sent');
+  p.state.toast = null; eq([await p.posPushCatalog(true), p.state.toast], [null, p.CAT_EMPTY], '"Dërgo katalogun te POS-i": refused with the reason');
+  p.state.db = { ...p.state.db, products: hidden.map(x => x.sku === 'LED-18' ? { ...x, pos: true } : x) }; p.state.toast = null; calls.length = 0;
+  await p.posSync(false); eq([calls.filter(x => x === 'POST /catalog').length, p.posCfg().catalogHash === p.posCatalogHash(), p.state.toast], [1, true, null], 'local sync (timer): one visible product → pushed, hash saved');
+  const q = new C({}); q._api = off; q.state.db = { ...q.seedDb(), products: hidden }; q.state.session = p.state.session; const qc = [];
+  q.apiFetch = async (path, o = {}) => { qc.push((o.method || 'GET') + ' ' + path.split('?')[0]); if (path === '/pos/status') return { terminals: [], unsyncedReceipts: 0 }; if (path.startsWith('/pos/sales')) return { receipts: [], shifts: [], cursor: 0 }; if (path === '/pos/catalog') return { version: 3 }; return {}; };
+  await q.posSyncServer(false); eq([qc.includes('PUT /pos/catalog'), q.state.toast], [false, null], 'server sync (timer), zero visible: no catalogue PUT, no toast');
+  await q.posSyncServer(true); eq([qc.includes('PUT /pos/catalog'), q.state.toast.includes(q.CAT_EMPTY)], [false, true], 'server sync (manual): the closing toast says the catalogue was not sent');
+  q.state.db = { ...q.state.db, products: hidden.map(x => x.sku === 'LED-18' ? { ...x, pos: true } : x) }; await q.posSyncServer(false); eq([qc.filter(x => x === 'PUT /pos/catalog').length, q.posCfg().catalogVersionSrv], [1, 3], 'server sync: a visible catalogue is PUT');
+  clearTimeout(p._t); clearTimeout(q._t);
+})().catch(e => { console.log('FAIL catalogue push tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
