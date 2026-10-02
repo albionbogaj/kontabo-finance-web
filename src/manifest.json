@@ -1,0 +1,104 @@
+{
+  "41c485ee-a83e-4c75-9368-0c6295c697e4": {
+    "mime": "image/svg+xml",
+    "compressed": true,
+    "ext": "svg",
+    "size": 8443
+  },
+  "18c492f8-8ea8-43e3-8905-1899e88d25b1": {
+    "mime": "image/png",
+    "compressed": false,
+    "ext": "png",
+    "size": 6780
+  },
+  "26bef98f-9bb9-4e8f-95ec-d407fe4bccb5": {
+    "mime": "text/javascript",
+    "compressed": true,
+    "ext": "js",
+    "size": 69150
+  },
+  "32a0433c-e9bf-4a0d-b673-b0f09073a5d7": {
+    "mime": "text/javascript",
+    "compressed": true,
+    "ext": "js",
+    "size": 10751
+  },
+  "4cc4e233-d7f4-4f9a-b0c5-fb20c324c487": {
+    "mime": "text/javascript",
+    "compressed": true,
+    "ext": "js",
+    "size": 131835
+  },
+  "aedeead7-c424-4c3c-9e0a-94784d3bcf64": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 1640
+  },
+  "b285d7f0-a812-4db4-9974-31f5e2509c73": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 8872
+  },
+  "7e2756c2-edbc-410d-9c0a-d172d631e351": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 6836
+  },
+  "974d1677-99da-4c1a-9a79-4de7774b7186": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 5888
+  },
+  "2b5a97d2-adf7-4124-8b04-3c04a755341b": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 11624
+  },
+  "25a0e20c-7f49-494d-8cd6-a29151a4aefd": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 31432
+  },
+  "697bc529-8beb-4270-8726-269b429e9b18": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 2552
+  },
+  "d803ec25-6a0a-42e0-9525-b956bd625eea": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 14500
+  },
+  "3968af3b-a58b-4fb6-839e-435c5f1ff754": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 9444
+  },
+  "a768d351-fab9-4727-af3b-784eae79fea6": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 8520
+  },
+  "9f4e00e4-d91c-43d2-b6ae-e27260ba01dc": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 15120
+  },
+  "6d03794e-d1e1-4db7-8b1b-35f7d9d39a0d": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 24836
+  }
+}

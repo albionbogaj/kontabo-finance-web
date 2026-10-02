@@ -1,0 +1,859 @@
+// Extracts the <script type="text/x-dc"> logic from src/template.html and
+// compiles it (syntax only) — catches typos before a browser round-trip.
+// Also runs a few pure helpers headlessly to guard the money math.
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+
+const html = fs.readFileSync(path.join(__dirname, '..', 'src', 'template.html'), 'utf8');
+const m = html.match(/<script type="text\/x-dc"[^>]*>([\s\S]*?)<\/script>/);
+if (!m) throw new Error('logic script not found');
+let src = m[1].replace(/&quot;/g, '"');
+
+const ctx = { window: {}, document: {}, localStorage: null, console, setTimeout, clearTimeout, TextEncoder };
+vm.createContext(ctx);
+try {
+  vm.runInContext('class DCLogic{constructor(p){this.props=p||{};this.state={}} setState(u){const p=typeof u==="function"?u(this.state):u;this.state={...this.state,...p}} forceUpdate(){} }\n' + src + '\n;globalThis.C=Component;', ctx, { filename: 'template.html#logic' });
+  console.log('syntax OK');
+} catch (e) {
+  console.error('SYNTAX ERROR:', e.message);
+  process.exit(1);
+}
+
+// headless checks of the pure helpers
+const C = ctx.C;
+const c = new C({});
+const eq = (a, b, what) => { const ok = JSON.stringify(a) === JSON.stringify(b); console.log((ok ? 'ok  ' : 'FAIL') + ' ' + what + (ok ? '' : ' -> ' + JSON.stringify(a) + ' expected ' + JSON.stringify(b))); if (!ok) process.exitCode = 1; };
+
+eq(c.toC('18.50'), 1850, 'toC 18.50');
+eq(c.toC('18,5'), 1850, 'toC 18,5 (comma)');
+eq(c.toC('0.1'), 10, 'toC 0.1');
+eq(c.toC('1.999'), null, 'toC rejects 3 decimals');
+eq(c.toC('abc'), null, 'toC rejects text');
+eq(c.toC(''), null, 'toC empty is null');
+eq(c.toQ('1'), 1000, 'toQ 1');
+eq(c.toQ('2.5'), 2500, 'toQ 2.5');
+eq(c.toQ('0'), null, 'toQ 0 invalid');
+eq(c.toBp(''), 0, 'toBp empty = 0');
+eq(c.toBp('5'), 500, 'toBp 5%');
+eq(c.toBp('12.5%'), 1250, 'toBp 12.5%');
+eq(c.toBp('101'), null, 'toBp >100 invalid');
+eq(c.grossOf(1850, 18), 2183, 'gross of 18.50 @18%');
+eq(c.netOf(2183, 18), 1850, 'net of 21.83 @18%');
+eq(c.calcLine({ unit_c: 1850, qm: 120000, rate: 18, bp: 0 }), { sub: 222000, disc: 0, vatc: 39960, tot: 261960 }, 'line 120 × 18.50 (matches seed FSH-00125 line 1)');
+eq(c.calcLine({ unit_c: 145, qm: 300000, rate: 18, bp: 500 }), { sub: 41325, disc: 2175, vatc: 7439, tot: 48764 }, 'line 300 × 1.45 −5%');
+eq(c.calcLine({ unit_c: 685, qm: 1500, rate: 8, bp: 0 }), { sub: 1028, disc: 0, vatc: 82, tot: 1110 }, 'line 1.5 × 6.85 @8% (rounding)');
+eq(c.addDays('2026-09-12', 15), '2026-09-27', 'addDays +15');
+eq(c.addDays('2026-12-25', 10), '2027-01-04', 'addDays across year');
+eq(c.daysBetween('2026-09-12', '2026-09-15'), 3, 'daysBetween');
+eq(c.fmtDate('2026-09-12'), '12.09.2026', 'fmtDate');
+eq(c.norm('Çmimi pa TVSH'), 'cmimi pa tvsh', 'norm diacritics');
+eq(c.mapColumns(['Klienti', 'NUI', 'Artikulli', 'SKU', 'Sasia', 'Çmimi', 'Zbritja', 'Shënim']), { cust: 0, nui: 1, art: 2, sku: 3, qty: 4, price: 5, disc: 6, note: 7 }, 'mapColumns albanian');
+eq(c.mapColumns(['Customer', 'Item', 'Qty', 'Price', 'Discount']), { cust: 0, art: 1, qty: 2, price: 3, disc: 4 }, 'mapColumns english');
+eq(c.parseTable('a;b;"c;d"\n1;2;3\n'), { header: ['a', 'b', 'c;d'], rows: [['1', '2', '3']] }, 'parseTable semicolon + quotes');
+eq(c.parseTable('a\tb\n1\t2'), { header: ['a', 'b'], rows: [['1', '2']] }, 'parseTable tsv');
+eq(c.parseTable('﻿a,b\r\n1,2\r\n,\r\n'), { header: ['a', 'b'], rows: [['1', '2']] }, 'parseTable BOM + CRLF + blank row');
+
+// end-to-end: excel rows -> batch
+c.state.db = c.seedDb();
+const text = 'Klienti\tNUI\tArtikulli\tSKU\tSasia\tÇmimi\tZbritja\tShënim\n' +
+  'Drini Market SH.P.K.\t810456321\tPanel sanduiç 50mm\tPS-050\t120\t\t0\tShtator\n' +
+  '\t811203987\t\tKB-325\t300\t1.40\t5\t\n' +
+  'sharri tech\t\tNdriçues LED 18W\t\t40\t\t\t\n' +
+  'Firma X\t\tPanel sanduiç 50mm\t\t1\t\t\t\n' +
+  'Drini Market SH.P.K.\t\tLaminat\t\tabc\t\t\t\n';
+const { rows, error } = c.buildExcelRows(text);
+eq(error, '', 'excel: no header error');
+eq(rows.map(r => !!r.err), [false, false, false, true, true], 'excel: rows 2-4 valid, 5-6 invalid');
+eq(rows[3].err.startsWith('Klienti nuk u gjet'), true, 'excel: unknown customer flagged');
+eq(rows[4].err.startsWith('Sasia e pavlefshme'), true, 'excel: bad qty flagged');
+const batch = c.buildExcelBatch(rows);
+eq(batch.map(b => [b.cust.name, b.items.length]), [['Drini Market SH.P.K.', 1], ['Sharri Tech L.L.C.', 2]], 'excel: grouped into 2 invoices (Sharri has 2 lines)');
+eq(batch[1].items[0].unit_c, 140, 'excel: explicit price 1.40 respected');
+eq(batch[1].items[1].unit_c, 890, 'excel: catalog price used when blank');
+eq(c.nextNo('FSH')(1), 'FSH-2026-00126', 'nextNo continues after seed 00125');
+eq(c.nextNo('PRO')(1), 'PRO-2026-00001', 'nextNo PRO starts at 1');
+
+// multi-line article editor (tab 1)
+const L0 = c.state.m.lines[0];
+eq(c.evalLine(L0).err, 'noprod', 'lines: empty line is incomplete');
+c.setLine(L0.id, { sku: 'PS-050', artQ: 'Panel sanduiç 50mm', tax: 'E' }); // E = 18% standard (ATK letters)
+eq(c.evalLine(c.state.m.lines[0]).line, { sub: 1850, disc: 0, vatc: 333, tot: 2183 }, 'lines: catalog price, qty 1');
+c.addLine();
+eq(c.state.m.lines.length, 2, 'lines: addLine appends');
+eq(c.state.m.lines[1].fresh && !c.state.m.lines[0].fresh, true, 'lines: only the new line is fresh (autofocus)');
+c.setLine(c.state.m.lines[1].id, { sku: 'KB-325', artQ: 'Kabllo', tax: 'E', qty: '300', net: '1.40', disc: '5' });
+c.setState({ m: { ...c.state.m, sel: { 'Drini Market SH.P.K.': true, 'Zymer Bytyqi B.I.': true } } });
+let b = c.buildOneBatch();
+eq(b.map(x => [x.cust.name, x.items.length, x.items.reduce((a, i) => a + i.tot, 0)]), [['Drini Market SH.P.K.', 2, 2183 + 47082], ['Zymer Bytyqi B.I.', 2, 2183 + 47082]], 'lines: 2 lines × 2 customers, totals per invoice (21.83 + 470.82)');
+eq(b[0].items !== b[1].items && b[0].items[0] !== b[1].items[0], true, 'lines: items are copied per invoice (no shared objects)');
+c.addLine();
+eq(c.buildOneBatch(), [], 'lines: an incomplete third line blocks the batch');
+c.removeLine(c.state.m.lines[2].id);
+eq(c.buildOneBatch().length, 2, 'lines: removing it unblocks');
+c.removeLine(c.state.m.lines[0].id); c.removeLine(c.state.m.lines[0].id);
+eq(c.state.m.lines.length, 1, 'lines: never fewer than one line');
+
+// ── shared data layer: stock, money, ledger ──
+c.state.db = c.seedDb();
+const db = () => c.state.db;
+const stock = (sku) => c.stockOf(sku) / 1000;
+eq(['PS-050', 'LM-008', 'CM-425', 'VD-450', 'BJ-015', 'KB-325', 'LED-18', 'RR-001', 'NS-003'].map(stock), [640, 42, 1200, 18, 96, 60, 25, 310, 165], 'seed: computed stock matches the original product table');
+eq(db().products.filter(p => c.stockOf(p.sku) < p.minStock).map(p => p.sku).sort(), ['KB-325', 'LED-18', 'LM-008', 'VD-450'], 'seed: 4 low-stock items (as the dashboard alert said)');
+eq(c.avgCost(db(), 'KB-325'), Math.round((160 * 82 + 200 * 82) / 360), 'avgCost: weighted by opening + purchases');
+eq(c.docStatus(db().invoices.find(r => r.no === 'FSH-2026-00122')), 'Vonuar', 'docStatus: unpaid past due reads Vonuar');
+eq(c.docStatus({ ...db().invoices.find(r => r.no === 'FSH-2026-00125'), due: c.fmtDate(c.addDays(c.today(), 5)) }), 'Lëshuar', 'docStatus: not yet due stays Lëshuar (due date relative to today, so the seed never ages into Vonuar)');
+const J = c.journal(); const sumL = (i) => J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[i], 0), 0);
+eq(sumL(1) === sumL(2), true, 'journal: total debits equal total credits (' + J.length + ' entries)');
+const Bl = c.balances(); const assets = ['1000', '1010', '1200', '1300', '2410'].reduce((a, k) => a + Bl[k].bal, 0), liab = Bl['2200'].bal + Bl['2400'].bal, profit = Bl['4000'].bal - Bl['5000'].bal - Bl['6000'].bal;
+eq(assets, liab + Bl['3000'].bal + profit, 'balances: assets = liabilities + equity + profit');
+eq(Bl['1200'].bal, db().invoices.filter(r => r.status !== 'Draft' && r.status !== 'Anuluar').reduce((a, r) => a + r.total - r.paid, 0), 'balances: receivables = open invoice amounts');
+eq(Bl['2200'].bal, db().purchases.filter(p => p.status !== 'Draft' && p.status !== 'Anuluar').reduce((a, p) => a + p.total - p.paid, 0), 'balances: payables = open purchase amounts');
+eq(c.accountBalance('bank1'), 1250000 + 93338 + 100000 - db().purchases.find(p => p.no === 'BL-2026-00031').total - 30000 - (41040 + 420000 + 5310 + 80000), 'accountBalance: opening + receipts − purchase payments − expenses');
+
+// ── operations connecting the modules ──
+const bankBefore = c.accountBalance('bank1');
+c.recordPayment({ kind: 'sale', ref: 'FSH-2026-00125', amount_c: 100000, account: 'bank1', date: '12.09.2026', note: '' });
+let inv = db().invoices.find(r => r.no === 'FSH-2026-00125');
+eq([inv.paid, inv.status, db().payments[0].ref, c.accountBalance('bank1') - bankBefore], [100000, 'Pjesërisht', 'FSH-2026-00125', 100000], 'recordPayment: partial → Pjesërisht, payment row, bank up');
+c.recordPayment({ kind: 'sale', ref: 'FSH-2026-00125', amount_c: 999999, account: 'cash1', date: '12.09.2026', note: '' });
+inv = db().invoices.find(r => r.no === 'FSH-2026-00125');
+eq([inv.paid, inv.status], [inv.total, 'Paguar'], 'recordPayment: overpayment is capped at the remaining amount → Paguar');
+const before = stock('BJ-015');
+c.cancelInvoice('FSH-2026-00121'); // unpaid, issued, fiscalisation had FAILED: stock back, failed queue entry withdrawn, no fiscal cancel
+eq([db().invoices.find(r => r.no === 'FSH-2026-00121').status, stock('BJ-015') - before, db().queue.find(q => q.ref === 'FSH-2026-00121').status, db().queue[0].kind !== 'Anulim'], ['Anuluar', 30, 'Anuluar', true], 'cancelInvoice (failed fiscal): reverses stock, withdraws the queued request');
+const lm = stock('LM-008');
+c.cancelInvoice('FSH-2026-00122'); // unpaid, fiscalised → fiscal cancellation queued
+eq([stock('LM-008') - lm, db().queue[0].kind, db().queue[0].ref], [85, 'Anulim', 'FSH-2026-00122'], 'cancelInvoice (fiscalised): reverses stock + queues Anulim');
+c.cancelInvoice('FSH-2026-00125'); // paid → refused
+eq(db().invoices.find(r => r.no === 'FSH-2026-00125').status, 'Paguar', 'cancelInvoice: paid invoice cannot be cancelled');
+const vdBefore = stock('VD-450'), apBefore = c.balances()['2200'].bal;
+c.receivePurchase('BL-2026-00035'); // draft: 50 pako @ 3.70
+eq([db().purchases.find(p => p.no === 'BL-2026-00035').status, stock('VD-450') - vdBefore, c.balances()['2200'].bal - apBefore, db().products.find(p => p.sku === 'VD-450').cost_c], ['Pranuar', 50, db().purchases.find(p => p.no === 'BL-2026-00035').total, 370], 'receivePurchase: stock in, payables up, cost updated');
+const cm = stock('CM-425');
+const no = c.createPurchase({ supplier: 'Beton & Rërë Kosova SH.P.K.', items: [{ name: 'Çimento 42.5R 50kg', sku: 'CM-425', unit: 'thes', qty: 100, unit_c: 440, rate: 18, disc: 0, sub: 44000, vatc: 7920, tot: 51920 }], date: '2026-09-12', due: '2026-09-27', note: '', receive: true });
+eq([no, stock('CM-425') - cm, db().purchases[0].total], ['BL-2026-00036', 100, 51920], 'createPurchase: numbered, received into stock');
+const cashBefore = c.accountBalance('cash1');
+c.addExpense({ date: '12.09.2026', category: 'Zyra', vendor: 'Viva', desc: 'Letër', net: 1000, rate: 18, account: 'cash1' });
+eq([db().expenses[0].total, cashBefore - c.accountBalance('cash1'), db().payments[0].kind], [1180, 1180, 'expense'], 'addExpense: VAT computed, paid from cash, payment row');
+c.adjustStock({ sku: 'LED-18', counted_qm: 23000, note: 'numërim', date: '2026-09-12' });
+eq([stock('LED-18'), db().movements[db().movements.length - 1].type], [23, 'adjust'], 'adjustStock: books the difference as an adjustment');
+const nos = c.issueBatch([{ cust: db().customers[0], items: [{ name: 'Panel sanduiç 50mm', sku: 'PS-050', unit: 'm²', qty: 2, unit_c: 1850, rate: 18, disc: 0, sub: 3700, vatc: 666, tot: 4366 }], note: '' }], 'issue', { date: '2026-09-12', due: '2026-09-27' });
+eq([nos, db().invoices[0].fiscal, stock('PS-050')], [['FSH-2026-00126'], 'Në pritje', 638], 'issueBatch (single form): numbered, queued, stock out');
+const J2 = c.journal(); eq(J2.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J2.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal still balanced after all operations');
+eq(c.pageTable('Bilanci').kpis[3].value, 'Balancuar ✓', 'Bilanci page: balanced');
+for (const p of ['Blerje', 'Furnitorë', 'Hyrje', 'Dalje', 'Shpenzime', 'Pagesa', 'Llogari bankare', 'Arkë', 'TVSH', 'Raporte financiare', 'Gjendja', 'Lëvizjet', 'Hyrje në stok', 'Dalje nga stok', 'Inventar', 'Kategoritë', 'Çmimet', 'Ditari', 'Kontot', 'Fitim / Humbje', 'Hyrjet kontabël']) {
+  const t = c.pageTable(p); eq(!!t && t.rows.length > 0 && t.cols.length > 0, true, 'pageTable renders: ' + p + ' (' + (t ? t.rows.length : 0) + ' rows)');
+}
+c.openForm('payment', { docKind: 'purchase', ref: 'BL-2026-00033', party: 'x', amount: '10' }); eq(c.formVals().actions[0].disabled, false, 'form: payment ready with valid amount');
+c.openForm('product'); eq(c.formVals().actions[0].disabled, true, 'form: product blocked until filled');
+c.openDr('purchase', 'BL-2026-00033'); eq(c.drawerVals().actions.map(a => a.label), ['Regjistro pagesë', 'Kthim te furnitori', 'Printo', 'Anulo'], 'drawer: open purchase actions');
+c.openDr('product', 'PS-050'); eq(c.drawerVals().sections[0].rows.length > 3, true, 'drawer: product movement history');
+
+// ── Raporte · Kompania · Cilësime · Admin ──
+c.state.db = c.seedDb(); c.state.dr = null; c.state.frm = null;
+eq(['company', 'branches', 'users', 'roles', 'invoiceSettings', 'admin', 'pos', 'audit', 'subscription'].every(k => c.state.db[k] !== undefined), true, 'seedExtras: all sections present');
+eq(c.state.db.fiscal, undefined, 'seedExtras: NO web-side fiscal config — fiscalization lives on each till');
+for (const rp of ['month', 'prev', 'year', 'all']) { c.state.rp = rp; for (const p of ['R:Shitje', 'R:Blerje', 'R:Financë', 'R:Stok', 'R:POS', 'R:TVSH']) { const t = c.pageTable(p); eq(!!t && t.cols.length > 0, true, 'report ' + p + ' [' + rp + '] (' + (t ? t.rows.length : 0) + ' rows)'); } }
+c.state.rp = 'month';
+for (const tab of ['Sipas klientit', 'Sipas artikullit', 'Sipas muajit', 'Faturat']) { c.state.rTab = tab; eq(c.pageTable('R:Shitje').rows.length > 0, true, 'report sales tab: ' + tab); }
+c.state.rTab = 'Të arkëtueshme (aging)'; { const t = c.pageTable('R:Financë'); eq(t.foot[t.foot.length - 1].t, c.fmt(db().invoices.filter(r => r.kind !== 'Profaturë' && r.status !== 'Draft' && r.status !== 'Anuluar').reduce((a, r) => a + r.total - r.paid, 0)), 'aging total = open receivables'); }
+c.state.rTab = 'Libri i shitjes'; { const t = c.pageTable('R:TVSH'); eq(t.rows.length, db().invoices.filter(r => r.kind !== 'Profaturë' && r.status !== 'Draft' && r.status !== 'Anuluar' && c.monthOf(r.date) === c.today().slice(0, 7)).length, 'VAT sales book lists this month\'s issued invoices'); }
+c.state.rTab = '';
+for (const p of ['Degët', 'Rolet', 'A:Kompanitë', 'A:Abonimet', 'A:Faturat e platformës', 'A:Planet & çmimet', 'A:Përdoruesit e platformës', 'A:Administratorët', 'A:Agjentët', 'A:Radha globale', 'A:Audit log']) { const t = c.pageTable(p); eq(!!t && t.rows.length > 0, true, 'table page: ' + p + ' (' + (t ? t.rows.length : 0) + ' rows)'); }
+for (const p of ['Të dhënat e kompanisë', 'Llogaria', 'Pagesat', 'Siguria', 'Njoftimet', 'POS', 'Faturat', 'Tatimet', 'Email', 'Integrimet', 'API', 'R:HR', 'R:Prodhim', 'A:Përmbledhje', 'A:Modulet & flags', 'A:Cilësimet e platformës', 'A:Statusi i sistemit']) { const g = c.settingsPage(p); eq(!!g && g.cards.length > 0, true, 'settings page: ' + p + ' (' + (g ? g.cards.length : 0) + ' cards)'); }
+// roles matrix toggle
+{ const t = c.pageTable('Rolet'); const cell = t.rows[0].cells[1 + c.ROLES.indexOf('Kasier')]; const before = cell.on; cell.go(); eq(!!db().roles.Kasier.fatura_shiko, !before, 'roles: toggling a permission persists'); eq(db().audit[0].a.includes('Roli Kasier'), true, 'roles: change is audited'); }
+// ── fiscalization is till-owned: the web has NO mode config, NO env switch, and never gates issuing ──
+eq([typeof c.changeFiscalMode, typeof c.setFiscalEnv, typeof c.apiFiscal, typeof c.fiscalConfigured, typeof c.apiFiscalToDb], ['undefined', 'undefined', 'undefined', 'undefined', 'undefined'], 'fiscal: no web-side mode/env/config functions exist at all');
+eq(c.issueBatch([{ cust: db().customers[0], items: [{ name: 'x', sku: 'PS-050', unit: 'm²', qty: 1, unit_c: 1850, rate: 18, disc: 0, sub: 1850, vatc: 333, tot: 2183 }], note: '' }], 'issue', { date: '2026-09-12', due: '2026-09-27' }).length, 1, 'fiscal: invoices issue normally with no web fiscal config (no UNCONFIGURED gate)');
+eq(db().queue[0].kind, 'Faturë', 'fiscal: the issued invoice still enters the read-only queue');
+// ── ATK Kosovo tax letters (VAT law 03/L-146 + certified SEF coupons): A = exempt, C = 0%, D = 8%, E = 18% ──
+eq(Object.fromEntries(Object.entries(c.TAX).map(([k, t]) => [k, t.rate])), { A: 0, C: 0, D: 8, E: 18 }, 'ATK letters: A=0% C=0% D=8% E=18%');
+eq([/liruar/i.test(c.TAX.A.name), /redukt/i.test(c.TAX.D.name), /standard/i.test(c.TAX.E.name)], [true, true, true], 'ATK letters: A e liruar, D e reduktuar, E standarde');
+eq(db().products.every(p => ['A', 'C', 'D', 'E'].includes(p.tax)), true, 'seed products carry only ATK letters');
+eq(db().taxSettings.defaultGroup, 'E', 'default tax group is E (18% standard)');
+// one-time migration of pre-ATK books: letters move by their OLD rate (C was 8 → D, D was 18 → E, E was 0 → C); rates and prices never change
+{ const old = { v: 2, products: [{ sku: 'X1', tax: 'C', price_c: 100 }, { sku: 'X2', tax: 'D' }, { sku: 'X3', tax: 'E' }, { sku: 'X4', tax: 'A' }, { sku: 'X5', tax: '??' }], taxSettings: { defaultGroup: 'D', atkCodes: { A: 'a', C: 'c', D: 'd', E: 'e' } } };
+  const mig = c.migrateTax(old);
+  eq(mig.products.map(p => p.tax), ['D', 'E', 'C', 'A', 'E'], 'migration: C(8%)→D, D(18%)→E, E(0%)→C, A stays, unknown → E');
+  eq([mig.taxV, mig.products[0].price_c, mig.taxSettings.defaultGroup], [2, 100, 'E'], 'migration: marked v2, prices untouched, default group follows its rate');
+  eq(mig.taxSettings.atkCodes, { A: 'a', C: 'e', D: 'c', E: 'd' }, 'migration: ATK codes follow their rate to the new letter');
+  eq(c.migrateTax(mig) === mig, true, 'migration: idempotent (taxV=2 short-circuits)'); }
+// the catalog push carries letters+rates as PRODUCT data and the printed-coupon header — but NO fiscal steering block
+{ const cat = c.posCatalogPayload();
+  eq(cat.fiscal, undefined, 'catalog: no fiscal block — the ERP never steers a POS\'s fiscal mode');
+  eq(cat.products.every(p => ['A', 'C', 'D', 'E'].includes(p.tax) && p.rate === c.TAX[p.tax].rate), true, 'catalog: every product ships its ATK letter + matching rate');
+  eq(Object.keys(cat.company).sort(), ['address', 'fiscal', 'licence', 'name', 'nui', 'phone', 'place', 'unitName', 'unitNo', 'vatNo', 'vatRegistered'], 'catalog: company block = the certified coupon header fields + VAT registration (vatRegistered, vatNo)');
+  eq([cat.company.vatRegistered, cat.company.vatNo], [true, '330012345'], 'catalog: seed company is VAT-registered with its VAT number');
+  eq([cat.company.nui, cat.company.unitName, cat.company.unitNo, cat.company.licence, cat.company.place, !!cat.company.phone], ['811234567', 'Dega Prishtinë', '412031', 'L5-0412/14.02.2024', 'Prishtinë', true], 'catalog: header values come from company + main branch (unit no, licence, place, phone)');
+  eq(cat.branches.map(b => b.unitNo), ['412031', '412032'], 'catalog: every branch carries its own unit number'); }
+c.state.db = c.seedDb(); // fresh books for the admin tests below
+// admin: plan price change flows to the subscription total
+c.openForm('plan', { planKey: 'pro', name: 'Pro', price: '45.00', includedUsers: '2', extraUser: '8.00', invoiceLimit: 'pa limit', posLimit: '5', modules: 'x', days: '' }); c.formVals().actions[0].go();
+eq([db().admin.plans.pro.price_c, db().admin.plans.pro.extraUser_c], [4500, 800], 'admin: plan saved');
+c.state.section = 'settings'; c.state.page = 'Abonimi'; c.state.admin = false;
+{ const v = c.renderVals(); eq([v.planPrice, v.totalPrice], ['€45.00', c.fmt(4500 + 2 * 800) + '/muaj'], 'abonimi: company sees the new plan price (4 users, 2 included)'); }
+// admin: feature flag hides the nav item for companies
+c.setAdmin('flags', { faturim_masiv: false }); c.state.section = 'shitje'; c.state.page = 'Fatura';
+eq(c.renderVals().subnav.some(x => x.label === 'Faturim masiv'), false, 'flags: faturim_masiv off hides the page');
+c.setAdmin('flags', { faturim_masiv: true }); eq(c.renderVals().subnav.some(x => x.label === 'Faturim masiv'), true, 'flags: back on shows it');
+// admin: suspend tenant via drawer
+c.openDr('tenant', 'Drini Market SH.P.K.'); c.drawerVals().actions.find(a => a.label === 'Pezullo').go(); c.state.confirm.ok(); c.state.confirm = null;
+eq([db().admin.tenants.find(t => t.name === 'Drini Market SH.P.K.').status, db().admin.audit[0].a.includes('u pezullua')], ['Pezulluar', true], 'admin: tenant suspended + audited');
+// invite user, API key, branch
+c.openForm('user', { email: 'test@abc-ks.com', role: 'Shitje', branch: 'Dega Prishtinë', dept: 'Shitje' }); c.formVals().actions[0].go();
+eq(db().users[db().users.length - 1].status, 'Ftuar', 'users: invite adds a Ftuar user');
+c.openForm('apiKey', { name: 'Test', scope: 'lexo', env: 'test' }); c.formVals().actions[0].go();
+eq([db().apiKeys.length, !!c.state.secret && c.state.secret.key.startsWith('kf_test_'), db().apiKeys[db().apiKeys.length - 1].prefix.length], [2, true, 12], 'api: key generated, shown once, only prefix stored');
+c.openForm('branch', { name: 'Dega Pejë', address: 'Pejë', phone: '', manager: '' }); c.formVals().actions[0].go();
+eq(db().branches[db().branches.length - 1].id, 'BR-0003', 'branches: new branch numbered');
+// company data flows into the print header
+c.setIn('company', { name: 'ABC Test SH.P.K.' }); c.state.section = 'shitje'; c.state.page = 'Fatura'; c.state.drawer = 'FSH-2026-00124';
+eq(c.renderVals().pc.name, 'ABC Test SH.P.K.', 'company data → print header');
+// full render sweep: every page in both shells renders without throwing and is not "generic" unless expected
+c.state.drawer = null;
+// only the HR and Prodhim modules are still honest placeholders — every other page must render real data
+const genericOk = new Set(['Punëtorët', 'Departamentet', 'Pozitat', 'Orari', 'Pushimet', 'Prezenca', 'Pagat', 'Recetat / BOM', 'Prodhimet', 'Materialet', 'Urdhrat e punës', 'Konsumi', 'Raportet']);
+let swept = 0, generic = [];
+for (const n of c.NAV) for (const p of n.items) { c.state.admin = false; c.state.section = n.id; c.state.page = p; const v = c.renderVals(); swept++; if (v.isGeneric && !(n.id === 'raporte' ? false : genericOk.has(p))) generic.push(n.id + '/' + p); if (n.id === 'raporte' && v.isGeneric) generic.push('raporte/' + p); }
+for (const n of c.ADMIN_NAV) for (const p of n.items) { c.state.admin = true; c.state.section = n.id; c.state.page = p; const v = c.renderVals(); swept++; if (v.isGeneric) generic.push('admin/' + p); }
+eq(generic, [], 'render sweep: ' + swept + ' pages rendered; unexpected generic pages');
+c.state.admin = false;
+
+// ── POS sync import (what the desktop POS sends over /sales) ──
+c.state.db = c.seedDb();
+const ledBefore = stock('LED-18'), cashB0 = c.accountBalance('cash1'), bankB = c.accountBalance('bank1');
+const rcpt = (id, no, status, fs, items, cash, card, extra = {}) => ({ id, no, shift_id: 'SH-1', pos_id: 'POS-0001', branch: 'Dega Prishtinë', operator: 'Fjolla K.', ts: '2026-09-12 21:30:00', customer: 'Klient me shumicë', customer_nui: '', sub_c: items.reduce((a, i) => a + i.sub_c, 0), vat_c: items.reduce((a, i) => a + i.vat_c, 0), total_c: items.reduce((a, i) => a + i.tot_c, 0), cash_c: cash, card_c: card, change_c: 0, status, fiscal_status: fs, fiscal_ref: fs === 'fiscalized_sim' ? 'SIM-1' : '', fiscal_mode: 'ATK_ELECTRONIC', fiscal_version: 3, fiscal_error: '', orig_id: null, items, ...extra });
+const it = (sku, name, qty_m, unit_c, disc_bp = 0) => { const l = c.calcLine({ unit_c, qm: qty_m, rate: 18, bp: disc_bp }); return { sku, name, unit: 'copë', qty_m, unit_c, rate: 18, disc_bp, sub_c: l.sub, vat_c: l.vatc, tot_c: l.tot }; };
+const R1 = rcpt('r-1', 'POS-0001/000001', 'final', 'pending', [it('LED-18', 'Ndriçues LED 18W', 4000, 890, 1000)], 3781, 0);
+const R2 = rcpt('r-2', 'POS-0001/000002', 'final', 'fiscalized_sim', [it('LED-18', 'Ndriçues LED 18W', 1000, 890)], 0, 1050);
+let n1 = c.importPosSales([R1, R2], [{ id: 'SH-1', pos_id: 'POS-0001', branch: 'Dega Prishtinë', operator: 'Fjolla K.', opened_at: '2026-09-12 08:00:00', closed_at: null, opening_c: 10000, status: 'open' }]);
+eq([n1.receipts, n1.shifts, db().posReceipts.length, db().posShifts.length], [2, 1, 2, 1], 'pos import: 2 receipts + 1 shift');
+eq(stock('LED-18'), ledBefore - 5, 'pos import: stock out 4 + 1');
+eq([c.accountBalance('cash1') - cashB0, c.accountBalance('bank1') - bankB], [3781, 1050], 'pos import: cash to Arka 1, card to bank');
+eq(db().queue.slice(0, 2).map(q => [q.kind, q.status]), [['Kupon POS', 'E suksesshme'], ['Kupon POS', 'Në pritje']], 'pos import: fiscal queue mirrored (SIM = suksesshme me shënim)');
+eq(db().queue[0].reason, 'SIMULATOR — pa vlerë fiskale', 'pos import: simulator labelled in queue');
+const J3 = c.journal(); eq(J3.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J3.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal balanced with POS receipts');
+eq(J3.filter(e => e.ref === 'POS-0001/000001').length, 2, 'journal: POS receipt posts sale + COGS');
+// idempotent re-pull: same receipt again (now fiscalised) only updates status
+let n2 = c.importPosSales([{ ...R1, fiscal_status: 'fiscalized_sim', fiscal_ref: 'SIM-9' }], []);
+eq([n2.receipts, n2.updated, stock('LED-18'), c.accountBalance('cash1') - cashB0, db().posReceipts.find(r => r.id === 'r-1').fiscal], [0, 1, ledBefore - 5, 3781, 'Fiskalizuar (SIM)'], 'pos import: re-pull is idempotent (no stock/cash twice), fiscal status refreshed');
+// return receipt
+const RR = rcpt('r-3', 'POS-0001/000003', 'return', 'fiscalized_sim', [it('LED-18', 'Ndriçues LED 18W', -2000, 890, 1000)], -1890, 0, { orig_id: 'r-1' });
+c.importPosSales([RR, { ...R1, status: 'returned' }], []);
+eq([stock('LED-18'), c.accountBalance('cash1') - cashB0, db().posReceipts.find(r => r.id === 'r-1').status], [ledBefore - 3, 3781 - 1890, 'Kthyer'], 'pos import: return puts 2 back, refunds cash, marks original');
+// sales aggregates include POS (net of returns)
+c.state.section = 'dashboard'; c.state.page = 'Paneli';
+{ const sd = c.salesDocs(); eq(sd.filter(x => x.src === 'pos').reduce((a, x) => a + x.sub, 0), R1.sub_c + R2.sub_c + RR.sub_c, 'salesDocs: POS net sales = sales − returns'); }
+// A4 invoice from a receipt: linked, paid, no second posting
+const led3 = stock('LED-18'), cash3 = c.accountBalance('cash1'), j3 = c.journal().length;
+c.invoiceFromReceipt('r-2');
+const a4 = db().invoices[0];
+eq([a4.fromPos, a4.posNo, a4.status, a4.paid === a4.total, a4.fiscal, stock('LED-18'), c.accountBalance('cash1'), c.journal().length], ['r-2', 'POS-0001/000002', 'Paguar', true, 'Fiskalizuar (SIM)', led3, cash3, j3], 'A4 from receipt: linked & paid, no new stock/cash/journal');
+eq(db().posReceipts.find(r => r.id === 'r-2').invoiceNo, a4.no, 'A4 from receipt: receipt links back');
+eq(c.salesDocs().filter(x => x.no === a4.no).length, 0, 'A4 from receipt: not counted as a second sale');
+eq(c.posCatalogPayload().products.find(p => p.sku === 'LED-18').stock_qm, stock('LED-18') * 1000, 'catalog payload carries live stock');
+for (const p of ['P:Arkat', 'P:Shitje', 'P:Kthime', 'P:Operatorët', 'P:Mbyllja e arkës', 'P:Raportet e arkës']) { const t = c.pageTable(p); eq(!!t && t.cols.length > 0, true, 'POS page: ' + p + ' (' + (t ? t.rows.length : 0) + ' rows)'); }
+eq(!!c.settingsPage('P:Hap POS-in'), true, 'POS page: Hap POS-in');
+c.openDr('pos', 'r-1'); eq(c.drawerVals().actions.some(a => /Kthimi/.test(a.label)), true, 'POS drawer: links original ↔ return');
+
+// ── POS receipt with an invoice-level discount (discount_total_c; the POS already pushed it into the line totals) ──
+{ const line = { ...it('LED-18', 'Ndriçues LED 18W', 2000, 890), sub_c: 1695, vat_c: 305, tot_c: 2000 }; // 21.00 gross − 1.00 invoice discount
+  const RD = rcpt('r-d1', 'POS-0001/000004', 'final', 'fiscalized_sim', [line], 2000, 0, { discount_total_c: 100 });
+  const led = stock('LED-18'), cash = c.accountBalance('cash1');
+  c.importPosSales([RD], []); const doc = db().posReceipts.find(r => r.id === 'r-d1');
+  eq([doc.discount, doc.total, doc.sub + doc.vat, stock('LED-18'), c.accountBalance('cash1') - cash], [100, 2000, 2000, led - 2, 2000], 'pos discount: receipt keeps discount_total_c, totals net, stock/cash as paid');
+  c.openDr('pos', 'r-d1'); const tv = c.drawerVals().totals; eq([tv.map(x => x.k), tv[0].v, tv[1].v], [['Para zbritjes', 'Zbritje totale', 'Neto', 'TVSH', 'Totali'], c.fmt(2100), '−' + c.fmt(100)], 'pos discount: drawer shows gross and "Zbritje totale"');
+  c.invoiceFromReceipt('r-d1'); const a4d = db().invoices[0];
+  eq([a4d.fromPos, a4d.discount, a4d.total, a4d.paid, a4d.items.reduce((a, i) => a + i.tot, 0)], ['r-d1', 100, 2000, 2000, 2000], 'A4 from a discounted receipt: total == paid == sum of line totals, discount carried');
+  const html = c.docPrintHtml(a4d); eq([/Zbritje totale/.test(html), html.includes('−' + c.fmt(100)), html.includes('Totali para zbritjes</span><span>' + c.fmt(2100))], [true, true, true], 'A4 print: "Zbritje totale" line + gross before discount');
+  eq(/Zbritje totale/.test(c.docPrintHtml(db().invoices.find(r => r.no === 'FSH-2026-00124'))), false, 'A4 print: no discount line on ordinary invoices');
+  c.state.section = 'shitje'; c.state.page = 'Fatura'; c.state.drawer = a4d.no; const vd = c.renderVals(); eq([vd.inv.hasDisc, vd.inv.discFmt, vd.inv.grossFmt], [true, '−' + c.fmt(100), c.fmt(2100)], 'invoice drawer: discount line bound'); c.state.drawer = null; }
+
+// ── CANCEL receipt (ATK CANCEL coupon): status "cancel" + orig_id, original re-sent as "void" ──
+{ const led0 = stock('LED-18'), cash0 = c.accountBalance('cash1'), bank0 = c.accountBalance('bank1'), j0 = c.journal().length;
+  const R5 = rcpt('r-5', 'POS-0001/000005', 'final', 'fiscalized_sim', [it('LED-18', 'Ndriçues LED 18W', 3000, 890)], 3151, 0, { atk_transaction_id: 'ATK-TX-5' });
+  c.importPosSales([R5], []);
+  eq([stock('LED-18'), c.accountBalance('cash1') - cash0], [led0 - 3, 3151], 'cancel: original sale booked first');
+  // the cancel carries the same lines with POSITIVE amounts (as the POS stores them) — the ERP books it negative regardless of sign
+  const RC = rcpt('r-5c', 'POS-0001/000006', 'cancel', 'pending', [it('LED-18', 'Ndriçues LED 18W', 3000, 890)], 3151, 0, { orig_id: 'r-5', atk_transaction_id: 'ATK-TX-6' });
+  const nC = c.importPosSales([RC, { ...R5, status: 'void' }], []);
+  const canc = db().posReceipts.find(r => r.id === 'r-5c'), orig = db().posReceipts.find(r => r.id === 'r-5');
+  eq([nC.receipts, nC.updated, stock('LED-18'), c.accountBalance('cash1') - cash0, c.accountBalance('bank1') - bank0], [1, 1, led0, 0, 0], 'cancel: full reversal — stock back in, cash out, nothing on the bank');
+  eq([canc.status, canc.kind, canc.total, canc.sub, canc.items[0].qty, canc.origId, canc.origNo, canc.atkTx], ['Anulim', 'Anulim kuponi POS', -3151, -2670, -3, 'r-5', 'POS-0001/000005', 'ATK-TX-6'], 'cancel: negative document referencing the original');
+  eq([orig.status, orig.cancelId, orig.cancelNo, orig.total], ['Anuluar', 'r-5c', 'POS-0001/000006', 3151], 'cancel: original marked Anuluar and linked (its own figures untouched)');
+  eq(db().movements.filter(m => m.ref === 'POS-0001/000006').map(m => [m.type, m.qm]), [['sale_cancel', 3000]], 'cancel: stock movement is "Anulim shitje" (+3)');
+  eq(db().payments.filter(p => p.ref === 'POS-0001/000006').map(p => [p.dir, p.amount_c, p.note]), [['out', 3151, 'Anulim POS · para']], 'cancel: cash leaves the till account');
+  eq([db().queue[0].kind, db().queue[0].ref, db().queue[0].txId, db().queue[0].origNo, /ATK-TX-6/.test(db().queue[0].reason), db().queue[0].status], ['Anulim', 'POS-0001/000006', 'ATK-TX-6', 'POS-0001/000005', true, 'Në pritje'], 'cancel: fiscal queue row kind Anulim with the ATK transaction id');
+  const JC = c.journal(); eq(JC.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === JC.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal balanced with a cancel');
+  eq(JC.filter(e => e.ref === 'POS-0001/000006').map(e => e.desc.slice(0, 14)), ['Anulim kuponi ', 'Anulim kuponi '], 'journal: cancel posts revenue/VAT/cash reversal + stock back at cost');
+  { const sd = c.salesDocs().filter(x => x.no === 'POS-0001/000005' || x.no === 'POS-0001/000006'); eq([sd.length, sd.reduce((a, x) => a + x.total, 0), sd.reduce((a, x) => a + x.vat, 0)], [2, 0, 0], 'salesDocs / dashboard / TVSH: sale + cancel net to zero'); }
+  // re-sync of the same payloads (now the cancel is fiscalised): idempotent, only the fiscal fields move
+  const nR = c.importPosSales([{ ...RC, fiscal_status: 'fiscalized_sim', fiscal_ref: 'SIM-C6' }, { ...R5, status: 'void' }], []);
+  eq([nR.receipts, nR.updated, stock('LED-18'), c.accountBalance('cash1') - cash0, db().posReceipts.find(r => r.id === 'r-5c').status, db().posReceipts.find(r => r.id === 'r-5').status, db().posReceipts.find(r => r.id === 'r-5c').fiscal, db().queue[0].status, db().movements.filter(m => m.ref === 'POS-0001/000006').length], [0, 2, led0, 0, 'Anulim', 'Anuluar', 'Fiskalizuar (SIM)', 'E suksesshme', 1], 'cancel: re-sync is idempotent (no double reversal), statuses kept, fiscal refreshed');
+  // even if the original is re-sent as "final" later (old POS build), it stays cancelled
+  c.importPosSales([R5], []); eq(db().posReceipts.find(r => r.id === 'r-5').status, 'Anuluar', 'cancel: original never reverts from Anuluar');
+  // POS › Shitje shows both with the badge "Anuluar"; the drawer links both ways
+  c.state.section = 'pos'; c.state.page = 'Shitje'; const tS = c.pageTable('P:Shitje');
+  const rowOf = no => tS.rows.find(r => r.cells[0].t === no || r.cells[0].text === no || JSON.stringify(r.cells[0]).includes(no));
+  eq([rowOf('POS-0001/000005').cells[9].t, rowOf('POS-0001/000006').cells[9].t, rowOf('POS-0001/000006').cells[9].sub], ['Anuluar', 'Anuluar', 'anulim i POS-0001/000005'], 'POS › Shitje: cancel and original both badged Anuluar');
+  c.openDr('pos', 'r-5'); eq([c.drawerVals().actions.some(a => /Anulimi POS-0001\/000006/.test(a.label)), c.drawerVals().badge.text], [true, 'Anuluar'], 'POS drawer: original → its cancel');
+  c.openDr('pos', 'r-5c'); eq([c.drawerVals().actions.some(a => /Kuponi origjinal POS-0001\/000005/.test(a.label)), c.drawerVals().meta.some(m => m.k === 'Transaksioni ATK' && m.v === 'ATK-TX-6'), /ATK CANCEL/.test(c.drawerVals().subtitle)], [true, true, true], 'POS drawer: cancel → original, ATK transaction shown');
+  c.openDr('queue', 0); eq(c.drawerVals().meta.some(m => m.k === 'Transaksioni ATK' && m.v === 'ATK-TX-6'), true, 'queue drawer: ATK transaction id of the cancel');
+  c.state.section = 'raporte'; c.state.page = 'Shitje'; c.state.rTab = 'Faturat'; { const t = c.pageTable('R:Shitje'); eq(!!t && t.rows.length > 0, true, 'Raporte › Shitje renders with cancels'); }
+  eq(c.invoiceFromReceipt('r-5'), undefined, 'A4 refused for a cancelled receipt'); eq(db().invoices.some(i => i.fromPos === 'r-5'), false, 'A4 refused for a cancelled receipt (none created)');
+  // "void" spelling, no lines of its own, card payment, sent BEFORE its original in the same batch → amounts mirrored from the original
+  const R7 = rcpt('r-7', 'POS-0001/000007', 'void', 'fiscalized_sim', [it('LED-18', 'Ndriçues LED 18W', 1000, 890)], 0, 1050, {});
+  const RV = { ...rcpt('r-7c', 'POS-0001/000008', 'void', 'fiscalized_sim', [], 0, 0, { reference_id: 'r-7', atk_transaction_id: 'ATK-TX-8' }), sub_c: 0, vat_c: 0, total_c: 0 };
+  const led7 = stock('LED-18'), bank7 = c.accountBalance('bank1'), q7 = db().queue.length;
+  const n7 = c.importPosSales([RV, R7], []); const c7 = db().posReceipts.find(r => r.id === 'r-7c'), o7 = db().posReceipts.find(r => r.id === 'r-7');
+  eq([n7.receipts, stock('LED-18'), c.accountBalance('bank1') - bank7, c7.status, c7.total, c7.card_c, c7.items.length, c7.origNo, o7.status, o7.cancelId, db().queue.length - q7, db().queue.find(q => q.ref === 'POS-0001/000008').kind], [2, led7, 0, 'Anulim', -1050, -1050, 1, 'POS-0001/000007', 'Anuluar', 'r-7c', 2, 'Anulim'], 'cancel ("void" + reference_id, no lines): mirrors the original, card money leaves the bank, original Anuluar');
+  const J7 = c.journal(); eq(J7.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J7.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal balanced with a card cancel');
+  eq(c.importPosSales([{ ...R5, status: 'nonsense' }], []).receipts + c.importPosSales([{ ...R5, status: 'nonsense' }], []).updated, 0, 'unknown receipt statuses are ignored');
+  for (const p of ['P:Shitje', 'P:Kthime', 'P:Operatorët', 'P:Raportet e arkës']) { const t = c.pageTable(p); eq(!!t && t.cols.length > 0, true, 'POS page with cancels: ' + p); }
+  c.state.section = 'dashboard'; c.state.page = 'Paneli'; c.state.range = 'Gjithçka'; eq(c.renderVals().kpis.length, 8, 'dashboard renders with cancels'); }
+
+// ── operator PINs (hash must equal Python hashlib.sha256 on "salt:pin") ──
+eq(c.sha256('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'sha256 test vector');
+eq(c.sha256('a1b2c3d4:0000'), require('crypto').createHash('sha256').update('a1b2c3d4:0000').digest('hex'), 'sha256 matches node crypto (salt:pin)');
+eq(c.sha256('Fjolla Kastrati · ë ç'), require('crypto').createHash('sha256').update('Fjolla Kastrati · ë ç').digest('hex'), 'sha256 utf-8 input');
+c.state.db = c.seedDb();
+eq(db().users.every(u => u.pinHash && u.pinSalt), true, 'pins: every seed user has a salted hash');
+eq(c.pinIsDefault(db().users[2]), true, 'pins: default 0000 detected');
+c.setUserPin('u3', '2580');
+eq([c.pinIsDefault(db().users[2]), c.pinHash('2580', db().users[2].pinSalt) === db().users[2].pinHash, db().audit[0].a.includes('PIN')], [false, true, true], 'pins: set PIN → hash stored, audited');
+eq(c.posCatalogPayload().operators.find(o => o.name === 'Fjolla Kastrati').pinHash, db().users[2].pinHash, 'pins: catalog payload carries the hash (never the PIN)');
+eq(JSON.stringify(c.posCatalogPayload()).includes('2580'), false, 'pins: PIN itself never leaves the ERP');
+c.openForm('pin', { userId: 'u3', pin: '12', pin2: '12' }); eq(c.formVals().actions[1].disabled, true, 'pin form: too short blocked');
+c.openForm('pin', { userId: 'u3', pin: '0000', pin2: '0000' }); eq(c.formVals().actions[1].disabled, true, 'pin form: 0000 not allowed as a new PIN');
+c.openForm('pin', { userId: 'u3', pin: '123456', pin2: '123456' }); eq(c.formVals().actions[1].disabled, false, 'pin form: 6 digits ok');
+{ const t = c.pageTable('P:Operatorët'); eq(t.cols.some(x => x.label === 'PIN i POS-it') && t.rows[0].cells.some(x => x.act), true, 'operatorët page: PIN column + action'); }
+
+// ── credit notes (KR-) and purchase returns (KD-) ──
+c.state.db = c.seedDb(); c.state.dr = null; c.state.frm = null; c.state.drawer = null;
+const invOf = no => db().invoices.find(r => r.no === no), purOf = no => db().purchases.find(p => p.no === no);
+eq(c.returnable('sale').map(x => x.doc.no).sort(), ['FSH-2026-00120', 'FSH-2026-00121', 'FSH-2026-00122', 'FSH-2026-00123', 'FSH-2026-00124', 'FSH-2026-00125'], 'returnable: only issued invoices (no draft / cancelled / proforma)');
+const ps0 = stock('PS-050'), recv0 = c.balances()['1200'].bal;
+const kr1 = c.createReturn({ kind: 'sale', ref: 'FSH-2026-00125', items: [{ li: 0, qty: 20 }], date: '2026-09-13', reason: 'dëmtim', account: 'bank1' });
+let ret1 = db().returns[0];
+eq([kr1, ret1.kind, ret1.sub, ret1.vat, ret1.total, ret1.applied, ret1.refund, ret1.fiscal], ['KR-2026-00001', 'Kthim shitje', 37000, 6660, 43660, 43660, 0, 'Në pritje'], 'credit note: 20 m² × 18.50 @18%, applied to the unpaid invoice, fiscalisation queued');
+eq([invOf('FSH-2026-00125').credited, invOf('FSH-2026-00125').status, c.rem(invOf('FSH-2026-00125')), stock('PS-050') - ps0, db().queue[0].kind, db().movements[db().movements.length - 1].type], [43660, 'Pjesërisht', 277064 - 43660, 20, 'Notë krediti', 'sale_return'], 'credit note: invoice credited, stock back, queue entry');
+eq(recv0 - c.balances()['1200'].bal, 43660, 'credit note: receivables down by the note');
+eq(c.returnable('sale').find(x => x.doc.no === 'FSH-2026-00125').lines[0].left, 100, 'returnable: 100 m² left on the line');
+c.createReturn({ kind: 'sale', ref: 'FSH-2026-00125', items: [{ li: 0, qty: 101 }], date: '2026-09-13' }); eq(db().returns.length, 1, 'credit note: more than the remaining qty is refused');
+const bank0 = c.accountBalance('bank1'), led0 = stock('LED-18');
+const kr2 = c.createReturn({ kind: 'sale', ref: 'FSH-2026-00124', items: [{ li: 1, qty: 10 }], date: '2026-09-13', reason: '', account: 'bank1' }); // paid invoice → refund
+let ret2 = db().returns[0];
+eq([kr2, ret2.applied, ret2.refund, bank0 - c.accountBalance('bank1'), db().payments[0].kind, db().payments[0].dir, invOf('FSH-2026-00124').status, stock('LED-18') - led0], ['KR-2026-00002', 0, 10502, 10502, 'refund', 'out', 'Paguar', 10], 'credit note on a paid invoice: money refunded from the bank, invoice stays settled');
+const Jr = c.journal(); eq(Jr.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === Jr.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal balanced with credit notes');
+eq(c.balances()['1200'].bal, db().invoices.filter(r => r.kind !== 'Profaturë' && r.status !== 'Draft' && r.status !== 'Anuluar').reduce((a, r) => a + c.rem(r), 0), 'balances: receivables = Σ rem (total − paid − credited)');
+eq(c.salesDocs().filter(x => x.src === 'ret').reduce((a, x) => a + x.total, 0), -(43660 + 10502), 'salesDocs: credit notes are negative sales');
+c.cancelReturn(kr2);
+eq([db().returns.find(r => r.no === kr2).status, c.accountBalance('bank1'), stock('LED-18'), invOf('FSH-2026-00124').credited, db().payments.some(p => p.kind === 'refund' && p.ref === kr2)], ['Anuluar', bank0, led0, 0, false], 'cancelReturn: refund, stock and credit reversed');
+c.cancelInvoice('FSH-2026-00125'); eq(invOf('FSH-2026-00125').status, 'Pjesërisht', 'cancelInvoice: refused while a credit note exists');
+const cm0 = stock('CM-425'), ap0 = c.balances()['2200'].bal;
+const kd1 = c.createReturn({ kind: 'purchase', ref: 'BL-2026-00033', items: [{ li: 0, qty: 100 }], date: '2026-09-13', reason: 'thasë të dëmtuar' });
+eq([kd1, db().returns[0].kind, db().returns[0].total, db().returns[0].applied, cm0 - stock('CM-425'), ap0 - c.balances()['2200'].bal, purOf('BL-2026-00033').credited, purOf('BL-2026-00033').status], ['KD-2026-00001', 'Kthim blerje', 50740, 50740, 100, 50740, 50740, 'Pjesërisht'], 'purchase return: stock out at purchase price, payable reduced');
+for (const p of ['Kthime', 'Kthime blerjeje']) { const t = c.pageTable(p); eq(!!t && t.rows.length > 0, true, 'returns page: ' + p + ' (' + t.rows.length + ' rows)'); }
+c.openDr('return', kr1); eq(c.drawerVals().actions.map(a => a.label), ['Printo', 'Fatura FSH-2026-00125', 'Dërgo me email', 'Anulo'], 'return drawer actions');
+c.openForm('return', { docKind: 'sale', ref: 'FSH-2026-00122', q_0: '5' }); { const f = c.formVals(); eq([f.actions[0].disabled, f.fields.some(x => x.label === 'Totali i kthimit')], [false, true], 'return form: quantity typed → ready, totals shown'); }
+c.openForm('return', { docKind: 'sale', ref: 'FSH-2026-00122', q_0: '999' }); eq(c.formVals().actions[0].disabled, true, 'return form: over-quantity blocked');
+
+// ── quotes → orders → invoices, purchase orders → purchases ──
+c.state.db = c.seedDb(); c.state.dr = null; c.state.frm = null;
+const items1 = [{ name: 'Panel sanduiç 50mm', sku: 'PS-050', unit: 'm²', qty: 10, unit_c: 1850, rate: 18, disc: 0, sub: 18500, vatc: 3330, tot: 21830 }];
+const of1 = c.createQuote({ customer: 'Drini Market SH.P.K.', items: items1, date: '2026-09-13', valid: '2026-10-13', note: 'oferta', send: true });
+eq([of1, db().quotes[0].status, db().quotes[0].total, stock('PS-050')], ['OF-2026-00001', 'Dërguar', 21830, 640], 'quote: numbered, sent, touches nothing');
+c.quoteToOrder(of1); { const f = c.formVals(); eq([c.state.frm.kind, c.state.frm.fromQuote, f.lines.length, f.actions[0].disabled], ['order', of1, 1, false], 'quote → order form pre-filled'); f.actions[0].go(); }
+const ps1 = db().orders[0];
+eq([ps1.no, ps1.status, ps1.fromQuote, db().quotes[0].status, db().quotes[0].orderNo, c.reservedOf('PS-050')], ['PS-2026-00001', 'Hapur', of1, 'Pranuar', 'PS-2026-00001', 10000], 'order: created from the quote, quote accepted, 10 m² reserved');
+c.orderToInvoice(ps1.no); { const f = c.formVals(); eq([c.state.frm.kind, c.state.frm.fromOrder], ['invoice', ps1.no], 'order → invoice form'); f.actions[2].go(); }
+const invO = db().invoices[0];
+eq([invO.fromOrder, invO.status, db().orders[0].status, db().orders[0].invoiceNo, c.reservedOf('PS-050'), stock('PS-050')], [ps1.no, 'Lëshuar', 'Faturuar', invO.no, 0, 630], 'invoice from order: linked both ways, reservation released, stock out');
+c.state.drawer = invO.no; c.state.section = 'shitje'; c.state.page = 'Fatura'; { const v = c.renderVals(); eq([v.invHasSrc, v.invSrcLabel], [true, 'Porosia PS-2026-00001'], 'invoice drawer shows its source'); } c.state.drawer = null;
+const pb1 = c.createPo({ supplier: 'Elektro Kos L.L.C.', items: [{ name: 'Ndriçues LED 18W', sku: 'LED-18', unit: 'copë', qty: 30, unit_c: 500, rate: 18, disc: 0, sub: 15000, vatc: 2700, tot: 17700 }], date: '2026-09-13', due: '2026-09-20', note: '', wh: 'W1' });
+eq([pb1, c.incomingOf('LED-18'), stock('LED-18')], ['PB-2026-00001', 30000, 25], 'purchase order: 30 incoming, stock untouched');
+c.poToPurchase(pb1); { const f = c.formVals(); eq([c.state.frm.kind, c.state.frm.fromPo, c.state.frm.receive], ['purchase', pb1, true], 'PO → purchase form'); f.actions[0].go(); }
+eq([db().purchases[0].fromPo, db().purchases[0].status, db().purchaseOrders[0].status, db().purchaseOrders[0].purchaseNo, c.incomingOf('LED-18'), stock('LED-18')], [pb1, 'Pranuar', 'Pranuar', db().purchases[0].no, 0, 55], 'purchase from PO: received, PO closed, incoming cleared');
+for (const p of ['Oferta', 'Porosi', 'Porosi blerjeje']) { const t = c.pageTable(p); eq(!!t && t.rows.length > 0, true, 'page: ' + p + ' (' + t.rows.length + ' rows)'); }
+c.openDr('quote', of1); eq(c.drawerVals().actions.some(a => a.label === 'Porosia PS-2026-00001'), true, 'quote drawer links the order');
+// draft → issue, proforma → invoice
+const drNo = c.issueBatch([{ cust: db().customers[1], items: items1, note: '' }], 'draft', { date: '2026-09-13', due: '2026-09-28' })[0];
+c.issueDraft(drNo); eq([invOf(drNo).status, invOf(drNo).fiscal, db().queue[0].ref, stock('PS-050')], ['Lëshuar', 'Në pritje', drNo, 620], 'issueDraft: draft issued, queued, stock out');
+const proNo = c.issueBatch([{ cust: db().customers[1], items: items1, note: '' }], 'proforma', { date: '2026-09-13', due: '2026-09-28' })[0];
+c.openForm('invoice', { customer: db().customers[1].name, customerQ: db().customers[1].name, lines: c.linesFrom(items1), fromProforma: proNo }); c.formVals().actions[2].go();
+eq([invOf(proNo).status, invOf(proNo).invoiceNo, db().invoices[0].fromProforma], ['Faturuar', db().invoices[0].no, proNo], 'proforma converted: marked Faturuar and linked');
+
+// ── warehouses & transfers ──
+c.state.db = c.seedDb(); c.state.dr = null; c.state.frm = null;
+eq([c.mainWh(), c.stockOfWh('PS-050', 'W1'), c.stockOfWh('PS-050', 'W2')], ['W1', 640000, 0], 'warehouses: opening stock sits in the main warehouse');
+const jBefore = c.journal().length, costBefore = c.avgCost(db(), 'PS-050');
+const tr1 = c.transferStock({ from: 'W1', to: 'W2', items: [{ name: 'Panel sanduiç 50mm', sku: 'PS-050', unit: 'm²', qty: 50 }], date: '2026-09-13', note: '' });
+eq([tr1, c.stockOfWh('PS-050', 'W1'), c.stockOfWh('PS-050', 'W2'), stock('PS-050'), c.avgCost(db(), 'PS-050'), c.journal().length], ['TR-2026-00001', 590000, 50000, 640, costBefore, jBefore], 'transfer: moves quantity between warehouses, total stock, cost and journal unchanged');
+c.openForm('transfer', { from: 'W2', to: 'W1', lines: [{ ...c.newLine(), fresh: false, sku: 'PS-050', artQ: 'Panel', qty: '60' }] }); eq([c.formVals().actions[0].disabled, /vetëm/.test(c.formVals().msg)], [true, true], 'transfer form: refuses more than the source warehouse holds');
+c.openForm('transfer', { from: 'W2', to: 'W1', lines: [{ ...c.newLine(), fresh: false, sku: 'PS-050', artQ: 'Panel', qty: '20' }] }); eq(c.formVals().noPrice, true, 'transfer form: no price fields'); c.formVals().actions[0].go();
+eq([c.stockOfWh('PS-050', 'W1'), c.stockOfWh('PS-050', 'W2')], [610000, 30000], 'transfer back via the form');
+c.state.db = { ...db(), terminals: [{ id: 't2', name: 'Arka 2', posId: 'POS-0002', warehouse: 'W2', branch: 'Dega Prizren', status: 'Aktiv' }] }; // the till's warehouse comes from its terminal record
+c.importPosSales([rcpt('r-w2', 'POS-0002/000001', 'final', 'fiscalized_sim', [it('PS-050', 'Panel', 5000, 1850)], 10915, 0, { pos_id: 'POS-0002', branch: 'Dega Prizren' })], []);
+eq([c.stockOfWh('PS-050', 'W2'), c.accountBalance('cash2') - 64000, db().posReceipts[0].posName], [25000, 10915, 'Arka 2'], 'POS-0002 sells from its terminal warehouse (Depo Prizren) into its cash account (Arka 2)');
+for (const p of ['Depo', 'Transferime', 'Njësitë', 'Barkodet', 'Lista e çmimeve', 'Raporte', 'Gjendja', 'Lëvizjet']) { const t = c.pageTable(p); eq(!!t && t.cols.length > 0 && t.rows.length > 0, true, 'page: ' + p + ' (' + t.rows.length + ' rows)'); }
+eq(c.pageTable('Gjendja').cols.map(x => x.label).includes('Prishtinë'), true, 'Gjendja shows a column per warehouse');
+c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transfer drawer');
+
+// ── printing, barcodes, labels, e-mail templates ──
+{ const h = c.docPrintHtml(invOf('FSH-2026-00125')); eq([h.includes('FSH-2026-00125'), h.includes('FATURË'), h.includes('Drini Market'), h.includes(c.fmt(277064)), h.includes('KS-TX-7F3A21')], [true, true, true, true, true], 'print html: invoice carries number, title, customer, total, fiscal ref'); }
+{ const h = c.docPrintHtml(purOf('BL-2026-00033')); eq([h.includes('BLERJE'), h.includes('FURNITORI')], [true, true], 'print html: purchase document'); }
+{ const h = c.docPrintHtml(db().transfers[0]); eq(h.includes('FLETË-TRANSFERIM') && h.includes('→'), true, 'print html: transfer sheet'); }
+eq(c.esc('<a href="x">&</a>'), '&lt;a href=&#34;x&#34;&gt;&amp;&lt;/a&gt;', 'esc');
+eq(c.ean13Check('590123412345'), '7', 'EAN-13 check digit (5901234123457)');
+{ const svg = c.code128Svg('KB-325'); eq([svg.startsWith('<svg'), (svg.match(/<rect/g) || []).length > 20], [true, true], 'code128 svg renders bars'); }
+{ const code = c.genBarcode('RR-001'); eq([code.length, code.slice(0, 3), c.ean13Check(code.slice(0, 12))], [13, '200', code[12]], 'internal barcode: 13 digits, prefix 200, valid check digit'); }
+c.genBarcodes(); eq(db().products.every(p => /^\d{13}$/.test(p.barcode)), true, 'genBarcodes: every product has a 13-digit barcode');
+eq(c.genBarcode('RR-001'), db().products.find(p => p.sku === 'RR-001').barcode, 'internal barcode is deterministic');
+c.printDocs([invOf('FSH-2026-00125')]); c.printLabels(db().products.slice(0, 2)); eq(typeof c.state.toast, 'string', 'print: headless environment reports honestly instead of throwing');
+
+// ── dashboard period + real chart, list tools, notifications ──
+c.state.db = c.seedDb(); c.state.section = 'dashboard'; c.state.page = 'Paneli';
+for (const r of ['Sot', 'Këtë javë', 'Këtë muaj', 'Këtë vit', 'Gjithçka']) { c.state.range = r; const v = c.renderVals(); eq(v.kpis.length === 8 && v.chart.length === 9 && v.ranges.some(x => x.bg === '#fff'), true, 'dashboard range ' + r + ': 8 KPIs, 9-month chart'); }
+c.state.range = 'Gjithçka'; { const v = c.renderVals(); eq(v.kpis[0].value, c.fmt(c.salesDocs().reduce((a, r) => a + r.sub, 0)), 'dashboard Gjithçka: sales KPI = all net sales'); eq(v.chart.some(x => x.sh !== '0%'), true, 'chart bars come from the books'); }
+c.state.range = 'Këtë muaj'; { const v = c.renderVals(); eq(v.kpis[0].value, c.fmt(c.salesDocs().filter(r => c.monthOf(r.date) === c.today().slice(0, 7)).reduce((a, r) => a + r.sub, 0)), 'dashboard Këtë muaj: sales KPI = this month'); eq(/^Mirë/.test(v.greeting) && v.dashLine.includes('ABC SH.P.K.'), true, 'greeting + date line are computed'); }
+{ let v = c.renderVals(); const n = v.alertCount; eq(n > 0, true, 'notifications: unread alerts exist'); v.readAlerts(); v = c.renderVals(); eq([v.alertCount, v.hasUnread], [0, false], 'notifications: marked read, badge gone'); }
+c.state.section = 'shitje'; c.state.page = 'Fatura';
+{ let v = c.renderVals(); v.invoices[0].toggle(); v.invoices[1].toggle(); v = c.renderVals(); eq([v.hasSel, v.selCount, v.exportLabel], [true, 2, 'Eksporto CSV (2)'], 'invoice list: selection'); v.exportInvoices(); v.printSelected(); v.clearSel(); eq(c.renderVals().hasSel, false, 'invoice list: clear selection'); }
+c.state.invSort = 'total_desc'; { const v = c.renderVals(); eq(v.invoices[0].total >= v.invoices[1].total, true, 'invoice list: sort by total'); }
+c.state.invSort = 'date_desc'; c.state.invKind = 'Profaturë'; eq(c.renderVals().invoices.length, 0, 'invoice list: kind filter'); c.state.invKind = 'Të gjitha';
+c.state.page = 'Klientë'; c.state.cFilter = 'Me borxh'; { const v = c.renderVals(); eq(v.customers.every(x => x.debtC > 0) && v.customers.length > 0, true, 'customers: debt filter'); } c.state.cFilter = 'Të gjitha';
+c.state.page = 'Produktet'; c.state.pFilter = 'Nën minimum'; { const v = c.renderVals(); eq(v.products.every(p => p.low) && v.products.length === 4, true, 'products: low-stock filter'); } c.state.pFilter = 'Të gjitha';
+c.openDr('customer', 'Drini Market SH.P.K.'); { const d = c.drawerVals(); eq([d.title, d.actions.map(a => a.label), d.sections[0].rows.length > 0], ['Drini Market SH.P.K.', ['Fatura e re', 'Ofertë', 'Shiko faturat', 'Redakto'], true], 'customer drawer'); }
+c.openDr('supplier', 'Elektro Kos L.L.C.'); eq(c.drawerVals().actions.map(a => a.label), ['Blerje e re', 'Porosi blerjeje', 'Shiko blerjet', 'Redakto'], 'supplier drawer');
+c.openForm('customer', { edit: 'Kosova Print Studio', name: 'Kosova Print Studio SH.P.K.', type: 'Biznes', nui: '810112233', fiscal: '600112233', city: 'Prishtinë', contact: 'Blerim Zeqiri', address: 'Rr. UÇK 41' }); c.formVals().actions[0].go();
+eq([db().customers.some(x => x.name === 'Kosova Print Studio SH.P.K.'), invOf('FSH-2026-00119').customer], [true, 'Kosova Print Studio SH.P.K.'], 'edit customer: renamed and documents follow');
+
+// ── login / session (local hash check; the backend takes it over later) ──
+c.state.db = c.seedDb(); c.state.session = null; c.state.section = 'dashboard'; c.state.page = 'Paneli';
+eq(db().users.every(u => u.pwHash && u.pwSalt) && JSON.stringify(c.posCatalogPayload()).includes('pwHash') === false, true, 'login: every user has a salted password hash and it never goes to the POS');
+eq(c.renderVals().needsLogin, true, 'login: no session → login screen');
+c.setL({ email: 'arben@abc-ks.com', pw: 'gabim' }); c.login(); eq([!!c.state.session, /gabuar/.test(c.state.login.err)], [false, true], 'login: wrong password refused with a message');
+c.setL({ email: 'lum@abc-ks.com', pw: 'kontabo' }); c.login(); eq([!!c.state.session, /Ftesa/.test(c.state.login.err)], [false, true], 'login: invited (not accepted) user cannot sign in');
+c.setL({ email: 'ARBEN@abc-ks.com', pw: 'kontabo' }); c.login();
+eq([c.state.session.name, c.state.session.role, c.who(), db().audit[0].a, c.state.login.pw], ['Arben Berisha', 'Pronar', 'Arben B.', 'Hyrje në sistem (sesion i mbajtur)', ''], 'login: default password signs in (email case-insensitive), audit names the user, password cleared');
+{ const v = c.renderVals(); eq([v.needsLogin, v.userName, v.appVis], [false, 'Arben Berisha', 'visible'], 'login: app visible, header shows the signed-in user'); }
+c.recordPayment({ kind: 'sale', ref: 'FSH-2026-00125', amount_c: 1000, account: 'bank1', date: '13.09.2026', note: '' }); eq(db().payments[0].user, 'Arben B.', 'operations record the signed-in user');
+c.openForm('password', { cur: 'gabim', pw: 'Kontabo2026!', pw2: 'Kontabo2026!' }); eq(c.formVals().actions[0].disabled, true, 'password form: wrong current password blocks');
+c.openForm('password', { cur: 'kontabo', pw: 'short', pw2: 'short' }); eq(c.formVals().actions[0].disabled, true, 'password form: too short blocks');
+c.openForm('password', { cur: 'kontabo', pw: 'Kontabo2026!', pw2: 'Kontabo2026!' }); eq(c.formVals().actions[0].disabled, false, 'password form: valid'); c.formVals().actions[0].go();
+eq([c.pwIsDefault(db().users[0]), db().audit[0].a.includes('Fjalëkalimi u ndryshua')], [false, true], 'password changed → hash replaced, audited');
+c.logout(); eq([c.state.session, c.renderVals().needsLogin, db().audit[0].a], [null, true, 'Dalje nga sistemi'], 'logout clears the session');
+c.setL({ email: 'arben@abc-ks.com', pw: 'kontabo' }); c.login(); eq(!!c.state.session, false, 'old password no longer works');
+c.setL({ email: 'arben@abc-ks.com', pw: 'Kontabo2026!' }); c.login(); eq(!!c.state.session, true, 'new password works');
+c.openDr('user', 'u2'); c.drawerVals(); c.setUserPassword('u2', c.DEFAULT_PW, 'reset'); eq(c.pwIsDefault(db().users[1]), true, 'admin reset → default password again');
+c.state.session = null;
+
+// ── API mode (kontabo-backend client) against a mocked server: login, state load/seed, commits with compare-and-set, 409 reload, server-owned mutations ──
+(async () => {
+  const mem = {}; const store = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
+  ctx.localStorage = store; ctx.sessionStorage = store; ctx.AbortController = class { constructor() { this.signal = {}; } abort() {} };
+  const srv = { version: 0, state: null, users: [{ id: 'm1', userId: 'u1', name: 'Arben Berisha', email: 'arben@abc-ks.com', role: 'Pronar', branch: 'Dega Prishtinë', dept: 'Drejtoria', status: 'Aktiv', last: '—', pinSalt: 'a1b2c3d4', pinHash: 'x' }, { id: 'm2', userId: 'u2', name: 'Fjolla Kastrati', email: 'fjolla@abc-ks.com', role: 'Kasier', branch: 'Dega Prizren', dept: 'Shitje', status: 'Aktiv' }], roles: { Pronar: { fatura_shiko: true }, Kasier: { pos: true } }, fiscal: { mode: 'ATK_ELECTRONIC', version: 3, changedAt: '01.03.2026 10:12', changedBy: 'Arben B.', env: 'TEST', settings: { atk: { appId: 'APP-1' }, tremol: {}, flink: {} }, unresolved: 0 }, audit: [{ id: 1, t: '01.09.2026 08:30', u: 'Arben B.', a: 'seed' }], calls: [] };
+  const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
+  ctx.fetch = async (url, o = {}) => {
+    const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''), m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : {}; srv.calls.push(m + ' ' + path);
+    const authed = (o.headers || {}).Authorization === 'Bearer acc-1';
+    if (path === '/health') return json(200, { ok: true, app: 'Kontabo Backend', version: '0.1.0', db: 'sqlite' });
+    if (path === '/auth/login') return body.password === 'kontabo' ? json(200, { accessToken: 'acc-1', refreshToken: 'ref-1', expiresIn: 3600, user: { id: 'u1', name: 'Arben Berisha', email: 'arben@abc-ks.com', isPlatformAdmin: false }, tenant: { id: 't1', name: 'ABC SH.P.K.', role: 'Pronar', branch: 'Dega Prishtinë', perms: { fatura_shiko: true } }, tenants: [{ id: 't1', name: 'ABC SH.P.K.', role: 'Pronar' }, { id: 't2', name: 'Drini Market SH.P.K.', role: 'Kontabilist' }] }) : body.password === 'i-pesti' ? json(401, { error: 'invalid_credentials', message: 'gabim', failsLeft: 0, retryAfter: 30 }) : json(401, { error: 'invalid_credentials', message: 'gabim', failsLeft: 4 });
+    if (!authed) return json(401, { error: 'unauthorized', message: 'token' });
+    if (path === '/state' && m === 'GET') return json(200, { version: srv.version, state: srv.state });
+    if (path === '/state' && m === 'PUT') { if (body.baseVersion !== srv.version) return json(409, { error: 'version_conflict', version: srv.version }); srv.state = body.state; srv.version++; return json(200, { version: srv.version }); }
+    if (path === '/state/commit') { if (body.baseVersion !== srv.version) return json(409, { error: 'version_conflict', version: srv.version, state: srv.state }); const ignored = []; for (const k in body.patch) { if (['users', 'roles', 'fiscal', 'audit', 'sessions', 'security', 'profile'].includes(k)) ignored.push(k); else srv.state[k] = body.patch[k]; } srv.version++; return json(200, { version: srv.version, ignored }); }
+    if (path === '/users' && m === 'GET') return json(200, { users: srv.users });
+    if (path === '/roles' && m === 'GET') return json(200, { roles: srv.roles });
+    if (path === '/roles' && m === 'PUT') { srv.roles = body.roles; return json(200, { roles: srv.roles }); }
+    if (path === '/fiscal' && m === 'GET') return json(200, srv.fiscal);
+    if (path === '/fiscal/mode') { if (body.expectedVersion !== srv.fiscal.version) return json(409, { error: 'version_conflict', version: srv.fiscal.version }); srv.fiscal = { ...srv.fiscal, mode: body.mode, version: srv.fiscal.version + 1, changedBy: 'Arben B.' }; return json(200, { mode: srv.fiscal.mode, version: srv.fiscal.version, changedAt: 'x', changedBy: 'Arben B.' }); }
+    if (path === '/fiscal/settings') { srv.fiscal.settings = { atk: body.atk, tremol: body.tremol, flink: body.flink }; return json(200, { settings: srv.fiscal.settings, env: 'TEST' }); }
+    if (path.startsWith('/audit')) { if (m === 'POST') { srv.audit.unshift({ id: srv.audit.length + 1, t: 'now', u: 'Arben B.', a: body.action }); return json(200, { item: srv.audit[0] }); } return json(200, { items: srv.audit }); }
+    if (/^\/users\/m2\/pin$/.test(path)) { srv.users[1] = { ...srv.users[1], pinSalt: 'ffffffff', pinHash: 'pinned', pinChangedAt: 'now' }; return json(200, { user: srv.users[1] }); }
+    if (/^\/users\/m2$/.test(path) && m === 'PATCH') { srv.users[1] = { ...srv.users[1], ...body }; return json(200, { user: srv.users[1] }); }
+    if (path === '/users/invite') { srv.users.push({ id: 'm3', userId: 'u3', name: body.email, email: body.email, role: body.role, branch: body.branch, dept: body.dept, status: 'Ftuar' }); return json(200, { user: srv.users[2], inviteToken: 'inv-123' }); }
+    if (path === '/terminals' && m === 'GET') return json(200, { terminals: srv.terminals || [] });
+    if (path === '/terminals' && m === 'POST') { srv.terminals = [...(srv.terminals || []), { id: 'tm1', name: body.name, branch: body.branch, posId: body.posId, warehouse: body.warehouse, status: 'Aktiv', lastSeen: '' }]; return json(200, { terminal: srv.terminals[0], token: 'kt_secret123' }); }
+    if (/^\/terminals\/tm1$/.test(path) && m === 'PATCH') { srv.terminals[0] = { ...srv.terminals[0], ...body }; return json(200, { terminal: srv.terminals[0] }); }
+    if (path === '/pos/status') return json(200, { terminals: (srv.terminals || []).map(t => ({ id: t.id, lastSeen: '13.09.2026 12:00', appVersion: '0.6.0', catalogVersion: srv.catVersion || 0, shift: null, fiscal: { mode: 'TREMOL_ETHERNET', env: 'PROD', version: 2, simulator: false, pending: 1 }, pendingReceipts: 1 })), catalogVersion: srv.catVersion || 0, unsyncedReceipts: (srv.posReceipts || []).filter(r => !r.acked).length });
+    if (path.startsWith('/pos/sales')) { const since = +(path.split('since=')[1] || 0); const rows = (srv.posReceipts || []).filter(r => r.seq > since); return json(200, { receipts: rows.map(r => r.payload), shifts: [], cursor: rows.length ? rows[rows.length - 1].seq : since }); }
+    if (path === '/pos/ack') { for (const r of (srv.posReceipts || [])) if (body.ids.includes(r.payload.id)) r.acked = true; return json(200, { acked: body.ids.length }); }
+    if (path === '/pos/catalog' && m === 'PUT') { srv.catVersion = (srv.catVersion || 0) + 1; srv.catalog = body.catalog; return json(200, { version: srv.catVersion }); }
+    if (path === '/auth/logout') return json(200, { ok: true });
+    return json(404, { error: 'not_found', message: path });
+  };
+  const wait = () => new Promise(r => setTimeout(r, 5));
+  const a = new C({}); a.state.db = null; a.state.session = null;
+  a.saveApi({ url: 'http://127.0.0.1:8800/api/v1' });
+  eq([a.apiOn(), a.apiAuthed()], [true, false], 'api: url set → API mode, not authenticated yet');
+  a.setL({ email: 'arben@abc-ks.com', pw: 'gabim' }); a.login(); for (let i = 0; i < 20 && a.state.login.busy; i++) await wait();
+  eq([!!a.state.session, a.state.login.err.startsWith('Email ose fjalëkalim i gabuar')], [false, true], 'api login: server 401 shown');
+  a.setL({ email: 'arben@abc-ks.com', pw: 'i-pesti' }); a.login(); for (let i = 0; i < 20 && a.state.login.busy; i++) await wait();
+  eq([!!a.state.session, a.state.login.err], [false, 'Shumë tentime të gabuara — llogaria u bllokua për 30 s.'], 'api login: 5th failure (failsLeft 0 + retryAfter) says the account is locked, not "0 tentime"');
+  a.setL({ email: 'arben@abc-ks.com', pw: 'kontabo', remember: true }); a.login(); for (let i = 0; i < 50 && (!a.state.db || !a.state.session || !a.state.session.userId); i++) await wait();
+  eq([a.state.session.name, a.state.session.userId, a.state.session.api, a.apiAuthed(), a.apiCfg().tenantName], ['Arben Berisha', 'm1', true, true, 'ABC SH.P.K.'], 'api login: session from the server, membership id resolved');
+  eq([srv.version, srv.state.invoices.length, srv.state.products.length, srv.state.company.name, srv.state.accounts.length, srv.state.users === undefined, srv.state.fiscal === undefined], [1, 0, 0, 'ABC SH.P.K.', 2, true, true], 'api load: a new tenant starts EMPTY on the server (no demo books, no server-owned keys)');
+  eq([a.state.db.users.length, a.state.db.users[1].c.startsWith('#'), a.state.db.roles.Kasier.pos, a.state.db.audit[0].a, a.state.db.company.name], [2, true, true, 'seed', 'ABC SH.P.K.'], 'api load: users/roles/audit mirrored from the server');
+  eq([a.state.db.fiscal, srv.calls.includes('GET /fiscal')], [undefined, false], 'api load: NO fiscal mirror — the web fetches no fiscal config from the server');
+  { const v = a.renderVals(); eq([v.needsLogin, v.hasTenants, v.tenantList.length, /libri v1/.test(v.apiLine), v.hasSaved], [false, true, 2, true, false], 'api render: signed in, tenant switcher, server line'); }
+  // a normal commit → /state/commit with the patch, version advances; server-owned keys are stripped client-side
+  a.addParty('customer', { name: 'Test Klient', type: 'Biznes', nui: '123456789', fiscal: '—', city: 'Prishtinë', contact: '—', address: '—' });
+  const nos = a.issueBatch([{ cust: a.state.db.customers[0], items: [{ name: 'P', sku: 'P1', unit: 'copë', qty: 1, unit_c: 1000, rate: 18, disc: 0, sub: 1000, vatc: 180, tot: 1180 }], note: '' }], 'issue', { date: '2026-09-13', due: '2026-09-28' });
+  a.recordPayment({ kind: 'sale', ref: nos[0], amount_c: 1000, account: 'bank1', date: '13.09.2026', note: '' }); for (let i = 0; i < 40 && (a._pending || []).length; i++) await wait();
+  eq([srv.version, a.apiCfg().version, srv.state.payments[0].amount_c, srv.state.invoices.length, (a._pending || []).length], [4, 4, 1000, 1, 0], 'api commit: patches applied on the server in order, version in sync');
+  { const before = srv.calls.filter(c => c === 'POST /state/commit').length; a.commit({ security: { twoFactor: true } }); await wait(); eq(srv.calls.filter(c => c === 'POST /state/commit').length, before, 'api commit: server-owned keys are never sent'); }
+  // conflict: someone else bumped the version → 409 → server state wins, local change discarded
+  srv.version = 5; srv.state.company = { ...srv.state.company, name: 'ABC (server)' };
+  a.setIn('company', { name: 'ABC (local)' }); for (let i = 0; i < 50 && (a._pending.length || a._flushing); i++) await wait();
+  eq([a.apiCfg().version, a.state.db.company.name, /ringarkuan/.test(a.state.toast || '')], [5, 'ABC (server)', true], 'api commit: 409 → reload from the server + honest toast');
+  // reload after a conflict: a server product carrying a category missing from the list → the appended record is persisted (ONE {categories} patch); none when the list is complete
+  { srv.state.products = [{ name: 'Q', sku: 'Q1', barcode: '—', cat: 'Hidraulikë', unit: 'copë', tax: 'E', price_c: 100, cost_c: 50, openCost_c: 50, opening: 0, minStock: 0 }]; srv.state.categories = []; srv.version = 6;
+    const seen = (a._pending || []).length; await a.apiReloadState(); const patch = (a._pending || [])[seen];
+    eq([a.state.db.categories.map(x => x.name), !!patch && Object.keys(patch).join(), patch && patch.categories.map(x => x.id).join()], [['Hidraulikë'], 'categories', 'K-hidraulike'], 'apiReloadState: unknown category → record shown AND queued as a {categories} commit');
+    for (let i = 0; i < 40 && ((a._pending || []).length || a._flushing); i++) await wait();
+    eq([srv.state.categories.map(x => x.name), srv.version, a.apiCfg().version], [['Hidraulikë'], 7, 7], 'apiReloadState: the record reached the server, version in sync');
+    const before = (a._pending || []).length, calls = srv.calls.length; await a.apiReloadState(); eq([(a._pending || []).length - before, srv.calls.slice(calls).filter(x => x === 'POST /state/commit').length], [0, 0], 'apiReloadState: complete list → nothing queued, no commit'); }
+  // server-owned mutations
+  a.setUserPin('m2', '2580'); for (let i = 0; i < 30 && a.state.db.users[1].pinHash !== 'pinned'; i++) await wait(); eq([srv.calls.includes('POST /users/m2/pin'), a.state.db.users[1].pinHash], [true, 'pinned'], 'api: PIN set on the server, mirror refreshed');
+  a.openDr('user', 'm2'); a.drawerVals().actions.find(x => x.label === 'Pezullo').go(); a.state.confirm.ok(); a.state.confirm = null; for (let i = 0; i < 30 && a.state.db.users[1].status !== 'Pezulluar'; i++) await wait(); eq(a.state.db.users[1].status, 'Pezulluar', 'api: suspend → PATCH /users/{id}');
+  a.openForm('user', { email: 'test@abc-ks.com', role: 'Shitje', branch: 'Dega Prishtinë', dept: '' }); a.formVals().actions[0].go(); for (let i = 0; i < 30 && a.state.db.users.length < 3; i++) await wait(); eq([a.state.db.users[2].status, !!a.state.confirm && /inv-123/.test(a.state.confirm.body)], ['Ftuar', true], 'api: invite → server, dev token shown'); a.state.confirm = null;
+  { const t = a.pageTable('Rolet'); t.rows[0].cells[1 + a.ROLES.indexOf('Kasier')].go(); for (let i = 0; i < 30 && !srv.calls.includes('PUT /roles'); i++) await wait(); eq(srv.roles.Kasier.fatura_shiko, true, 'api: roles matrix → PUT /roles'); }
+  // fiscalization is till-owned: the web must NEVER write fiscal config to the server
+  eq(srv.calls.filter(x => /\/fiscal/.test(x)), [], 'api: zero /fiscal calls of any kind from the web (no mode PUT, no settings PUT, no GET)');
+  eq(srv.fiscal.mode, 'ATK_ELECTRONIC', 'api: server-side fiscal record untouched by the web');
+  a.logAudit('test audit'); await wait(); eq([srv.audit[0].a, a.state.db.audit[0].a], ['test audit', 'test audit'], 'api: audit → POST /audit + local mirror');
+  // POS relay through the server: register a terminal (token once), push the catalogue, pull receipts, ack
+  a.openForm('terminal', { name: 'Arka 1', posId: 'POS-0001', branch: 'Dega kryesore', warehouse: 'W1' }); a.formVals().actions[0].go(); for (let i = 0; i < 30 && !(a.state.db.terminals || []).length; i++) await wait();
+  eq([(a.state.db.terminals || []).length, !!a.state.confirm && /kt_secret123/.test(a.state.confirm.body)], [1, true], 'api: terminal registered on the server, token shown once'); a.state.confirm = null;
+  srv.posReceipts = [{ seq: 1, payload: rcpt('srv-r1', 'POS-0001/000001', 'final', 'fiscalized_sim', [it('P1', 'P', 1000, 1000)], 1180, 0) }];
+  a.state.db = { ...a.state.db, products: [{ name: 'P', sku: 'P1', barcode: '—', cat: 'x', unit: 'copë', tax: 'D', price_c: 1000, cost_c: 500, openCost_c: 500, opening: 10000, minStock: 0 }] };
+  await a.posSync(true); for (let i = 0; i < 30 && (a._pending || []).length; i++) await wait();
+  eq([srv.calls.includes('PUT /pos/catalog'), srv.calls.some(x => x.startsWith('GET /pos/sales')), srv.calls.includes('POST /pos/ack'), a.state.db.posReceipts.length, a.state.db.posReceipts[0].posName, a.posCfg().cursorSrv, srv.posReceipts[0].acked, !!srv.catalog && srv.catalog.products.length], [true, true, true, 1, 'Arka 1', 1, true, 1], 'api relay: catalogue pushed, receipt pulled into the books, acked, cursor saved');
+  await a.posSync(true); eq(a.state.db.posReceipts.length, 1, 'api relay: second pull is idempotent');
+  // the till's heartbeat fiscal block is kept on the terminal and rendered by the read-only monitor
+  { const t0 = a.state.db.terminals[0]; eq([!!t0.fiscal, t0.fiscal.mode, t0.fiscal.env, t0.pendingReceipts], [true, 'TREMOL_ETHERNET', 'PROD', 1], 'api: apiTerminalToDb keeps the heartbeat fiscal block'); }
+  { a.state.admin = false; a.state.section = 'settings'; a.state.page = 'Fiskalizimi'; const v = a.renderVals();
+    eq([v.fiscalTerms.length, v.fiscalTerms[0].mode, v.fiscalTerms[0].env, v.fiscalTerms[0].ver, v.fiscalTerms[0].pending], [1, 'TREMOL_ETHERNET', 'PROD', 'v2', '1'], 'api: monitor shows per-till fiscal state exactly as reported');
+    eq([v.fiscalModes, v.fiscalFields, v.fiscalEnvs, v.fiscalStatus, v.setUnconfigured], [undefined, undefined, undefined, undefined, undefined], 'api: the page exposes no fiscal configuration controls'); }
+  // owner-only "Zbraz librat e kompanisë": PUT /state with empty books, server-owned keys untouched, audited
+  { a.state.section = 'shitje'; a.state.page = 'Fatura'; const v = a.renderVals(); eq([v.canEmptyBooks, v.hasSaved], [true, false], 'api: owner sees "Zbraz librat", not the local demo reset'); v.emptyBooksConfirm(); eq(!!a.state.confirm && /Zbraz/.test(a.state.confirm.title), true, 'api: emptying the books asks first');
+    const usersBefore = a.state.db.users.length; a.state.confirm.ok(); a.state.confirm = null; for (let i = 0; i < 20 && a.state.db.posReceipts.length; i++) await wait();
+    eq([a.state.db.posReceipts.length, a.state.db.invoices.length, a.state.db.customers.length, a.state.db.company.name, a.state.db.users.length, srv.state.invoices.length, srv.state.users, a.state.db.audit.some(x => /zbrazën/.test(x.a))], [0, 0, 0, 'ABC SH.P.K.', usersBefore, 0, undefined, true], 'api: books emptied on the server, users/roles kept, audit written');
+    a.state.session = { ...a.state.session, role: 'Kasier' }; eq(a.renderVals().canEmptyBooks, false, 'api: only the owner can empty the books'); a.state.session = { ...a.state.session, role: 'Pronar' }; }
+  a.logout(); await wait(); eq([a.state.session, a.apiAuthed(), srv.calls.includes('POST /auth/logout')], [null, false, true], 'api: logout revokes the refresh token and clears tokens');
+  // platform admin without a tenant: login must not hang; lands in the admin panel on local demo books
+  const loginAdmin = ctx.fetch; ctx.fetch = async (url, o = {}) => { const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''); srv.calls.push((o.method || 'GET') + ' ' + path); if (path === '/auth/login') return json(200, { accessToken: 'acc-2', refreshToken: 'ref-2', expiresIn: 3600, user: { id: 'u9', name: 'Admin Kontabo', email: 'admin@kontabo.app', isPlatformAdmin: true }, tenant: null, tenants: [] });
+    if ((o.headers || {}).Authorization === 'Bearer acc-2') { if (path === '/admin/tenants/t1/owner-password') return json(200, { email: 'pronar@abc-ks.com', password: JSON.parse(o.body || '{}').password || 'Gjeneruar123', created: false, activated: true });
+      if (path === '/admin/tenants') return json(200, { tenants: [{ id: 't1', name: 'ABC SH.P.K.', nui: '810000001', city: 'Prishtinë', plan: 'pro', status: 'Aktiv', users: 3 }] }); if (path === '/admin/plans') return json(200, { plans: {} }); if (path === '/admin/flags') return json(200, { flags: {} }); if (path.startsWith('/admin/audit')) return json(200, { items: [{ t: 'now', u: 'admin', a: 'login' }] }); if (path === '/admin/users') return json(200, { users: [{ id: 'm1', userId: 'u1', tenantId: 't1', name: 'Arben Berisha', email: 'arben@abc-ks.com', tenant: 'ABC SH.P.K.', role: 'Pronar', status: 'Aktiv', last: '', isPlatformAdmin: false }] }); if (path === '/auth/logout') return json(200, { ok: true }); }
+    return loginAdmin(url, o); };
+  a.setL({ email: 'admin@kontabo.app', pw: 'x', remember: true }); a.login(); for (let i = 0; i < 40 && a.state.login.busy; i++) await wait(); for (let i = 0; i < 20 && !a.state.db.admin.tenants.length; i++) await wait();
+  eq([a.state.login.busy, !!a.state.session && a.state.session.noTenant, a.state.admin, a.state.page, a.apiAuthed(), a.apiSignedIn(), !!a.state.db], [false, true, true, 'Përmbledhje', false, true, true], 'api: platform admin (no tenant) → admin panel, no hang, local books');
+  eq([a.state.db.invoices.length, a.state.db.customers.length, a.state.db.company.name, a.state.db.admin.tenants.length, a.state.db.admin.tenants[0].name, a.state.db.admin.admins[0].email, a.renderVals().userName, a.renderVals().isTrial], [0, 0, 'Kontabo', 1, 'ABC SH.P.K.', 'admin@kontabo.app', 'Admin Kontabo', false], 'api: platform admin sees no demo books; companies come from /admin/tenants; avatar is the admin');
+  { a.state.section = 'a_users'; a.state.page = 'Përdoruesit e platformës'; const t = a.pageTable('A:Përdoruesit e platformës'); eq([String(t.count), t.rows.length, a.state.db.admin.users[0].email], ['1', 1, 'arben@abc-ks.com'], 'api: platform users come from /admin/users — no invented owner rows'); }
+  // "Fjalëkalimi i pronarit": pa SMTP, administratori ia vendos vetë fjalëkalimin pronarit të kompanisë
+  { a.openDr('tenant', 'ABC SH.P.K.'); const acts = a.drawerVals().actions.map(x => x.label);
+    eq(acts.includes('Fjalëkalimi i pronarit'), true, 'admin: the tenant drawer offers "Fjalëkalimi i pronarit"');
+    a.drawerVals().actions.find(x => x.label === 'Fjalëkalimi i pronarit').go();
+    let f = a.formVals(); eq([a.state.frm.kind, f.actions[0].disabled], ['ownerPw', false], 'admin: the form opens, an empty password is allowed (the server generates one)');
+    a.setF({ pw: 'short' }); f = a.formVals(); eq(f.actions[0].disabled, true, 'admin: a password under 8 characters is refused before the request');
+    a.setF({ pw: 'Fjalekalimi1' }); f = a.formVals(); f.actions[0].go();
+    for (let i = 0; i < 20 && !a.state.confirm; i++) await wait();
+    eq([srv.calls.includes('POST /admin/tenants/t1/owner-password'), /pronar@abc-ks\.com/.test((a.state.confirm || {}).body || ''), /Fjalekalimi1/.test((a.state.confirm || {}).body || '')], [true, true, true],
+       'admin: the password reaches the server and comes back once, with the owner e-mail');
+    a.state.confirm = null; a.state.dr = null; }
+  a.exitAdmin(); eq(a.state.admin, true, 'api: platform admin cannot enter a company ERP');
+  a.logout(); await wait(); eq(a.state.session, null, 'api: platform admin logout');
+  ctx.fetch = loginAdmin;
+  // ── sign-up of a new company (POST /auth/signup) ──
+  // local mode: the link keeps the honest "needs backend" toast and never opens the view
+  { const loc = new C({}); loc._api = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' }; loc.state.db = loc.seedDb(); loc.state.session = null;
+    loc.renderVals().lSignup(); eq([loc.state.login.view, /Regjistrimi i kompanisë së re/.test(loc.state.toast || '') && /kërkon backend/.test(loc.state.toast || ''), loc.renderVals().lIsSignup], ['login', true, false], 'signup local: link → needsBackend toast, view stays login'); clearTimeout(loc._t); }
+  // API mode: the mocked server answers /auth/signup; the new tenant (acc-9) has no state yet → the ERP seeds empty books
+  const sg = { calls: [], bodies: [], reply: null, state: null, version: 0 };
+  ctx.fetch = async (url, o = {}) => { const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''), m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : {};
+    if (path === '/auth/signup') { srv.calls.push(m + ' ' + path); sg.bodies.push({ body, auth: (o.headers || {}).Authorization || null }); return sg.reply || json(200, { accessToken: 'acc-9', refreshToken: 'ref-9', expiresIn: 3600, user: { id: 'u7', name: 'Blerta Gashi', email: 'blerta@firma-re.com', isPlatformAdmin: false }, tenant: { id: 't9', name: 'Firma e Re SH.P.K.', role: 'Pronar', branch: '', perms: { fatura_shiko: true }, plan: 'trial', status: 'Provë', createdAt: new Date(Date.now() - 23 * 3600000).toISOString(), trialEndsAt: new Date(Date.now() + 13 * 86400000 + 3600000).toISOString(), trialDaysLeft: 14 }, tenants: [{ id: 't9', name: 'Firma e Re SH.P.K.', role: 'Pronar', status: 'Aktiv' }] }); }
+    if ((o.headers || {}).Authorization === 'Bearer acc-9') { srv.calls.push(m + ' ' + path);
+      if (path === '/state' && m === 'GET') return json(200, { version: sg.version, state: sg.state });
+      if (path === '/state' && m === 'PUT') { if (body.baseVersion !== sg.version) return json(409, { error: 'version_conflict', version: sg.version }); sg.state = body.state; sg.version++; return json(200, { version: sg.version }); }
+      if (path === '/users') return json(200, { users: [{ id: 'm9', userId: 'u7', name: 'Blerta Gashi', email: 'blerta@firma-re.com', role: 'Pronar', branch: '—', dept: '—', status: 'Aktiv' }] });
+      if (path === '/roles') return json(200, { roles: { Pronar: { fatura_shiko: true } } });
+      if (path === '/fiscal') return json(200, { mode: 'UNCONFIGURED', version: 0, settings: {} });
+      if (path.startsWith('/audit')) return json(200, { items: [{ id: 1, t: 'now', u: 'Blerta G.', a: 'Kompania “Firma e Re SH.P.K.” u regjistrua nga Blerta Gashi' }] });
+      if (path === '/terminals') return json(200, { terminals: [] });
+      if (path === '/auth/logout') return json(200, { ok: true }); }
+    return loginAdmin(url, o); };
+  a.renderVals().lSignup(); eq([a.state.login.view, a.renderVals().lIsSignup, a.renderVals().lCanSignup, a.renderVals().lSignupLabel], ['signup', true, false, 'Krijo kompaninë dhe hyr →'], 'signup api: link opens the signup view, button disabled while empty');
+  a.setL({ sgCompany: 'Firma e Re SH.P.K.', sgName: 'Blerta Gashi', sgEmail: 'Blerta@Firma-Re.com', sgPw: 'Sekret123', sgPw2: 'Sekret12' }); { const v = a.renderVals(); eq([v.lCanSignup, v.lSgPwMismatch], [false, true], 'signup: passwords must match (client-side message)'); }
+  a.setL({ sgPw2: 'Sekret123', sgNui: '12345' }); { const v = a.renderVals(); eq([v.lCanSignup, v.lSgNuiBad], [false, true], 'signup: NUI must be 6–12 digits when given'); }
+  a.setL({ sgNui: 'abc' }); eq(a.renderVals().lCanSignup, false, 'signup: non-numeric NUI blocks');
+  a.setL({ sgNui: '', sgEmail: 'blerta@firma' }); eq(a.renderVals().lCanSignup, false, 'signup: invalid email blocks');
+  a.setL({ sgEmail: 'Blerta@Firma-Re.com', sgPw: 'Sekret1', sgPw2: 'Sekret1' }); eq(a.renderVals().lCanSignup, false, 'signup: password shorter than 8 blocks');
+  a.setL({ sgPw: 'Sekret123', sgPw2: 'Sekret123', sgCompany: 'F' }); eq(a.renderVals().lCanSignup, false, 'signup: company name shorter than 2 blocks');
+  a.setL({ sgCompany: 'Firma e Re SH.P.K.', sgNui: '811223344', sgCity: 'Prishtinë', remember: true }); eq([a.renderVals().lCanSignup, a.renderVals().lSgNuiBad, a.renderVals().lSgPwMismatch], [true, false, false], 'signup: all required fields valid → button enabled');
+  // error mapping by e.code (Albanian), busy reset on failure
+  const tryErr = async (reply, want, what) => { sg.reply = reply; a.renderVals().lDoSignup(); eq(a.state.login.busy, true, what + ' (busy while posting)'); for (let i = 0; i < 30 && a.state.login.busy; i++) await wait(); eq([a.state.login.busy, a.state.login.err, !!a.state.session, a.state.login.view], [false, want, false, 'signup'], what); };
+  await tryErr(json(409, { error: 'duplicate_name', message: 'x' }), 'Ekziston një kompani me këtë emër.', 'signup err: duplicate_name');
+  await tryErr(json(409, { error: 'duplicate_nui', message: 'x' }), 'Ekziston një kompani me këtë NUI.', 'signup err: duplicate_nui');
+  await tryErr(json(401, { error: 'invalid_credentials', message: 'x', failsLeft: 3 }), 'Ky email ka tashmë llogari Kontabo — shkruani fjalëkalimin e asaj llogarie (edhe 3 tentime).', 'signup err: invalid_credentials + failsLeft');
+  await tryErr(json(401, { error: 'invalid_credentials', message: 'x', failsLeft: 0, retryAfter: 30 }), 'Shumë tentime — llogaria u bllokua për 30 s.', 'signup err: 5th failure (failsLeft 0 + retryAfter) → locked message, not "edhe 0 tentime"');
+  await tryErr(json(409, { error: 'email_invited', message: 'x' }), 'Ky email ka një ftesë në pritje — pranoni ftesën nga lidhja e dërguar (“Kam një ftesë”), pastaj regjistroni kompaninë.', 'signup err: email_invited (pending-invite placeholder)');
+  await tryErr(json(423, { error: 'locked', message: 'x', retryAfter: 27 }), 'Shumë tentime — provoni pas 27 s.', 'signup err: locked');
+  // blank NUI / city travel as "" (literal contract shape), the typed values are restored afterwards
+  a.setL({ sgNui: '', sgCity: '' }); await tryErr(json(409, { error: 'duplicate_name', message: 'x' }), 'Ekziston një kompani me këtë emër.', 'signup: blank NUI/city still post');
+  eq(sg.bodies[sg.bodies.length - 1].body.company, { name: 'Firma e Re SH.P.K.', nui: '', city: '' }, 'signup: blank NUI/city are sent as "" (contract body shape)');
+  a.setL({ sgNui: '811223344', sgCity: 'Prishtinë' });
+  await tryErr(json(403, { error: 'signup_disabled', message: 'x' }), 'Regjistrimi i kompanive të reja është i mbyllur momentalisht — kontaktoni Kontabo.', 'signup err: signup_disabled');
+  await tryErr(json(429, { error: 'too_many_requests', message: 'x', retryAfter: 900 }), 'Shumë regjistrime nga ky rrjet — provoni pas 15 min.', 'signup err: too_many_requests');
+  await tryErr(json(400, { error: 'weak_password', message: 'Fjalëkalimi duhet të ketë së paku 8 karaktere' }), 'Fjalëkalimi duhet të ketë së paku 8 karaktere', 'signup err: weak_password → server message');
+  await tryErr(json(400, { error: 'validation_error', message: 'NUI duhet të ketë 6–12 shifra' }), 'NUI duhet të ketë 6–12 shifra', 'signup err: validation_error → server message');
+  { const fetchSg = ctx.fetch; ctx.fetch = async (url, o = {}) => { if (url.endsWith('/auth/signup')) throw new TypeError('Failed to fetch'); return fetchSg(url, o); }; a.renderVals().lDoSignup(); for (let i = 0; i < 30 && a.state.login.busy; i++) await wait(); eq(a.state.login.err, 'Serveri nuk u arrit: Failed to fetch', 'signup err: network'); ctx.fetch = fetchSg; }
+  eq(a.renderVals().lSgPw, 'Sekret123', 'signup: the typed password is kept after a failed attempt');
+  // success: exact contract body, session from the response, dashboard of the new EMPTY company
+  sg.reply = null; const callsBefore = srv.calls.length; a.renderVals().lDoSignup(); for (let i = 0; i < 60 && (!a.state.session || !a.state.session.userId || !a.state.db || a.state.db.company.name !== 'Firma e Re SH.P.K.'); i++) await wait();
+  const sb = sg.bodies[sg.bodies.length - 1];
+  eq([srv.calls.slice(callsBefore).includes('POST /auth/signup'), sb.auth, sb.body], [true, null, { company: { name: 'Firma e Re SH.P.K.', nui: '811223344', city: 'Prishtinë' }, name: 'Blerta Gashi', email: 'blerta@firma-re.com', password: 'Sekret123', remember: true }], 'signup: POST /auth/signup without bearer, exact contract body (email lowercased)');
+  eq([!!a.state.session, a.state.session.name, a.state.session.role, a.state.session.userId, a.state.session.api, a.apiCfg().tenantId, a.apiCfg().tenantName, a.apiCfg().accessToken, a.apiCfg().tenants.length], [true, 'Blerta Gashi', 'Pronar', 'm9', true, 't9', 'Firma e Re SH.P.K.', 'acc-9', 1], 'signup: session + active tenant from the response');
+  eq([a.state.admin, a.state.section, a.state.page, a.state.login.view, a.state.login.busy, a.state.login.err, a.state.login.sgPw, a.state.login.sgPw2], [false, 'dashboard', 'Paneli', 'login', false, '', '', ''], 'signup: lands on Paneli, login view reset, passwords cleared');
+  { const L = a.state.login; eq([L.sgCompany, L.sgNui, L.sgCity, L.sgName, L.sgEmail], ['', '', '', '', ''], 'signup: the whole form is emptied after success (a second company never inherits the old NUI/city)'); }
+  { const v = a.renderVals(); eq([a.apiCfg().tenantPlan, !!a.apiCfg().trialEndsAt, v.isTrial, v.trialDays, v.trialPct], ['trial', true, true, 14, '100%'], 'signup: trial banner counts from the server tenant (createdAt + trialEndsAt → 14 days left of 14)'); }
+  { const cfg = a.apiCfg(); const keep = { tenantSince: cfg.tenantSince, trialEndsAt: cfg.trialEndsAt }; a.saveApi({ tenantSince: new Date(Date.now() - 10 * 86400000).toISOString(), trialEndsAt: new Date(Date.now() + 4 * 86400000 - 3600000).toISOString() }); eq([a.renderVals().trialDays, a.renderVals().trialPct], [4, '29%'], 'trial banner: 10 days into a 14-day trial → 4 left');
+    a.saveApi({ trialEndsAt: new Date(Date.now() - 3 * 86400000).toISOString() }); eq(a.renderVals().trialDays, 0, 'trial banner: an ended trial shows 0, never negative'); a.saveApi(keep); }
+  eq([srv.calls.slice(callsBefore).includes('GET /state'), srv.calls.slice(callsBefore).includes('PUT /state'), sg.version, sg.state.invoices.length, sg.state.customers.length, sg.state.products.length, sg.state.company.name, sg.state.company.nui, sg.state.company.city, sg.state.users, a._signupSeed], [true, true, 1, 0, 0, 0, 'Firma e Re SH.P.K.', '811223344', 'Prishtinë', undefined, null], 'signup: first load → /state empty → seeded empty books on the server (no demo), company card from the form');
+  eq([a.state.db.invoices.length, a.state.db.customers.length, a.state.db.company.name, a.state.db.users.length, a.state.db.users[0].email, a.state.db.fiscal, /Mirë se erdhe, Blerta/.test(a.state.toast || '') && /Firma e Re SH.P.K./.test(a.state.toast || '')], [0, 0, 'Firma e Re SH.P.K.', 1, 'blerta@firma-re.com', undefined, true], 'signup: empty books + server mirrors (no fiscal mirror), greeting names the new company');
+  a.setL({ sgCompany: 'Tjetra', sgNui: '812345678', sgCity: 'Gjakovë' }); a.logout(); await wait(); eq([a.state.session, a.apiAuthed(), a.state.login.sgCompany, a.state.login.sgNui, a.state.login.sgCity], [null, false, '', '', ''], 'signup: logout after signup also empties the signup form');
+  ctx.fetch = loginAdmin;
+  clearTimeout(a._retryT);
+})().catch(e => { console.log('FAIL api-mode tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+
+// ── demo data removed: derived statuses, editable accounts, terminals, empty tenant books ──
+c.state.db = c.seedDb(); c.state.session = null; c.state.dr = null; c.state.frm = null; c.state.admin = false; c.state.section = 'settings'; c.state.page = 'Fiskalizimi';
+{ const v = c.renderVals();
+  eq([v.fiscalTerms.length, v.fiscalHasTerms], [0, false], 'fiscal monitor: no invented terminals (empty state until tills report)');
+  eq(v.queueStats.find(x => x.label === 'Të suksesshme').n, db().queue.filter(q => q.status === 'E suksesshme').length, 'queue: successful count is counted, not 1284');
+  eq(v.fiscalTabs.map(t => t.label), ['Arkat', 'Radha e transaksioneve', 'Kuponët'], 'fiscal page: read-only tabs (arkat / queue / receipts)');
+  eq(v.fiscalGuide.length >= 4 && v.fiscalGuide.every(g => !g.go), true, 'fiscal guide: plain text steps, nothing clickable/configurable');
+  eq(v.fiscalUrls.map(u => u.id), ['TEST', 'PROD'], 'fiscal: ATK service URLs shown read-only');
+  eq(v.taxGroups.map(t => t.code + t.rate).join(' '), 'A0% C0% D8% E18%', 'fiscal page: ATK tax groups listed'); }
+// a locally connected POS (no registered terminal) appears in the monitor with the fiscal state IT reports
+c.state.db = { ...db(), posSync: { ...db().posSync, status: 'online', health: { pos_id: 'POS-0009', pos_name: 'Arka lokale', branch: 'Dega Prishtinë', version: '0.7.1', pending_sync: 2, fiscal: { mode: 'ATK_ELECTRONIC', env: 'TEST', version: 5, simulator: true, pending: 3 } } } };
+{ const t = c.renderVals().fiscalTerms; eq([t.length, t[0].name, t[0].mode, t[0].env, t[0].ver, t[0].simOn, t[0].pending, t[0].link], [1, 'Arka lokale', 'ATK_ELECTRONIC', 'TEST', 'v5', true, '3', 'Online (lokale)'], 'fiscal monitor: the local till\'s reported mode/env/version/simulator/pending'); }
+c.state.db = { ...db(), posSync: { ...db().posSync, status: 'unknown', health: null } };
+{ const v = c.renderVals(); v.queue[0].details(); eq(c.state.dr && c.state.dr.kind, 'queue', 'queue: Detajet opens a drawer'); eq(!!c.drawerVals() && c.drawerVals().title === db().queue[0].ref, true, 'queue drawer renders'); c.state.dr = null; }
+// accounts are data
+eq(c.ACCOUNTS.length, 3, 'accounts: seed has three'); c.openForm('account', { name: 'Raiffeisen', type: 'Bankë', detail: 'XK00', opening: '500' }); c.formVals().actions[0].go();
+eq([c.ACCOUNTS.length, c.accountBalance(c.ACCOUNTS[3].id), c.ACCOUNTS[3].opening_c], [4, 50000, 50000], 'accounts: added with opening balance');
+c.openForm('account', { edit: c.ACCOUNTS[3].id, name: 'Raiffeisen Bank', type: 'Bankë', detail: 'XK00', opening: '600' }); c.formVals().actions.find(a => a.label === 'Ruaj').go(); eq([c.ACCOUNTS[3].name, c.accountBalance(c.ACCOUNTS[3].id)], ['Raiffeisen Bank', 60000], 'accounts: edited');
+c.recordPayment({ kind: 'sale', ref: 'FSH-2026-00125', amount_c: 1000, account: c.ACCOUNTS[3].id, date: '13.09.2026', note: '' }); eq(c.accountBalance(c.ACCOUNTS[3].id), 61000, 'accounts: payments hit the new account'); { const J = c.journal(); eq(J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal balanced with a fourth account'); }
+{ const t = c.pageTable('Llogari bankare'); eq(t.actions[0].label, '+ Llogari', 'bank page: add action'); }
+// terminals (local)
+c.openForm('terminal', { name: 'Arka 5', posId: 'pos-0005', branch: 'Dega Prishtinë', warehouse: 'W1' }); eq(c.formVals().actions[0].disabled, false, 'terminal form ready'); c.formVals().actions[0].go();
+eq([db().terminals.length, db().terminals[0].posId, c.ACCOUNTS.some(a => a.type === 'Arkë' && a.detail === 'POS-0005')], [1, 'POS-0005', true], 'terminal: registered locally + a cash account for it');
+c.state.section = 'pos'; c.state.page = 'Arkat'; { const t = c.pageTable('P:Arkat'); eq(t.rows.length, 1, 'Arkat page lists registered terminals only'); }
+c.state.page = 'Fiskalizimi'; c.state.section = 'settings'; { const v = c.renderVals(); eq([v.fiscalTerms.length, v.fiscalTerms[0].name, v.fiscalTerms[0].mode], [1, 'Arka 5', '—'], 'fiscal monitor: registered terminal listed; mode "—" until the till reports it'); }
+c.importPosSales([rcpt('r-t5', 'POS-0005/000001', 'final', 'fiscalized_sim', [it('LED-18', 'LED', 1000, 890)], 1050, 0, { pos_id: 'POS-0005' })], []);
+eq([db().posReceipts[0].posName, db().payments[0].account === c.ACCOUNTS.find(a => a.detail === 'POS-0005').id], ['Arka 5', true], 'POS receipt lands in the terminal\'s own cash account');
+// Kompanitë e mia: only real companies
+c.state.section = 'kompania'; c.state.page = 'Kompanitë e mia'; { const v = c.renderVals(); eq([v.firms.length, v.firms[0].name, v.firmCount], [1, db().company.name, 1], 'kompanitë e mia: no invented tenants in local mode'); }
+// empty tenant books
+{ const e = c.seedEmpty({ name: 'Firma X', nui: '810000000', city: 'Pejë', plan: 'pro' }); eq([e.invoices.length, e.products.length, e.customers.length, e.queue.length, e.company.name, e.company.nui, e.accounts.length, e.warehouses.length, e.terminals.length, e.admin.tenants.length, e.subscription.plan, e.users, e.fiscal], [0, 0, 0, 0, 'Firma X', '810000000', 2, 1, 0, 0, 'pro', undefined, undefined], 'seedEmpty: nothing demo, server-owned keys absent');
+  c.state.db = { ...e, ...c.apiSessionExtras({ name: 'X', email: 'x@y', role: 'Pronar' }), users: [], roles: {}, audit: [] };
+  c.state.section = 'dashboard'; c.state.page = 'Paneli'; const v = c.renderVals(); eq([v.kpis.length, v.alerts.some(a => /abonimit/.test(a.t))], [8, false], 'empty books render and no subscription alert without a billing date');
+  for (const pg of ['Blerje', 'Gjendja', 'Bilanci', 'TVSH', 'R:Shitje', 'P:Arkat', 'Integrimet', 'POS', 'Siguria']) { c.state.rTab = ''; const t = c.pageTable(pg) || c.settingsPage(pg); eq(!!t, true, 'empty books: page renders ' + pg); }
+  for (const [sec, pg] of [['shitje', 'Fatura'], ['shitje', 'Klientë'], ['produkte', 'Produktet']]) { c.state.section = sec; c.state.page = pg; const v = c.renderVals(); eq(v.invoices.length + v.customers.length + v.products.length, 0, 'empty books: ' + pg + ' renders empty'); } }
+
+// ── categories: a managed list (db.categories) + product form net ⇄ gross price pairs ──
+c.state.db = c.seedDb(); c.state.dr = null; c.state.frm = null;
+{ const d0 = db();
+  eq(d0.categories.map(x => x.name), ['Ndërtim', 'Dysheme', 'Materiale', 'Bojëra', 'Elektrike'], 'categories: seed list = the distinct product categories, in first-seen order');
+  eq(d0.categories.map(x => x.id), ['K-ndertim', 'K-dysheme', 'K-materiale', 'K-bojera', 'K-elektrike'], 'categories: deterministic slug ids (diacritics folded)');
+  eq(c.migrateCats(d0) === d0, true, 'categories migration: nothing missing → the SAME object (idempotent)');
+  const old = { ...d0 }; delete old.categories; const m1 = c.migrateCats(old), m2 = c.migrateCats(m1);
+  eq([m1.categories.length, m2 === m1, m1.categories.map(x => x.id).join()], [5, true, d0.categories.map(x => x.id).join()], 'categories migration: old books (no list) get the list once; a second pass is a no-op');
+  const stray = c.migrateCats({ ...d0, products: [...d0.products, { sku: 'ZZ', cat: 'Hidraulikë' }, { sku: 'ZY', cat: 'hidraulikë ' }] });
+  eq([stray.categories.length, stray.categories[5].name, stray.categories[5].id], [6, 'Hidraulikë', 'K-hidraulike'], 'categories migration: a product with an unknown category appends ONE record (case/space-insensitive)');
+  eq(c.migrateCats({ ...d0, categories: [{ id: 'K-x', name: 'X' }] }).categories.length, 6, 'categories migration: keeps records no product uses');
+  eq(c.newCategory('Ndërtim', d0.categories).id, 'K-ndertim-2', 'newCategory: id collision gets a numeric suffix');
+  eq(['Ndërtim', 'Dysheme', 'Materiale', 'Bojëra', 'Elektrike'].map(n => c.catUsage(c.findCategory(d0.categories, n).id)), [3, 2, 1, 1, 2], 'categories: product counts per category');
+  eq(c.seedEmpty({ name: 'F' }).categories, [], 'seedEmpty: empty category list (server tenants start with none)');
+}
+// add / duplicate / rename propagation / delete guard — through the form
+c.openForm('category'); eq([c.formVals().title, c.formVals().actions[0].disabled], ['Kategori e re', true], 'category form: blocked until a name is typed');
+c.setF({ name: 'ndërtim' }); eq([c.formVals().actions[0].disabled, c.formVals().fields[0].hint], [true, 'ekziston tashmë'], 'category form: duplicate (case-insensitive) flagged, save disabled');
+c.setF({ name: 'Hidraulikë', note: 'tuba, rubineta' }); c.formVals().actions[0].go();
+eq([db().categories.length, db().categories[5].name, db().categories[5].note, c.state.frm], [6, 'Hidraulikë', 'tuba, rubineta', null], 'category form: added with note, form closed');
+eq(c.addCategory('HIDRAULIKË'), null, 'addCategory: duplicate refused');
+{ const id = c.findCategory(db().categories, 'Elektrike').id;
+  c.openForm('category', { edit: id, name: 'Elektrike', note: '' }); let v = c.formVals();
+  eq([v.title, v.actions[0].label, v.actions[0].disabled, v.fields[2].value, !!v.msg], ['Redakto kategorinë', 'Fshi', true, '2 produkte', true], 'category edit: delete disabled while 2 products use it (hint shown)');
+  c.setF({ name: 'Elektrikë & ndriçim' }); c.formVals().actions.find(a => a.label === 'Ruaj').go();
+  eq([db().categories.find(x => x.id === id).name, db().products.filter(p => p.cat === 'Elektrikë & ndriçim').map(p => p.sku).sort(), db().products.some(p => p.cat === 'Elektrike')], ['Elektrikë & ndriçim', ['KB-325', 'LED-18'], false], 'category rename: propagates to every product, old name gone');
+  eq(c.renameCategory(id, 'Dysheme'), false, 'category rename: refused when the new name belongs to another category');
+  eq(c.deleteCategory(id), false, 'deleteCategory: guarded while products use it');
+  eq(db().categories.length, 6, 'deleteCategory: nothing removed');
+  const hid = c.findCategory(db().categories, 'Hidraulikë').id;
+  c.openForm('category', { edit: hid, name: 'Hidraulikë', note: '' }); v = c.formVals(); eq([v.actions[0].label, v.actions[0].disabled, v.fields[2].value], ['Fshi', false, 'asnjë'], 'category edit: delete enabled when unused');
+  v.actions[0].go(); c.state.confirm.ok();
+  eq([db().categories.length, db().categories.some(x => x.id === hid), c.state.frm], [5, false, null], 'category delete: unused category removed, form closed');
+}
+// Kategoritë page (route #kategorite)
+ctx.location = { hash: '#kategorite' }; c.routeHash();
+eq([c.state.section, c.state.page], ['produkte', 'Kategoritë'], 'route: #kategorite → Produkte › Kategoritë');
+{ const v = c.renderVals(); eq([v.isTable, v.tbl.title, v.tbl.count, v.tbl.actions[0].label, v.tbl.rows.length], [true, 'Kategoritë', '5', '+ Kategori', 5], 'Kategoritë page: renders the managed list with + Kategori');
+  const row = v.tbl.rows.find(r => r.cells[0].t === 'Ndërtim'); eq([row.cells[1].t, row.cells[5].t, row.cells[5].act], ['3', 'Redakto', true], 'Kategoritë page: product count + Redakto action per row');
+  row.cells[5].go(); eq([c.state.frm.kind, c.state.frm.edit, c.state.frm.name], ['category', 'K-ndertim', 'Ndërtim'], 'Kategoritë page: Redakto opens the edit form'); c.state.frm = null;
+  row.open(); eq([c.state.page, c.state.pFilter, c.renderVals().products.every(p => p.catName === 'Ndërtim')], ['Produktet', 'Ndërtim', true], 'Kategoritë page: row click filters Produktet by that category'); c.state.pFilter = 'Të gjitha'; }
+// product form: net ⇄ gross pairs (gross = round(net × (100+rate)/100); net = round(gross × 100/(100+rate)); net is the stored truth)
+const fld = k => c.formVals().fields.find(f => f.key === k), typeF = (k, v) => fld(k).set({ target: { value: v } });
+c.openForm('product'); { const labels = c.formVals().fields.map(f => f.label);
+  eq(labels.filter(l => /TVSH \(€\)/.test(l)), ['Kosto e blerjes pa TVSH (€)', 'Kosto e blerjes me TVSH (€)', 'Çmimi i shitjes pa TVSH (€)', 'Çmimi i shitjes me TVSH (€)'], 'product form: two net/gross pairs');
+  eq(fld('cat').opts.map(o => o.label), db().categories.map(x => x.name), 'product form: Kategoria combo lists db.categories'); }
+// (4-decimal build) the pairs are exact to the 4th decimal: a derived side shows 4 decimals only when it carries sub-cent precision
+c.setF({ tax: 'E' }); typeF('priceG', '2.20'); eq(c.state.frm.price, '1.8644', 'gross 2.20 @18% → net 1.8644 (exact, 4 decimals)');
+typeF('price', '1.8644'); eq(c.state.frm.priceG, '2.20', 'net 1.8644 @18% → gross 2.20 (round-trips, shown with 2 decimals)');
+typeF('price', '1.86'); eq(c.state.frm.priceG, '2.1948', 'net 1.86 @18% → gross 2.1948');
+typeF('priceG', '2.1948'); eq(c.state.frm.price, '1.86', 'gross 2.1948 @18% → net 1.86 (stable)');
+typeF('price', '18.50'); eq(c.state.frm.priceG, '21.83', 'net 18.50 @18% → gross 21.83');
+typeF('costG', '13.22'); eq(c.state.frm.cost, '11.2034', 'cost gross 13.22 @18% → net 11.2034');
+typeF('cost', '11.20'); eq(c.state.frm.costG, '13.2160', 'cost net 11.20 @18% → gross 13.2160 (4 decimals whenever the value is not whole cents)');
+fld('tax').opts.find(o => o.label.startsWith('D')).go(); eq([c.state.frm.tax, c.state.frm.price, c.state.frm.priceG, c.state.frm.cost, c.state.frm.costG], ['D', '18.50', '19.98', '11.20', '12.0960'], 'tax letter → D 8%: gross sides re-derived from the stored net (net untouched)');
+typeF('priceG', '10.00'); eq(c.state.frm.price, '9.2593', 'gross 10.00 @8% → net 9.2593');
+typeF('price', '9.26'); eq(c.state.frm.priceG, '10.0008', 'net 9.26 @8% → gross 10.0008');
+{ const before = [c.state.frm.price, c.state.frm.cost]; for (let i = 0; i < 6; i++) fld('tax').opts.find(o => o.label.startsWith(i % 2 ? 'D' : 'E')).go();
+  eq([c.state.frm.tax, c.state.frm.price, c.state.frm.cost, c.state.frm.priceG, c.state.frm.costG], ['D', before[0], before[1], '10.0008', '12.0960'], 'toggling the tax letter repeatedly never drifts (gross always = f(net))'); }
+typeF('priceG', 'abc'); eq([fld('priceG').err, c.state.frm.price, c.formVals().actions[0].disabled], ['1', '', true], 'unparsable gross → err flag, net cleared, save blocked');
+typeF('price', '1.999'); eq([fld('price').err, c.state.frm.priceG], ['', '2.1589'], 'net with 3 decimals is valid now (4-decimal prices; letter D → 1.999 × 1.08)');
+typeF('price', '1.99999'); eq([fld('price').err, c.state.frm.priceG], ['1', ''], 'unparsable net (5 decimals) → err flag, gross cleared');
+c.setF({ name: 'Tub PVC 50mm', sku: 'tb-050', cat: 'Hidraulikë', catQ: 'Hidraulikë', unit: 'm', tax: 'E', opening: '0', minStock: '10' }); typeF('costG', '1.18'); typeF('priceG', '2.20');
+eq([fld('cat').hint, c.formVals().actions[0].disabled], ['e re — krijohet me ruajtjen', false], 'product form: a typed new category is announced, form ready');
+c.formVals().actions[0].go();
+{ const p = db().products.find(x => x.sku === 'TB-050'); eq([p.price_c, p.cost_c, p.price_t, p.cost_t, p.cat, db().categories.some(x => x.name === 'Hidraulikë')], [186, 100, 18644, 10000, 'Hidraulikë', true], 'stored price_c/cost_c are NET cents (rounded) next to the exact price_t/cost_t ten-thousandths; the new category was created on save');
+  const cp = c.posCatalogPayload().products.find(x => x.sku === 'TB-050'); eq([cp.price_c, cp.price_t], [186, 18644], 'catalog payload: product price stays net cents (POS contract unchanged) + price_t with 4 decimals'); }
+{ const cat = c.posCatalogPayload(); eq([Array.isArray(cat.categories), cat.categories.length, cat.categories[0], cat.products.every(p => typeof p.cat === 'string')], [true, 6, { id: 'K-ndertim', name: 'Ndërtim' }, true], 'catalog payload: carries the categories list + per-product cat'); }
+// edit form from the drawer: prices shown both ways, saved as net
+c.openProduct('PS-050'); { const d = c.drawerVals(); eq([d.actions[0].label, d.meta.find(m => m.k === 'Çmimi i shitjes (pa TVSH)').v, d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v], ['Redakto', '€18.50', '€21.83'], 'product drawer: Redakto + net and gross sale price');
+  d.actions[0].go(); const v = c.formVals(); eq([v.title, c.state.frm.price, c.state.frm.priceG, c.state.frm.cost, c.state.frm.costG, fld('sku').dis, v.fields.some(f => f.key === 'opening')], ['Redakto produktin', '18.50', '21.83', '11.20', '13.2160', true, false], 'product edit form: pre-filled both sides (a seed product without price_t is read as cents × 100), sku locked, no opening stock field');
+  typeF('priceG', '23.60'); fld('cat').set({ target: { value: 'Dysheme' } }); c.setF({ minStock: '120' }); c.formVals().actions[0].go();
+  const p = db().products.find(x => x.sku === 'PS-050'); eq([p.price_c, p.cost_c, p.cat, p.minStock, c.state.frm, c.state.dr && c.state.dr.id], [2000, 1120, 'Dysheme', 120000, null, 'PS-050'], 'product edit: gross 23.60 saved as net 20.00, category/minStock updated, drawer reopened');
+  eq(c.renderVals().products.find(x => x.sku === 'PS-050').priceGross, '€23.60', 'product list: shows the gross sale price next to the net one'); }
+// a case/space variant of an existing category is stored with the managed record's spelling (no split rows in filters/reports)
+{ const n0 = db().categories.length, u0 = c.catUsage('K-ndertim'); c.addProduct({ name: 'Çimento 25kg', sku: 'CM-025', barcode: '—', cat: 'ndërtim ', unit: 'thes', tax: 'E', price_c: 500, cost_c: 400, openCost_c: 400, opening: 0, minStock: 0 });
+  eq([db().products.find(x => x.sku === 'CM-025').cat, db().categories.length, c.catUsage('K-ndertim')], ['Ndërtim', n0, u0 + 1], 'addProduct: typed “ndërtim ” stored as the record name “Ndërtim”, no new record, counted');
+  c.updateProduct('CM-025', { cat: 'DYSHEME' }); eq(db().products.find(x => x.sku === 'CM-025').cat, 'Dysheme', 'updateProduct: category variant canonicalised too');
+  c.updateProduct('CM-025', { minStock: 5000 }); eq([db().products.find(x => x.sku === 'CM-025').cat, db().products.find(x => x.sku === 'CM-025').minStock], ['Dysheme', 5000], 'updateProduct: a patch without cat leaves the category alone');
+  c.updateProduct('CM-025', { cat: 'Izolim' }); eq([db().products.find(x => x.sku === 'CM-025').cat, db().categories.length, db().categories[db().categories.length - 1].name], ['Izolim', n0 + 1, 'Izolim'], 'updateProduct: an unknown name is still created as a new record (free option kept)');
+  c.openProduct('CM-025'); c.drawerVals().actions[0].go(); fld('cat').set({ target: { value: 'ndërtim' } }); c.formVals().actions[0].go();
+  eq([db().products.find(x => x.sku === 'CM-025').cat, db().categories.length], ['Ndërtim', n0 + 1], 'product edit form: typed variant saved canonical');
+  c.state.section = 'raporte'; c.state.page = 'Stok'; c.state.rTab = 'Gjendja sipas kategorisë'; c.state.rp = 'all'; const t = c.pageTable('R:Stok'); const nd = t.rows.filter(r => c.norm(r.cells[0].t) === 'ndertim');
+  eq([nd.length, nd[0].cells[1].t, [...new Set(db().products.map(x => x.cat))].filter(x => c.norm(x) === 'ndertim').length], [1, String(u0 + 1), 1], 'Raporte › Stok › Gjendja sipas kategorisë: ONE Ndërtim row with the variant product counted'); c.state.rTab = '';
+  c.state.section = 'produkte'; c.state.page = 'Produktet'; const opts = c.renderVals().pFilterOpts.map(o => o.id).filter(x => c.norm(x) === 'ndertim'); eq(opts, ['Ndërtim'], 'Produktet category filter: a single Ndërtim entry');
+  c.state.db = { ...db(), products: db().products.filter(x => x.sku !== 'CM-025'), categories: db().categories.filter(x => x.name !== 'Izolim') }; }
+
+// ══ ATK SEF test agenda (application 70754265): 4-decimal prices/quantities, value discounts, cancel reasons, tax-block receipts, non-VAT mode ══
+c.state.db = c.seedDb();
+// ── ten-thousandths helpers
+eq([c.toT('12.3456'), c.toT('12,34'), c.toT('7'), c.toT('0.0001'), c.toT('1.23456'), c.toT('abc'), c.toT('')], [123456, 123400, 70000, 1, null, null, null], 'toT: up to 4 decimals → ten-thousandths, 5 decimals / text / empty rejected');
+eq([c.fromT(123456), c.fromT(123400), c.fromT(70000), c.fmtT(123456), c.fmtT(185000), c.fmtT(-1234567)], ['12.3456', '12.34', '7.00', '€12.3456', '€18.50', '-€123.4567'], 'fromT/fmtT: 2 decimals unless sub-cent precision exists');
+eq([c.cOfT(123456), c.cOfT(123450), c.cOfT(123449), c.grossOfT(18644, 18), c.netOfT(22000, 18)], [1235, 1235, 1234, 22000, 18644], 'cOfT rounds to cents; grossOfT/netOfT are exact to the 4th decimal');
+eq([c.priceT({ price_c: 1850 }), c.priceT({ price_c: 1850, price_t: 18501 }), c.costT({ cost_c: 100 })], [185000, 18501, 10000], 'priceT/costT: stored ten-thousandths win, else cents × 100 (older books)');
+// ── product with a 4-decimal price through the form → stored both ways, listed with 4 decimals, catalog carries price_t
+c.openForm('product'); c.setF({ name: 'Vidë 3.5×25', sku: 'VD-3525', cat: 'Ndërtim', catQ: 'Ndërtim', unit: 'copë', tax: 'E', opening: '1000', minStock: '0' }); typeF('cost', '0.0123'); typeF('price', '0.0275');
+eq([c.state.frm.priceG, c.state.frm.costG, fld('price').hint, c.formVals().actions[0].disabled], ['0.0325', '0.0145', 'deri në 4 numra pas presjes', false], 'product form: 4-decimal net prices → gross exact to the 4th decimal (0.0275 × 1.18 = 0.03245 → 0.0325)');
+c.formVals().actions[0].go();
+{ const p = db().products.find(x => x.sku === 'VD-3525'); eq([p.price_t, p.price_c, p.cost_t, p.cost_c, p.openCost_c], [275, 3, 123, 1, 1], 'product saved: price_t/cost_t exact, price_c/cost_c = rounded cents (0.0275 → 0.03, 0.0123 → 0.01)');
+  c.state.section = 'produkte'; c.state.page = 'Produktet'; const row = c.renderVals().products.find(x => x.sku === 'VD-3525'); eq([row.price, row.priceGross], ['€0.0275', '€0.0325'], 'product list: shows the 4-decimal price when the precision exists');
+  eq(c.renderVals().products.find(x => x.sku === 'PS-050').price, '€18.50', 'product list: whole-cent prices keep 2 decimals');
+  c.openProduct('VD-3525'); const d = c.drawerVals(); eq([d.meta.find(m => m.k === 'Çmimi i shitjes (pa TVSH)').v, d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v], ['€0.0275', '€0.0325'], 'product drawer: 4-decimal net + gross');
+  d.actions[0].go(); eq([c.state.frm.price, c.state.frm.priceG, c.state.frm.cost], ['0.0275', '0.0325', '0.0123'], 'product edit form: pre-filled from price_t/cost_t (no cent rounding)'); c.state.frm = null; c.state.dr = null;
+  const cp = c.posCatalogPayload().products.find(x => x.sku === 'VD-3525'); eq([cp.price_c, cp.price_t, cp.tax, cp.rate], [3, 275, 'E', 18], 'catalog payload: price_c (cents) + price_t (ten-thousandths) per product');
+  eq(c.posCatalogPayload().products.every(x => Number.isInteger(x.price_t) && x.price_t >= 0), true, 'catalog payload: every product ships an integer price_t');
+  c.state.section = 'produkte'; c.state.page = 'Çmimet'; const t = c.pageTable('Çmimet'); const r = t.rows.find(x => x.cells[1].t === 'VD-3525'); eq([r.cells[4].t, r.cells[7].t], ['€0.0275', '€0.0325'], 'Lista e çmimeve: 4-decimal net and gross'); }
+// ── the GROSS price VERBATIM (Annex F p79 "3 X 1.5068" @ 18 % is unreachable from a net ten-thousandth): the product form keeps the gross
+// side as typed (gross_t), lists / drawer / catalog print it, a stale gross (after a tax change) falls back to the derived one
+c.openForm('product'); c.setF({ name: 'Coca Cola 0.5', sku: 'CC-05', cat: 'Ndërtim', catQ: 'Ndërtim', unit: 'copë', tax: 'E', opening: '0', minStock: '0' }); typeF('cost', '1.00'); typeF('priceG', '1.5068');
+eq([c.state.frm.price, c.state.frm.priceG, c.grossOfT(c.toT(c.state.frm.price), 18)], ['1.2769', '1.5068', 15067], 'product form: gross 1.5068 typed → net 1.2769 (derived gross would print 1.5067 — one ten-thousandth off)');
+c.formVals().actions[0].go();
+{ const p = db().products.find(x => x.sku === 'CC-05'); eq([p.price_t, p.gross_t, c.grossT(p), c.fmtT(c.grossT(p))], [12769, 15068, 15068, '€1.5068'], 'product saved: price_t 12769 (net) + gross_t 15068 VERBATIM; grossT() prints 1.5068, not the derived 1.5067');
+  c.state.section = 'produkte'; c.state.page = 'Produktet'; eq(c.renderVals().products.find(x => x.sku === 'CC-05').priceGross, '€1.5068', 'product list: the gross column shows the verbatim 1.5068');
+  c.openProduct('CC-05'); const d = c.drawerVals(); eq(d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v, '€1.5068', 'product drawer: gross 1.5068 verbatim');
+  d.actions[0].go(); eq([c.state.frm.price, c.state.frm.priceG], ['1.2769', '1.5068'], 'product edit form: pre-filled with the verbatim gross'); c.state.frm = null; c.state.dr = null;
+  const cp = c.posCatalogPayload().products.find(x => x.sku === 'CC-05'); eq([cp.price_t, cp.gross_t, cp.rate], [12769, 15068, 18], 'catalog payload: gross_t 15068 next to price_t — the till prints and computes 3 × 1.5068 = 4.52 from it');
+  eq(c.posCatalogPayload().products.every(x => Number.isInteger(x.gross_t) && x.gross_t > 0), true, 'catalog payload: every product ships gross_t (derived when none was typed)');
+  eq(c.posCatalogPayload().products.find(x => x.sku === 'PS-050').gross_t, c.grossOfT(c.priceT(db().products.find(x => x.sku === 'PS-050')), 18), 'catalog payload: a product without a typed gross ships the derived one (18.50 → 21.83)');
+  c.updateProduct('CC-05', { tax: 'D' }); const p2 = db().products.find(x => x.sku === 'CC-05'); eq([p2.gross_t, c.grossT(p2), c.grossOfT(12769, 8)], [15068, 13791, 13791], 'a gross kept from before a tax change (18 % → 8 %) is more than a cent off → ignored, the gross is derived again');
+  c.updateProduct('CC-05', { tax: 'E' }); }
+// ── the operator's identification number (Kërkesat SEF neni 25.18): user drawer › "Nr. identifikues për kupon…" → catalog operators[].code
+{ c.openDr('user', 'u3'); let d = c.drawerVals(); eq([d.actions.some(a => a.label === 'Nr. identifikues për kupon…'), d.meta.find(m => m.k === 'Nr. identifikues (kupon)').v], [true, '—'], 'user drawer (POS role): the "Nr. identifikues për kupon…" action, meta "—" while none');
+  eq(c.posCatalogPayload().operators.find(o => o.name === 'Fjolla Kastrati').code, '', 'catalog operators: code empty while none is set (the coupon prints only the name, Annex F)');
+  d.actions.find(a => a.label === 'Nr. identifikues për kupon…').go(); typeF('code', '12 34'); eq([!!fld('code').err, c.formVals().actions[0].disabled], [true, true], 'opcode form: a code with a space is refused');
+  typeF('code', ' 1234 '); eq([!!fld('code').err, c.formVals().fields.find(f => f.label === 'Në kupon').value], [false, 'EMRI I PUNËTORIT: FJOLLA KASTRATI (ID 1234)'], 'opcode form: the preview line reads EMRI I PUNËTORIT: FJOLLA KASTRATI (ID 1234)');
+  c.formVals().actions[0].go(); eq([db().users.find(u => u.id === 'u3').opCode, c.posCatalogPayload().operators.find(o => o.name === 'Fjolla Kastrati').code], ['1234', '1234'], 'saved (trimmed): users[].opCode → catalog operators[].code 1234');
+  c.openDr('user', 'u3'); d = c.drawerVals(); eq(d.meta.find(m => m.k === 'Nr. identifikues (kupon)').v, '1234', 'user drawer shows the code');
+  c.openDr('user', 'u6'); eq(c.drawerVals().actions.some(a => a.label === 'Nr. identifikues për kupon…'), false, 'a non-POS user (Kontabilist) has no coupon code action'); c.state.dr = null; }
+// ── importPosSales keeps a line's verbatim gross_t
+{ const gi = { sku: 'LED-18', name: 'Ndriçues LED 18W', unit: 'copë', qty_m: 3000, qty_q: 30000, unit_c: 128, unit_t: 12769, gross_t: 15068, rate: 18, disc_bp: 0, sub_c: 383, vat_c: 69, tot_c: 452, tax: 'E' };
+  const RG = rcpt('r-g', 'POS-0001/000090', 'final', 'fiscalized', [gi], 452, 0);
+  c.importPosSales([RG], []); const doc = db().posReceipts.find(r => r.id === 'r-g'); eq([doc.items[0].gross_t, doc.items[0].unit_t, doc.total], [15068, 12769, 452], 'pos import: the line keeps gross_t 15068 next to unit_t (the coupon printed 3 × 1.5068 = 4.52)'); }
+// ── Cilësime › POS: fiscal block code → catalog posSettings.fiscalBlockCode
+{ const g = c.settingsPage('POS'); const f = g.cards.flatMap(x => x.fields).find(x => x.label === 'Kodi i bllokut tatimor (ATK)'); eq(!!f, true, 'Cilësime › POS: field "Kodi i bllokut tatimor (ATK)"');
+  eq(c.posCatalogPayload().posSettings.fiscalBlockCode, '', 'catalog: fiscalBlockCode empty by default');
+  f.set({ target: { value: ' BT-2026-017 ' } }); eq([db().posSettings.fiscalBlockCode, c.posCatalogPayload().posSettings.fiscalBlockCode], [' BT-2026-017 ', 'BT-2026-017'], 'catalog: fiscalBlockCode pushed to the tills (trimmed)'); }
+// ── Kompania › Të dhënat: VAT registration toggle + number, both in the catalog company block
+{ const g = c.settingsPage('Të dhënat e kompanisë'); const tg = g.cards[0].toggles.find(t => t.label === 'E regjistruar në TVSH'), vf = g.cards[0].fields.find(f => f.label === 'Numri i TVSH-së');
+  eq([!!tg, tg.on, !!vf, vf.dis], [true, true, true, false], 'Kompania › Të dhënat: "E regjistruar në TVSH" toggle (on) + "Numri i TVSH-së" field');
+  eq(c.posCatalogPayload().company.vatRegistered, true, 'catalog company.vatRegistered = true');
+  tg.go(); eq([db().taxSettings.vatRegistered, c.vatOn(), c.settingsPage('Të dhënat e kompanisë').cards[0].fields.find(f => f.label === 'Numri i TVSH-së').dis], [false, false, true], 'toggle off → taxSettings.vatRegistered=false (single truth with Cilësime › Tatimet), VAT number field disabled');
+  eq([c.posCatalogPayload().company.vatRegistered, c.posCatalogPayload().company.vatNo], [false, ''], 'catalog: vatRegistered=false ships an empty vatNo (nothing to print on the coupon)');
+  eq(c.settingsPage('Tatimet').cards[0].toggles[0].on, false, 'Cilësime › Tatimet mirrors the same flag'); }
+// non-VAT mode: every sales document in group A, no VAT anywhere
+eq([c.effTax('E'), c.effTax('D'), c.effTax('A'), c.effRate('E'), c.effRate('D')], ['A', 'A', 'A', 0, 0], 'effTax/effRate: group A / 0 % when the company is not VAT-registered');
+c.state.m.lines = [c.newLine()]; c.setLine(c.state.m.lines[0].id, { sku: 'PS-050', artQ: 'Panel sanduiç 50mm', tax: 'E', qty: '2' });
+{ const e = c.evalLine(c.state.m.lines[0]); eq([e.taxCode, e.rate, e.line], ['A', 0, { sub: 3700, disc: 0, vatc: 0, tot: 3700 }], 'evalLine (non-VAT): letter E on the product → booked as A, 0 % VAT');
+  const lv = c.lineVals(c.state.m.lines, (id, p) => c.setLine(id, p), () => {}, 'sale')[0]; eq([lv.taxOpts.map(o => o.code), lv.opts.length > 0 && lv.opts.every(o => o.rate === 0)], [['A'], true], 'line editor (non-VAT): only group A offered, catalogue rates shown as 0 %');
+  c.setState({ m: { ...c.state.m, sel: { 'Drini Market SH.P.K.': true } } }); const b = c.buildOneBatch(); eq([b[0].items[0].tax, b[0].items[0].rate, b[0].items[0].vatc], ['A', 0, 0], 'buildOneBatch (non-VAT): items carry tax A, no VAT');
+  const nos = c.issueBatch(b, 'issue', { date: '2026-09-20', due: '2026-10-05' }); const inv = db().invoices.find(r => r.no === nos[0]); eq([inv.vat, inv.sub === inv.total, inv.items[0].tax], [0, true, 'A'], 'issued invoice (non-VAT): vat 0, total = net, line letter A');
+  const h = c.docPrintHtml(inv); eq([/<td class="r">A<\/td>/.test(h), /<span>TVSH<\/span>/.test(h), / · TVSH /.test(h)], [true, false, false], 'A4 print (non-VAT): letter A per line, no TVSH total line, no VAT number in the header');
+  c.state.section = 'shitje'; c.state.page = 'Fatura'; c.state.drawer = nos[0]; const v = c.renderVals(); const dec = v.inv; eq([dec.no, dec.vatOn, dec.items[0].vat], [nos[0], false, 'A'], 'invoice drawer (non-VAT): vatOn=false hides the TVSH line, items show A'); c.state.drawer = null;
+  const ex = c.buildExcelBatch(c.buildExcelRows('Klienti\tArtikulli\tSasia\nDrini Market SH.P.K.\tPanel sanduiç 50mm\t1\n').rows); eq([ex[0].items[0].tax, ex[0].items[0].rate, ex[0].items[0].vatc], ['A', 0, 0], 'Excel batch (non-VAT): group A, no VAT');
+  c.openForm('product'); c.setF({ tax: 'E' }); typeF('price', '10.00'); eq([c.state.frm.priceG, fld('priceG').hint.startsWith('pa TVSH')], ['10.00', true], 'product form (non-VAT): gross = net, hint says group A'); c.state.frm = null;
+  const J = c.journal(); eq(J.filter(e => e.ref === nos[0])[0].lines.some(l => l[0] === '2400' && l[2] > 0), false, 'journal (non-VAT): no VAT payable posted for the invoice'); }
+// POS receipts of a non-VAT company: booked in A with VAT 0 even if the till sent a VAT split
+{ const R = rcpt('r-nv1', 'POS-0001/000090', 'final', 'fiscalized_sim', [it('LED-18', 'LED', 1000, 890)], 1050, 0);
+  c.importPosSales([R], []); const d = db().posReceipts.find(r => r.id === 'r-nv1'); eq([d.vat, d.sub, d.total, d.items[0].tax, d.items[0].rate, d.items[0].vatc, d.items[0].sub], [0, 1050, 1050, 'A', 0, 0, 1050], 'importPosSales (non-VAT): sub = total, VAT 0, lines in group A — the paid total is untouched');
+  eq(c.salesDocs().find(x => x.id === 'r-nv1').vat, 0, 'salesDocs (non-VAT): the receipt reports no VAT'); }
+// back to a VAT-registered company: letters/rates come back untouched (they were data all along)
+c.settingsPage('Të dhënat e kompanisë').cards[0].toggles.find(t => t.label === 'E regjistruar në TVSH').go();
+eq([c.vatOn(), c.evalLine(c.state.m.lines[0]).taxCode, c.evalLine(c.state.m.lines[0]).rate, c.posCatalogPayload().company.vatNo], [true, 'E', 18, '330012345'], 'VAT registration back on → product letters/rates apply again, vatNo back in the catalog');
+// ── importPosSales: qty_q / unit_t / disc_c / tax letter, cancel reason, tax-block receipts
+{ const ledB = stock('LED-18'), cashB = c.accountBalance('cash1');
+  // 1.2345 pcs × 0.8913 net, value discount 0.05, ATK letter E; the POS computed the money, the ERP books what it sent
+  const line = { sku: 'LED-18', name: 'Ndriçues LED 18W', unit: 'copë', qty_q: 12345, unit_t: 8913, rate: 18, tax: 'E', disc_bp: 0, disc_c: 5, sub_c: 105, vat_c: 19, tot_c: 124 };
+  const R4 = rcpt('r-q4', 'POS-0001/000091', 'final', 'fiscalized_sim', [line], 124, 0);
+  c.importPosSales([R4], []); const d = db().posReceipts.find(r => r.id === 'r-q4'); const i = d.items[0];
+  eq([i.qty, i.qty_q, i.unit_c, i.unit_t, i.disc, i.disc_c, i.tax, i.sub, i.vatc, i.tot], [1.2345, 12345, 89, 8913, 0, 5, 'E', 105, 19, 124], 'importPosSales: qty_q/unit_t win over qty_m/unit_c (kept alongside the cents), disc_c value discount, ATK letter stored');
+  eq([Math.round((ledB - stock('LED-18')) * 1000), c.accountBalance('cash1') - cashB], [1235, 124], 'importPosSales: stock moves by the quantity rounded to thousandths (1.2345 → 1.235), cash by the paid total');
+  c.openDr('pos', 'r-q4'); const row = c.drawerVals().sections[0].rows[0].cells; eq([row[2].t, row[3].t, row[4].t, row[5].t], ['1.2345 copë', '€0.8913', '−€0.05', 'E · 18%'], 'POS drawer: 4-decimal quantity and unit price, value discount, letter + rate'); c.state.dr = null;
+  const RO = rcpt('r-q5', 'POS-0001/000092', 'final', 'fiscalized_sim', [it('LED-18', 'LED', 1000, 890)], 1050, 0); c.importPosSales([RO], []);
+  c.openDr('pos', 'r-q5'); const row2 = c.drawerVals().sections[0].rows[0].cells; eq([row2[2].t, row2[3].t, row2[4].t, row2[5].t], ['1 copë', '€8.90', '—', 'E · 18%'], 'POS drawer: an older-shape line (qty_m/unit_c, no tax) reads as before, letter derived from the rate'); c.state.dr = null; }
+{ // cancel with a reason
+  const R6 = rcpt('r-q6', 'POS-0001/000093', 'final', 'fiscalized_sim', [it('LED-18', 'LED', 1000, 890)], 1050, 0, { atk_transaction_id: 'ATK-TX-93' }); c.importPosSales([R6], []);
+  const RC = rcpt('r-q6c', 'POS-0001/000094', 'cancel', 'fiscalized_sim', [], -1050, 0, { orig_id: 'r-q6', cancel_reason: 'Klienti hoqi dorë nga blerja', atk_transaction_id: 'ATK-TX-94' });
+  c.importPosSales([RC, { ...R6, status: 'void' }], []); const cd = db().posReceipts.find(r => r.id === 'r-q6c'), od = db().posReceipts.find(r => r.id === 'r-q6');
+  eq([cd.cancelReason, od.cancelReason, od.status, cd.total], ['Klienti hoqi dorë nga blerja', 'Klienti hoqi dorë nga blerja', 'Anuluar', -1050], 'cancel receipt: reason stored on the cancel AND the original');
+  eq(/Arsyeja: Klienti hoqi dorë nga blerja/.test(db().queue.find(q => q.ref === 'POS-0001/000094').reason), true, 'fiscal queue: cancel row carries the reason');
+  c.openDr('pos', 'r-q6c'); eq(c.drawerVals().meta.find(m => m.k === 'Arsyeja e anulimit').v, 'Klienti hoqi dorë nga blerja', 'POS drawer: "Arsyeja e anulimit"'); c.state.dr = null;
+  c.importPosSales([{ ...RC, reason: 'Gabim në artikull', cancel_reason: undefined }], []); eq(db().posReceipts.find(r => r.id === 'r-q6c').cancelReason, 'Gabim në artikull', 're-pull: the reason refreshes (also read from `reason`)'); }
+{ // receipt issued on the paper tax block while the till was down, registered afterwards
+  const ledB = stock('LED-18'), cashB = c.accountBalance('cash1');
+  const RB = rcpt('r-b1', 'POS-0001/000095', 'final', 'fiscalized_sim', [it('LED-18', 'LED', 2000, 890)], 2100, 0, { source: 'block', block_no: '000123', block_code: 'BT-2026-017', block_ts: '2026-09-19 10:15' });
+  c.importPosSales([RB], []); const d = db().posReceipts.find(r => r.id === 'r-b1');
+  eq([d.source, d.blockNo, d.blockCode, d.blockTs, d.kind, d.status], ['block', '000123', 'BT-2026-017', '2026-09-19 10:15', 'Kupon POS', 'Finalizuar'], 'block receipt: source + block fields stored, booked as an ordinary sale');
+  eq([ledB - stock('LED-18'), c.accountBalance('cash1') - cashB], [2, 2100], 'block receipt: stock out and cash in like any sale');
+  c.state.section = 'pos'; c.state.page = 'Shitje'; const t = c.pageTable('P:Shitje'); const row = t.rows.find(r => r.cells[0].t === 'POS-0001/000095'); eq(row.cells[0].sub, 'nga blloku tatimor nr. 000123 (BT-2026-017)', 'POS › Shitje: "nga blloku tatimor nr. …" under the coupon number');
+  c.openDr('pos', 'r-b1'); const dv = c.drawerVals(); eq([/nga blloku tatimor nr\. 000123/.test(dv.subtitle), dv.meta.find(m => m.k === 'Blloku tatimor').v], [true, 'nr. 000123 · kodi BT-2026-017 · lëshuar 2026-09-19 10:15'], 'POS drawer: block subtitle + meta row'); c.state.dr = null;
+  eq(db().queue.find(q => q.ref === 'POS-0001/000095').reason.startsWith('nga blloku tatimor nr. 000123'), true, 'fiscal queue: block receipts are labelled');
+  eq(db().posReceipts.find(r => r.id === 'r-q5').source, undefined, 'ordinary receipts carry no source/block fields');
+  c.importPosSales([{ ...RB, block_no: '000124' }], []); eq(db().posReceipts.find(r => r.id === 'r-b1').blockNo, '000124', 're-pull refreshes the block fields, never the books');
+  const J = c.journal(); eq(J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal still balanced after 4-decimal, cancel-reason and block receipts'); }
