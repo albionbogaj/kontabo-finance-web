@@ -2491,8 +2491,10 @@ class Component extends DCLogic {
     this.saveApi({accessToken:j.accessToken||this.apiCfg().accessToken,refreshToken:j.refreshToken||this.apiCfg().refreshToken,tenantId:j.tenant.id,tenantName:j.tenant.name,tenantPlan:j.tenant.plan||'',tenantSince:j.tenant.createdAt||'',trialEndsAt:j.tenant.trialEndsAt||'',tenants:j.tenants||[],remember:!!remember,status:'online',lastError:''});
     const sess=this.apiSessionFrom(j,remember); this.saveSession(sess,!!remember); try{ localStorage.setItem('kontabo.finance.lastEmail',j.user.email); }catch(e){}
     this.setState({session:sess,login:{...this.state.login,pw:'',err:'',busy:false,view:'login'},modal:null,cmdk:false,drawer:null,dr:null,frm:null,posList:null,posRc:null,posF:null,posPages:null,apiKeysSrv:null,apiSecret:null,...(greet?{admin:false,section:'dashboard',page:'Paneli'}:{})}); // a resumed session keeps the page from the URL hash
+    this._entering=(this._entering||0)+1; // while this company's books load, the previous book is still in state: no POS sync tick runs on it (posSync)
     try{ const db=await this.apiLoadAll(sess); const me=db.users.find(u=>u.email.toLowerCase()===j.user.email.toLowerCase()); if(me){ const s2={...sess,userId:me.id}; this.saveSession(s2,!!remember); this.setState({session:s2}); } if(greet) this.toast('Mirë se erdhe, '+j.user.name.split(' ')[0]+' · '+j.tenant.name,'#22C55E'); this.posLedgerStart(); }
     catch(e){ this.setState({session:null,login:{...this.state.login,busy:false,err:'Hyrja u krye, por librat nuk u ngarkuan: '+e.message}}); }
+    finally{ this._entering=Math.max(0,(this._entering||1)-1); }
   }
   async apiLogin(email,pw,remember){
     this.setL({busy:true,err:''});
@@ -2589,6 +2591,7 @@ class Component extends DCLogic {
   }
   async posSync(manual){
     if(this._syncing) return; if(!this.state.session||this.state.session.noTenant){ if(manual) this.toast('Sinkronizimi i POS-it kërkon hyrjen me një llogari kompanie','#B45309'); return; } this._syncing=true;
+    if(this._entering&&this.apiAuthed()){ this._syncing=false; return; } // a company's books are loading: the book in state is still the previous one
     if(this.ledgerUnsure()){ try{ if(this.state.db&&this.state.db.posLedgerV===1) this.ledgerEnable(); else await this.ledgerReprobe(); }catch(e){} // never the old relay on a book that may be on the ledger
       if(!this.ledgerOn()){ this._syncing=false; if(manual) this.toast('Serveri nuk u përgjigj për librin e POS-it — sinkronizimi provohet sërish','#B45309'); return; } }
     if(this.apiAuthed()&&this.ledgerOn()){ try{ await this.posSyncLedger(manual); }catch(e){ this.posRt({lastError:String(e.message||e)}); if(manual) this.toast('Sinkronizimi me serverin dështoi: '+(e.message||e),'#B91C1C'); } finally{ this._syncing=false; } return; } // never a commit
@@ -2619,7 +2622,7 @@ class Component extends DCLogic {
   // the ledger switched on after the load (a later /health answered, or the book is on the ledger): fetched from 0 like at a load
   ledgerEnable(){ const tid=this.apiCfg().tenantId; this._ledProbe=''; this._ledFeat=true; this._ledger=this.ledgerFresh(tid); this.posRtLoad(); this.setState(s=>({ledgerTick:(s.ledgerTick||0)+1})); this.posLedgerStart(); }
   // /health did not answer at the load: asked again on the ticks; until it answers this page never runs the old relay
-  async ledgerReprobe(){ if(this._ledProbe!=='fail'||this._reprobing||!this.apiAuthed()) return false; const tid=this.apiCfg().tenantId; this._reprobing=true;
+  async ledgerReprobe(){ if(this._ledProbe!=='fail'||this._reprobing||this._entering||!this.apiAuthed()) return false; const tid=this.apiCfg().tenantId; this._reprobing=true;
     try{ const f=await this.ledgerProbe(false); if(f===null||this._ledProbe!=='fail'||this.apiCfg().tenantId!==tid||!this.apiAuthed()||this._ledger) return false; if(!f){ this._ledProbe=''; return false; } this.ledgerEnable(); return true; }
     finally{ this._reprobing=false; } }
   // the old relay (/pos/sales, the catalogue in db.posSync) must not run: /health still unknown, or the book is on the ledger

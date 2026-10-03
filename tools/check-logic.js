@@ -1889,6 +1889,15 @@ apiBlock.then(async () => {
         S.gate = null; S.open(); await until(() => X._ledger.loaded); await X.posSync(false);
         eq([TB.catalogs.length, ((TB.catalogs[0] || { products: [] }).products.find(p => p.sku === 'KAFE') || {}).stock_qm], [1, 97000], 'L7: once the second company\'s ledger loaded its catalogue goes out with book + ledger stock');
         X.logout(); done(X); }
+      // ── L7 (the same window, earlier): a POS tick while the next company's book is still loading — the previous company's book is still in state
+      { const TA = mkT('rv7c', 'HC SH.P.K.', book(), 'on'); pub(TA, JSON.parse(JSON.stringify(day17))); const TB = mig('rv7d');
+        const X = mk(); await enter(X, 'own', 'rv7c'); const h = hold();
+        ctx.fetch = async (url, o = {}) => { if (/\/state$/.test(url) && (o.method || 'GET') === 'GET' && /-rv7d$/.test((o.headers || {}).Authorization || '')) await h.p; return realFetch(url, o); };
+        const sw = X.apiSwitchTenant('rv7d'); await until(() => X.apiCfg().tenantId === 'rv7d'); await wait(5); await X.posSync(false); await X.posSync(true);
+        const during = [X._ledger, calls('rv7d', /^(GET \/pos\/status|GET \/pos\/sales|GET \/pos\/ledger|PUT \/pos\/catalog|POST \/state\/commit)$/).length, TB.tries];
+        h.open(); await sw; ctx.fetch = realFetch; await until(() => TB.state.posLedgerV === 1 && !X._migrating);
+        eq([during, X._ledger && X._ledger.tenantId, TB.state.posLegacyNos], [[null, 0, 0], 'rv7d', ['BAR-1/0004']], 'L7: a POS tick while the next company\'s book is still loading runs nothing on the previous book (no relay, no ledger, no commit); then the company loads and migrates as usual');
+        X.logout(); done(X); }
       // ── L8: an older backend (no posLedger:1): Cilësime › API keeps its keys in the book, as before
       { S.features = []; try { const T = mkT('rv8', 'Old SH.P.K.', (() => { const { posLedgerV, ...b } = book(); return { ...b, apiKeys: [] }; })(), 'off');
           const X = mk(); await enter(X, 'own', 'rv8'); X.go('settings', 'API'); const n0 = T.commits.length; X.settingsPage('API').cards[0].actions[0].go(); X.setF({ name: 'Web', scope: 'lexo', env: 'test' }); X.formVals().actions[0].go();
