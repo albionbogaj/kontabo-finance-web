@@ -6,5 +6,13 @@
   {
     "id": "https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js",
     "uuid": "4cc4e233-d7f4-4f9a-b0c5-fb20c324c487"
+  },
+  {
+    "id": "https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxQKYbABA.woff2",
+    "uuid": "c7d4e9a8-2b61-4f03-8e5a-9f3b6c2d1e44"
+  },
+  {
+    "id": "https://fonts.gstatic.com/s/ibmplexsans/v23/zYXzKVElMYYaJe8bpLHnCwDKr932-G7dytD-Dmu1syxeKYY.woff2",
+    "uuid": "b1f0a7c2-1d53-4f6e-9a21-7c5e0a4d8b11"
   }
 ]

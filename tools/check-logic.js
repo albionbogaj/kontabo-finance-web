@@ -273,8 +273,8 @@ c.openDr('pos', 'r-1'); eq(c.drawerVals().actions.some(a => /Kthimi/.test(a.labe
   c.openDr('pos', 'r-d1'); const tv = c.drawerVals().totals; eq([tv.map(x => x.k), tv[0].v, tv[1].v], [['Para zbritjes', 'Zbritje totale', 'Neto', 'TVSH', 'Totali'], c.fmt(2100), '−' + c.fmt(100)], 'pos discount: drawer shows gross and "Zbritje totale"');
   c.invoiceFromReceipt('r-d1'); const a4d = db().invoices[0];
   eq([a4d.fromPos, a4d.discount, a4d.total, a4d.paid, a4d.items.reduce((a, i) => a + i.tot, 0)], ['r-d1', 100, 2000, 2000, 2000], 'A4 from a discounted receipt: total == paid == sum of line totals, discount carried');
-  const html = c.docPrintHtml(a4d); eq([/Zbritje totale/.test(html), html.includes('−' + c.fmt(100)), html.includes('Totali para zbritjes</span><span>' + c.fmt(2100))], [true, true, true], 'A4 print: "Zbritje totale" line + gross before discount');
-  eq(/Zbritje totale/.test(c.docPrintHtml(db().invoices.find(r => r.no === 'FSH-2026-00124'))), false, 'A4 print: no discount line on ordinary invoices');
+  const html = c.docPrintHtml(a4d); eq([/Zbritje në faturë/.test(html), html.includes('− ' + c.fmtEu(100)), html.includes('Vlera para zbritjes</span><span>' + c.fmtEu(2100)), /Nëntotali/.test(html), html.includes('Baza e tatueshme</span><span>' + c.fmtEu(1695))], [true, true, true, false, true], 'A4 print: an invoice discount prints a gross ladder that closes (21,00 − 1,00 = 20,00), without a second subtotal');
+  eq(/Zbritje në faturë/.test(c.docPrintHtml(db().invoices.find(r => r.no === 'FSH-2026-00124'))), false, 'A4 print: no discount line on ordinary invoices');
   c.state.section = 'shitje'; c.state.page = 'Fatura'; c.state.drawer = a4d.no; const vd = c.renderVals(); eq([vd.inv.hasDisc, vd.inv.discFmt, vd.inv.grossFmt], [true, '−' + c.fmt(100), c.fmt(2100)], 'invoice drawer: discount line bound'); c.state.drawer = null; }
 
 // ── CANCEL receipt (ATK CANCEL coupon): status "cancel" + orig_id, original re-sent as "void" ──
@@ -408,8 +408,138 @@ eq(c.pageTable('Gjendja').cols.map(x => x.label).includes('Prishtinë'), true, '
 c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transfer drawer');
 
 // ── printing, barcodes, labels, e-mail templates ──
-{ const h = c.docPrintHtml(invOf('FSH-2026-00125')); eq([h.includes('FSH-2026-00125'), h.includes('FATURË'), h.includes('Drini Market'), h.includes(c.fmt(277064)), h.includes('KS-TX-7F3A21')], [true, true, true, true, true], 'print html: invoice carries number, title, customer, total, fiscal ref'); }
+{ const h = c.docPrintHtml(invOf('FSH-2026-00125')); eq([h.includes('FSH-2026-00125'), h.includes('FATURË'), h.includes('Drini Market'), h.includes(c.fmtEu(277064)), h.includes('KS-TX-7F3A21')], [true, true, true, true, true], 'print html: invoice carries number, title, customer, total, fiscal ref'); }
 { const h = c.docPrintHtml(purOf('BL-2026-00033')); eq([h.includes('BLERJE'), h.includes('FURNITORI')], [true, true], 'print html: purchase document'); }
+// ── formati A4 “Precision Flow” (dizajni i faturës) ──
+// Invariantët e parasë te dokumenti i shtypur: kolona “Shuma” mbledh bazën, TVSH-ja ndahet pa rreshta negativë,
+// dhe shkalla e pagesave mbyllet (Totali − paguar − notë krediti = Mbetja) — edhe kur nota e kreditit u rimbursua.
+{
+  const euro = t => { const m = String(t).match(/([\d.]+),(\d{2})/); return m ? Math.round(parseFloat(m[1].replace(/\./g, '') + '.' + m[2]) * 100) : null; };
+  const lineOf = (h, label) => { const m = h.match(new RegExp('<span class="k">' + label + '[^<]*</span><span[^>]*>([^<]*)</span>')); return m ? euro(m[1]) : null; };
+  const ladder = (doc, name) => {
+    const h = c.docPrintHtml(doc);
+    const cells = [...h.matchAll(/<td class="am r">([^<]*)<\/td>/g)].map(m => euro(m[1])).filter(x => x !== null);
+    const sum = cells.reduce((a, b) => a + b, 0);
+    const base = lineOf(h, 'Baza e tatueshme');
+    const vats = [...h.matchAll(/<span class="k">TVSH [\d.]+%<\/span><span>([^<]*)<\/span>/g)].map(m => euro(m[1]));
+    const total = euro((h.match(/Totali i [^<]*<\/span><span class="v">([^<]*)</) || [])[1]);
+    const rest = euro((h.match(/Mbetja për pagesë<\/span><span class="v">([^<]*)</) || [])[1]);
+    const paid = lineOf(h, 'Shuma e paguar'), credit = lineOf(h, 'Notë krediti e aplikuar');
+    eq([sum === base, vats.every(v => v > 0), total === base + vats.reduce((a, b) => a + b, 0), rest === null || total - (paid || 0) - (credit || 0) === rest],
+       [true, true, true, true], 'A4 ' + name + ': Σ “Shuma” = Baza, TVSH pozitive, Baza+TVSH = Totali, Totali−paguar−notë = Mbetja');
+    return h;
+  };
+  const inv0 = db().invoices.find(r => r.kind === 'Faturë' && (r.items || []).length);
+  ladder(inv0, 'faturë e ERP-së');
+  // bllokuesi i rishikimit: faturë e paguar me notë krediti të rimbursuar — “paguar” nuk guxon ta përthithë notën
+  const h = ladder({ ...inv0, paid: inv0.total, credited: inv0.total, creditApplied: 0 }, 'faturë e paguar + notë krediti e rimbursuar');
+  eq([/Nga nota e kreditit, e rimbursuar/.test(h), /Shuma e paguar<\/span><span>− €/.test(h)], [true, false], 'A4: pjesa e rimbursuar e notës shfaqet jashtë shkallës, në formatin e faturës');
+  const mk = items => ({ ...inv0, items, sub: items.reduce((a, i) => a + i.sub, 0), vat: items.reduce((a, i) => a + i.vatc, 0),
+    total: items.reduce((a, i) => a + i.sub + i.vatc, 0), paid: 0, credited: 0, creditApplied: 0 });
+  // pikërisht rastet ku rillogaritja nga çmimi × sasia e ndante kolonën nga baza (POS: zbritje si vlerë,
+  // çmime me katër dhjetore, biznes pa TVSH) dhe ai me dy norma TVSH-je
+  ladder(mk([{ name: 'Zbritje si vlerë', sku: 'X1', unit: 'copë', qty: 1, unit_c: 10000, rate: 18, tax: 'E', disc: 0, disc_c: 2000, sub: 8000, vatc: 1440, tot: 9440 }]), 'zbritje si vlerë (disc_c)');
+  ladder(mk([{ name: 'Çmim 4 dhjetore', sku: 'X2', unit: 'copë', qty: 120, unit_c: 151, rate: 8, tax: 'D', disc: 0, sub: 18082, vatc: 1447, tot: 19529 }]), 'çmim me katër dhjetore');
+  ladder(mk([{ name: 'Pa TVSH', sku: 'X3', unit: 'copë', qty: 1, unit_c: 10000, rate: 0, tax: 'A', disc: 0, sub: 11800, vatc: 0, tot: 11800 }]), 'biznes pa TVSH');
+  ladder(mk([{ name: 'Normë 18', sku: 'A', unit: 'copë', qty: 1, unit_c: 10000, rate: 18, tax: 'E', disc: 0, sub: 10000, vatc: 1800, tot: 11800 },
+             { name: 'Normë 8', sku: 'B', unit: 'copë', qty: 3, unit_c: 3333, rate: 8, tax: 'D', disc: 0, sub: 9999, vatc: 800, tot: 10799 }]), 'dy norma TVSH-je');
+  eq(/<td class="di r">− /.test(c.docPrintHtml(mk([{ name: 'Z', sku: 'X1', unit: 'copë', qty: 1, unit_c: 10000, rate: 18, tax: 'E', disc: 0, disc_c: 2000, sub: 8000, vatc: 1440, tot: 9440 }]))), true,
+     'A4: zbritja e dhënë si vlerë (disc_c) shfaqet te kolona e zbritjes, jo “—”');
+  // çdo klasë që shkruan faqezuesi ose HTML-ja duhet të ketë rregull në PRINT_CSS (shiriti i theksit u zhduk pikërisht kështu)
+  const made = [...c.PRINT_PAGER.matchAll(/className=['"]([a-z]+)['"]/g)].map(m => m[1]);
+  const used = [...new Set([...c.docPrintHtml(inv0).matchAll(/class="([^"]+)"/g)].flatMap(m => m[1].split(' ')))].filter(x => x !== 'doc');
+  eq([made.filter(cl => !c.PRINT_CSS.includes('.' + cl + '{')), used.filter(cl => !new RegExp('\\.' + cl + '[{ ,.:]').test(c.PRINT_CSS))], [[], []],
+     'A4: çdo klasë e faqezuesit dhe e dokumentit ka rregullin e vet në PRINT_CSS');
+}
+
+// ── faqezuesi (PRINT_PAGER) pa shfletues: një DOM i rremë me lartësi të skriptuara ──
+{
+  const MM = 3.78;                                   // px për mm, si në 96 dpi
+  const el = (cls, h = 0) => ({ className: cls, children: [], style: {}, _h: h, textContent: '',
+    appendChild(c2) { c2._p = this; this.children.push(c2); return c2; },
+    removeChild(c2) { this.children = this.children.filter(x => x !== c2); },
+    get parentNode() { return this._p; },
+    cloneNode(deep) { const e2 = el(this.className, this._h); e2.textContent = this.textContent;
+      if (deep) this.children.forEach(ch => e2.appendChild(ch.cloneNode(true))); return e2; },
+    getBoundingClientRect() { return { height: this._h }; },
+    querySelector(sel) { return find(this, sel)[0] || null; },
+    querySelectorAll(sel) { return find(this, sel); } });
+  const matches = (n2, sel) => sel === 'thead' ? n2.className === 'thead'
+    : sel === 'tbody>tr' ? n2.className === 'tr'
+    : sel === 'table.items' ? n2.className === 'items'
+    : n2.className.split(' ').includes(sel.replace(/^\./, ''));
+  const find = (root, sel) => { const out = []; const walk = n2 => { n2.children.forEach(ch => { if (matches(ch, sel)) out.push(ch); walk(ch); }); }; walk(root); return out; };
+  const run = (docs) => {
+    const body = el('body'), out = el('out'), src = el('src');
+    body.appendChild(src); body.appendChild(out);
+    docs.forEach(d => { const doc = el('doc');
+      doc.appendChild(el('head', d.headH * MM));
+      doc.appendChild(el('cont', d.contH * MM));
+      const tbl = el('items'); tbl.appendChild(el('thead', d.theadH * MM));
+      const tb = el('tbody'); for (let i = 0; i < d.rows; i++) tb.appendChild(el('tr', (d.rowH || 9) * MM));
+      tbl.appendChild(tb); doc.appendChild(tbl);
+      doc.appendChild(el('tail', d.tailH * MM));
+      const foot = el('foot', 6 * MM); foot.appendChild(el('pg')); doc.appendChild(foot);
+      src.appendChild(doc); });
+    const document2 = { body, createElement: t => el(t === 'section' ? 'section' : t === 'div' ? '' : t),
+      getElementById: () => out, querySelector: sel => find(body, sel)[0] || null,
+      querySelectorAll: sel => sel === '.src .doc' ? find(body, '.doc') : find(body, sel) };
+    const win = { __ktbPreview: 1, addEventListener: (_e, f) => f(), focus() {}, print() { throw new Error('nuk duhet printuar në parapamje'); } };
+    // probe-i i mm-it: elementi i parë me height:100mm
+    const origCreate = document2.createElement;
+    document2.createElement = t => { const e2 = origCreate(t); if (!document2._probed) { document2._probed = true; e2._h = 100 * MM; } return e2; };
+    new Function('window', 'document', c.PRINT_PAGER)(win, document2);
+    return out.children.map(p => ({ rows: find(p, 'tbody>tr').length, head: !!find(p, '.head').length, cont: !!find(p, '.cont').length,
+      thead: !!find(p, 'thead').length, tail: !!find(p, '.tail').length, more: !!find(p, '.more').length,
+      pg: (find(p, '.pg')[0] || {}).textContent }));
+  };
+  const one = run([{ rows: 2, headH: 70, contH: 12, theadH: 7, tailH: 60 }]);
+  eq([one.length, one[0].rows, one[0].head, one[0].tail, one[0].more, one[0].pg], [1, 2, true, true, false, 'Faqe 1 nga 1'], 'faqezuesi: një faturë e shkurtër mbetet në një faqe');
+  const many = run([{ rows: 40, headH: 70, contH: 12, theadH: 7, tailH: 60 }]);
+  eq([many.length > 2, many[0].head, many.slice(1).every(p => p.cont && !p.head), many.every(p => !p.rows || p.thead),
+      many.slice(0, -1).every(p => p.more), many[many.length - 1].more, many[many.length - 1].tail, many[many.length - 1].rows > 0,
+      many.map(p => p.pg)[0], many[many.length - 1].pg],
+     [true, true, true, true, true, false, true, true, 'Faqe 1 nga ' + many.length, 'Faqe ' + many.length + ' nga ' + many.length],
+     'faqezuesi: koka e plotë vetëm në faqen 1, “vazhdim” në të tjerat, thead kudo ku ka rreshta, “Vazhdon” deri te e parafundit, bishti dhe të paktën një rresht në të fundit');
+  const budget = (297 - 15 - 20 - 2) * MM;
+  const over = many.map((p, i) => (i === 0 ? 70 + 4 : 12 + 6) * MM + (p.thead ? 7 * MM : 0) + p.rows * 9 * MM + (p.tail ? 60 * MM : 0) + (p.more ? 9 * MM : 0)).filter(h => h > budget + 0.5);
+  eq(over, [], 'faqezuesi: asnjë faqe nuk e kalon buxhetin e përmbajtjes (asnjë mbivendosje me footer-in)');
+  const two = run([{ rows: 3, headH: 70, contH: 12, theadH: 7, tailH: 60 }, { rows: 30, headH: 70, contH: 12, theadH: 7, tailH: 60 }]);
+  const labels = two.map(p => p.pg);
+  eq([labels[0], labels[1], labels[labels.length - 1], two.filter(p => p.head).length], ['Faqe 1 nga 1', 'Faqe 1 nga ' + (two.length - 1), 'Faqe ' + (two.length - 1) + ' nga ' + (two.length - 1), 2],
+     'faqezuesi: dy dokumente në një punë printimi numërohen veç e veç dhe secili nis me kokën e vet');
+  const tight = run([{ rows: 24, headH: 70, contH: 12, theadH: 7, tailH: 60 }]);
+  eq(tight[tight.length - 1].rows > 0, true, 'faqezuesi: faqja e fundit nuk mbetet kurrë vetëm me totalet');
+}
+
+{ const inv = invOf('FSH-2026-00125'), ph = c.previewHtml(inv);
+  eq([ph.startsWith('<!doctype html>'), ph.includes('window.__ktbPreview=1'), ph.includes('<div class="src">'), ph.includes('id="out"'), ph.includes(inv.no)], [true, true, true, true, true],
+     'parapamja në ekran është I NJËJTI dokument si printimi, vetëm pa dialogun e printimit');
+  eq(c.previewHtml(null), '', 'previewHtml pa dokument kthen bosh');
+  c.state.drawer = 'FSH-2026-00125'; c.state.section = 'shitje'; c.state.page = 'Fatura'; c.state.modal = null;
+  eq(c.renderVals().inv.previewHtml, '', 'parapamja nuk ndërtohet derisa modali të hapet');
+  c.state.modal = 'print'; const v = c.renderVals();
+  eq([v.showPrint, v.inv.previewHtml.includes('<article class="doc">'), Number(v.inv.previewScale) > 0.4 && Number(v.inv.previewScale) <= 0.95, Number(v.inv.previewH) >= 1123], [true, true, true, true], 'me modalin e hapur, iframe-i merr dokumentin e plotë, të shkallëzuar sa hyn te modali');
+  eq([c.previewBox(inv, false).previewHtml, c.previewBox(null, true).previewHtml], ['', ''], 'parapamja nuk ndërtohet pa modal ose pa dokument');
+  { const many = {...inv, items: Array.from({length: 30}, (_, i) => inv.items[i % inv.items.length])}; eq(Number(c.previewBox(many, true).previewH) > 2 * 1123, true, 'një dokument me 30 rreshta merr lartësi për faqe të shumta'); }
+  c.state.modal = null; c.state.drawer = null; }
+{ const inv = invOf('FSH-2026-00125'), h = c.docPrintHtml(inv);
+  eq([/<article class="doc">/.test(h), /<div class="head">/.test(h), /<div class="cont">/.test(h), /<div class="tail">/.test(h), /<div class="foot">/.test(h)], [true, true, true, true, true],
+     'A4: the document carries the blocks the paginator needs (head · cont · tail · foot)');
+  eq([/<th class="nr">Nr\.<\/th>/.test(h), /Përshkrimi/.test(h), /Njësia/.test(h), /Sasia/.test(h), /Çmimi\/njësi/.test(h), /Shuma/.test(h)], [true, true, true, true, true, true], 'A4: the columns of the design');
+  eq([h.includes('TË DHËNAT PËR PAGESË'), h.includes('Totali i faturës'), h.includes('Mbetja për pagesë'), h.includes('Për kompaninë'), h.includes('Për klientin')], [true, true, true, true, true],
+     'A4: payment block, invoice total, remaining, both signature lines');
+  eq([/TVSH 18%<\/span><span>/.test(h), /Baza e tatueshme/.test(h)], [true, true], 'A4: VAT is split per rate above the taxable base');
+  eq(h.includes(c.fmtEu(222000)) && !h.includes('€2,220.00'), true, 'A4: European number format (2.220,00 €), not the on-screen one');
+  eq([/<svg[^>]*class="bc"/.test(h), /class="pg"/.test(h), /Gjeneruar me/.test(h)], [true, true, true], 'A4: invoice-number barcode, page-label slot and the platform branding in the footer'); }
+{ const db2 = c.state.db; const keep = db2.invoiceSettings;
+  c.state.db = {...db2, invoiceSettings:{...keep, showBarcode:false, showSignature:false, showBranding:false, logoStyle:'wordmark', accent:'#0F766E'}};
+  const h = c.docPrintHtml(invOf('FSH-2026-00125'));
+  eq([/class="bc"/.test(h), /Për kompaninë/.test(h), /Gjeneruar me/.test(h), /class="lgw"/.test(h), c.printCss().includes('--ac:#0F766E')], [false, false, false, true, true],
+     'A4: the toggles really remove the barcode, the signatures and the branding; the wordmark and the accent colour follow the settings');
+  c.state.db = {...db2, invoiceSettings:{...keep, template:'Minimal'}};
+  eq([c.printCss().includes('--thbg:#FFFFFF'), c.printCss().includes('--totbd:.6mm solid #10243A')], [true, true], 'A4: the “Minimal” template is the low-ink print variant');
+  c.state.db = db2; }
 { const h = c.docPrintHtml(db().transfers[0]); eq(h.includes('FLETË-TRANSFERIM') && h.includes('→'), true, 'print html: transfer sheet'); }
 eq(c.esc('<a href="x">&</a>'), '&lt;a href=&#34;x&#34;&gt;&amp;&lt;/a&gt;', 'esc');
 eq(c.ean13Check('590123412345'), '7', 'EAN-13 check digit (5901234123457)');
@@ -823,7 +953,7 @@ c.state.m.lines = [c.newLine()]; c.setLine(c.state.m.lines[0].id, { sku: 'PS-050
   const lv = c.lineVals(c.state.m.lines, (id, p) => c.setLine(id, p), () => {}, 'sale')[0]; eq([lv.taxOpts.map(o => o.code), lv.opts.length > 0 && lv.opts.every(o => o.rate === 0)], [['A'], true], 'line editor (non-VAT): only group A offered, catalogue rates shown as 0 %');
   c.setState({ m: { ...c.state.m, sel: { 'Drini Market SH.P.K.': true } } }); const b = c.buildOneBatch(); eq([b[0].items[0].tax, b[0].items[0].rate, b[0].items[0].vatc], ['A', 0, 0], 'buildOneBatch (non-VAT): items carry tax A, no VAT');
   const nos = c.issueBatch(b, 'issue', { date: '2026-09-20', due: '2026-10-05' }); const inv = db().invoices.find(r => r.no === nos[0]); eq([inv.vat, inv.sub === inv.total, inv.items[0].tax], [0, true, 'A'], 'issued invoice (non-VAT): vat 0, total = net, line letter A');
-  const h = c.docPrintHtml(inv); eq([/<td class="r">A<\/td>/.test(h), /<span>TVSH<\/span>/.test(h), / · TVSH /.test(h)], [true, false, false], 'A4 print (non-VAT): letter A per line, no TVSH total line, no VAT number in the header');
+  const h = c.docPrintHtml(inv); eq([/<td class="vt r">A<\/td>/.test(h), /TVSH \d+%/.test(h), /Nr\. TVSH/.test(h)], [true, false, false], 'A4 print (non-VAT): letter A per line, no TVSH total line, no VAT number in the header');
   c.state.section = 'shitje'; c.state.page = 'Fatura'; c.state.drawer = nos[0]; const v = c.renderVals(); const dec = v.inv; eq([dec.no, dec.vatOn, dec.items[0].vat], [nos[0], false, 'A'], 'invoice drawer (non-VAT): vatOn=false hides the TVSH line, items show A'); c.state.drawer = null;
   const ex = c.buildExcelBatch(c.buildExcelRows('Klienti\tArtikulli\tSasia\nDrini Market SH.P.K.\tPanel sanduiç 50mm\t1\n').rows); eq([ex[0].items[0].tax, ex[0].items[0].rate, ex[0].items[0].vatc], ['A', 0, 0], 'Excel batch (non-VAT): group A, no VAT');
   c.openForm('product'); c.setF({ tax: 'E' }); typeF('price', '10.00'); eq([c.state.frm.priceG, fld('priceG').hint.startsWith('pa TVSH')], ['10.00', true], 'product form (non-VAT): gross = net, hint says group A'); c.state.frm = null;

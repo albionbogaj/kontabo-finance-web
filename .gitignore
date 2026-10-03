@@ -1,0 +1,4 @@
+# Gjenerohen — kurre ne git
+node_modules/
+dev/
+*.log

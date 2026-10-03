@@ -100,5 +100,17 @@
     "compressed": false,
     "ext": "woff2",
     "size": 24836
+  },
+  "b1f0a7c2-1d53-4f6e-9a21-7c5e0a4d8b11": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 45712
+  },
+  "c7d4e9a8-2b61-4f03-8e5a-9f3b6c2d1e44": {
+    "mime": "font/woff2",
+    "compressed": false,
+    "ext": "woff2",
+    "size": 30964
   }
 }

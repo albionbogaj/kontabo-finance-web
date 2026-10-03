@@ -24,7 +24,7 @@ kontabo-finance/
 │  ├─ unpack.js            ← zbërthen një bundle .html në src/
 │  ├─ pack.js              ← ribën dist/Kontabo finance.html nga src/
 │  ├─ dev.js               ← gjeneron dev/index.html për preview pa pack (asset-e me path relativ)
-│  ├─ check-logic.js       ← kontroll sintakse + 582 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, render sweep)
+│  ├─ check-logic.js       ← kontroll sintakse + 921 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, render sweep)
 │  └─ verify-roundtrip.js  ← verifikon që pack(unpack(x)) == x
 ├─ dev/index.html          ← preview i shpejtë (gjenerohet)
 └─ dist/
@@ -119,7 +119,7 @@ ditari kontabël **rrjedhin nga dokumentet**:
 | **Ofertë** (OF-…) → **Porosi** (PS-…) → Faturë | oferta nuk prek asgjë; porosia e hapur **rezervon** sasitë (Stok › Gjendja: Rezervuar, I disponueshëm); “Faturo porosinë” hap formularin e parapërgatitur dhe fatura e mbyll porosinë (lidhje në të dy drejtimet) |
 | **Porosi blerjeje** (PB-…) → Blerje | sasitë shfaqen “Në ardhje”; “Prano mallin → Blerje” krijon blerjen me hyrje në depon e zgjedhur |
 | **Depo & transferime** (`db.warehouses`, `movements[].wh`, TR-…) | hapja e stokut është te depoja kryesore; çdo lëvizje mban depon; transferimi = dalje + hyrje me koston mesatare (vlera e stokut nuk ndryshon); POS-0002 shet nga Depo Prizren |
-| **Printo / PDF / Email** (`printDocs`, `emailDoc`) | faturë, profaturë, blerje, notë krediti, ofertë, porosi, fletë-transferim si HTML A4 në **dialogun e printimit të shfletuesit** (PDF = “Save as PDF” aty); email-i hap programin e përdoruesit me shabllonin nga Cilësime › Email — bashkëngjitja automatike kërkon backend. Lista e faturave ka **zgjedhje me kuti** → Printo (N) / CSV (N) |
+| **Printo / PDF / Email** (`printDocs`, `previewHtml`, `emailDoc`) | faturë, profaturë, blerje, notë krediti, ofertë, porosi, fletë-transferim në formatin A4 **“Precision Flow”** (shih më poshtë) përmes dialogut të printimit të shfletuesit (PDF = “Save as PDF” aty); “Pamja A4” shfaq PIKËRISHT të njëjtin dokument në një iframe; email-i hap programin e përdoruesit |
 | **Barkodet** (`genBarcodes`, `printLabels`) | produktet pa barkod marrin EAN-13 të brendshëm (prefiks 200, shifra kontrolli e vlefshme); etiketa 50×30 mm me Code 128 (SVG) |
 
 Nga këto derivohen: **Paneli** (KPI-të sipas periudhës Sot / Këtë javë / Këtë muaj / Këtë vit / Gjithçka me
@@ -209,6 +209,26 @@ zëvendësohet me API; operacionet e mësipërme mbeten të njëjtat.
   (ose `reason`) te kuponi i anulimit — ruhet te anulimi **dhe** te origjinali (`cancelReason`), shfaqet te sirtari
   (“Arsyeja e anulimit”) dhe te radha fiskale (“… · Arsyeja: …”). Sirtari i kuponit tregon sasinë/çmimin me 4 decimale
   kur POS-i i dërgoi ashtu, zbritjen në % ose “−€x”, dhe shkronjën + normën (`E · 18%`).
+
+## Formati A4 i faturës — “Precision Flow”
+
+Dokumentet e printuara ndjekin dizajnin e pronarit (“Kontabo ERP Fatura Dizajn”, `docPrintHtml` + `PRINT_CSS` + `PRINT_PAGER`):
+
+| Çfarë | Si |
+| --- | --- |
+| Faqja | A4 portret, margjina 15 mm (20 mm poshtë), `@page{size:A4;margin:0}`; shiriti i theksit 0,8 × 34 mm lart majtas |
+| Tipografia | **IBM Plex Sans** (i ngulitur në bundle si skedar variabël latin + latin-ext, 100–700) → Manrope → fonti i sistemit; bazë 9,5 pt, etiketa 7,5 pt, “FATURË” 24 pt, totali 14 pt, mbetja 12 pt; numrat `tabular-nums` |
+| Numrat | format evropian vetëm në print: `1.250,00 €` (`fmtEu`) — ekrani ruan formatin e vet |
+| Koka | logo (monogram / emër / pa logo) + të dhënat e kompanisë majtas; titulli, numri, barkodi Code 128 dhe data/afati/monedha djathtas |
+| Brezi | FATURUAR PËR (ose FURNITORI/KLIENTI) + REFERENCA (nr. i dokumentit, referenca, arsyeja, nr. fiskal) |
+| Tabela | Nr. · Përshkrimi (+ SKU poshtë) · Njësia · Sasia · Çmimi/njësi · [Zbritja] · TVSH · Shuma; `table-layout:fixed`, qeliza 2 mm / 1,5 mm |
+| Përmbledhja | Nëntotali → [Zbritja e rreshtave] → Baza e tatueshme → një rresht TVSH-je **për çdo normë** → Totali → [Paguar] → Mbetja. Shkalla mbyllet gjithmonë; kur fatura ka zbritje totale (bruto, e shpërndarë në rreshta) shfaqet “Vlera para zbritjes → Zbritje në faturë → Baza” |
+| Pagesa | Përfituesi, banka, IBAN, SWIFT (opsional), mënyra, referenca, afati + falënderimi dhe kushtet e pagesës |
+| Fundi | nënshkrimet (opsionale), shënimi i fundit nga Cilësimet, footer-i me “Gjeneruar me Kontabo ERP” (opsional), nr. fiskal dhe **“Faqe X nga Y”** |
+| Faqezimi | `PRINT_PAGER` mat lartësitë reale në dokumentin e printimit: header-i i tabelës përsëritet, asnjë rresht nuk ndahet, blloku i përmbledhjes mbahet i pandarë (nëse s'hyn, rreshti i fundit kalon bashkë me të), faqet pasuese kanë kokën e shkurtër “… · vazhdim” dhe shënimin “Vazhdon në faqen tjetër →” |
+
+Cilësime › Faturat › **Pamja e faturës A4**: logoja, ngjyra e theksit, SWIFT/BIC, kushtet e pagesës dhe çelësat për barkodin, kolonën e zbritjes, nënshkrimet dhe brandimin. Shablloni **“Minimal”** = varianti me pak bojë (sfondet bardh, vija navy).
+QR-ja e dizajnit nuk vizatohet: ERP-ja nuk ka ende gjenerues QR dhe një kod demonstrues te një faturë do të ishte çorientues.
 
 ## Hyrja (login)
 
