@@ -2886,8 +2886,8 @@ class Component extends DCLogic {
     if(!nm||nm.length>200) return R('rejected','Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.');
     const cur=bn?K.find(c=>String(c.name||'').trim()===bn)||null:null, ex=this.findCategory(K,nm);
     if(bn&&!cur) return ex&&ex.name===nm?R('applied','',false):R('rejected','Kategoria “'+bn+'” nuk është më në ERP (u riemërua ose u fshi atje) — fiton ERP-ja; “'+nm+'” nuk krijohet.');
-    if(cur){ if(cur.name===nm) return R('applied','',false); if(ex&&ex.id!==cur.id) return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.');
-      W.categories=K.map(c=>c.id===cur.id?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); (W.renamed||(W.renamed=new Map())).set(this.norm(cur.name),nm); return R('applied','',true); }
+    if(cur){ if(cur.name===nm) return R('applied','',false); if(ex&&ex!==cur) return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.');
+      W.categories=K.map(c=>c===cur?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); (W.renamed||(W.renamed=new Map())).set(this.norm(cur.name),nm); return R('applied','',true); }
     if(!ex){ W.categories=[...K,this.newCategory(nm,K)]; if(W.renamed) W.renamed.delete(this.norm(nm)); return R('applied','',true); }
     if(ex.name===nm) return R('applied','',true);
     return R('rejected','Kategoria ekziston në ERP si “'+ex.name+'”.'); }

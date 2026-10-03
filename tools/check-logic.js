@@ -2551,6 +2551,9 @@ apiBlock.then(async () => {
         const P = (sku, name) => ({ ...Pp(sku, name), cat: 'Pijet' }), d2 = { ...db0, products: [P('KF', 'Kafe'), P('UJ', 'Ujë')], categories: [{ id: 'K-pije', name: 'Pijet', note: '' }] }, z = apply(d2, [kr('k8', 'Pije', 'Pije freskuese')]); // the ERP renamed Pije → Pijet after the bar's catalogue
         eq([z.r.k8[0], z.d.categories.map(c => c.id + ':' + c.name), z.d.products.map(p => p.cat), Object.keys(z.patch)], ['rejected', ['K-pije:Pijet'], ['Pijet', 'Pijet'], ['posProposalsDone']],
           'proposals: the ERP renamed the category the bar renames too — the ERP\'s rename wins, no empty category is created, the products stay where they are');
+        { const d3 = { ...db0, products: [], categories: [{ name: 'Kafe' }, { name: 'Pije' }, { name: 'Birra' }] }, z3 = apply(d3, [kr('k9', 'Kafe', 'Kafe & Çaj')]); // a book whose categories carry no id
+          eq([z3.r.k9[0], z3.d.categories.map(c => c.name)], ['applied', ['Kafe & Çaj', 'Pije', 'Birra']],
+            'proposals, rename in a book whose categories have no id: only that category is renamed (matched by the record, not by an absent id)'); }
         const y = apply(db0, [pr('r1', { key: 'p:61', after: { name: 'Mjaltë', cat: 'Ëmbëlsira', gross_t: 5000, tax: 'E', rate: 18, unit: 'kg', active: true, ingredient: false } }), kr('r2', 'Ëmbëlsira', 'Ëmbëlsirat')]);
         eq([y.r.r2, y.d.categories.map(c => c.id + ':' + c.name), prod(y.d, 'BAR 8').cat, prod(y.d, 'BAR-9').cat, y.res.map(z => z.id)], [['applied', ok1], ['K-pije:Pije', 'K-embelsira:Ëmbëlsirat', 'K-ushqim:Ushqim'], 'Ëmbëlsirat', 'Ëmbëlsirat', ['r2', 'r1']],
           'proposals, rename: the category (same id) and every product of it; a new product queued under the old name lands in the renamed category (categories first, the old name read as the new one)'); }
