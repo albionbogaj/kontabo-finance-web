@@ -1257,6 +1257,112 @@ c.state.db = { ...db(), products: db().products.filter(p => p.sku !== 'OLD') };
     eq([r('VOD'), r('KOK'), r('TS1'), r('TS2')], [['0.5 l', x.fmt(1250), x.fmt(600)], ['2 gotë', x.fmt(900), x.fmt(106)], ['1 copë', x.fmt(890), x.fmt(77)], ['0 copë', x.fmt(0), x.fmt(0)]], 'P5: by article the cost is netted like the revenue — credit notes (Vodka 0.75 − 0.25 l, Koktej 5 − 3 incl. its ingredients), a POS return, a cancelled POS receipt');
     eq(t.foot[5].t, t.kpis[2].value, 'P5: the article rows\' gross profit equals the report\'s (every cost of goods netted by its document)'); });
 }
+// ══ ERP · paketimi (pack = {unit, qm}): blerjet, porositë e blerjes, transferimet dhe numërimi mund të shkruhen në paketime (12 shishe, çmimi për
+// shishe); ruhen gjithmonë në njësinë e produktit (sasia × qm / 1000, çmimi për njësi = çmimi i paketimit × 1000 / qm, 4 decimale + centë) ══
+{ const x = new C({}); x.state.db = x.seedDb(); Object.assign(x.state, { dr: null, frm: null, drawer: null, admin: false, toast: null });
+  const d = () => x.state.db, sup = d().suppliers[0].name, xf = k => x.formVals().fields.find(f => f.key === k), xt = (k, v) => xf(k).set({ target: { value: v } });
+  const blk = (name, f) => { try { f(); } catch (e) { console.log('FAIL ' + name + ' threw: ' + (e && e.stack || e)); process.exitCode = 1; } };
+  const pl = (sku, qty, o = {}) => ({ ...x.newLine(), fresh: false, artOpen: false, sku, artQ: (x.prodOf(d(), sku) || {}).name, tax: 'E', qty, ...o });
+  const buy = (lines, o = {}) => { x.openForm('purchase', { supplier: sup, supplierQ: sup, lines, receive: true, ...o }); const v = x.formVals(); return v; };
+  x.addProduct(P('RUM', 'Rum', 'l', 10000, 2000, { pack: { unit: 'shishe', qm: 700 } })); x.addProduct(P('BIR', 'Birrë', 'copë', 48000, 60, { pack: { unit: 'pako', qm: 24000 } }));
+  blk('pack helpers', () => {
+    eq([x.packError({ unit: 'shishe', qm: 700 }, 'l'), x.packError(null, 'l'), /njësinë e paketimit/.test(x.packError({ unit: ' ', qm: 700 }, 'l')), /më e madhe se 0/.test(x.packError({ unit: 'shishe', qm: 0 }, 'l')), /më e madhe se 0/.test(x.packError({ unit: 'shishe', qm: 0.5 }, 'l')), /më e madhe se 0/.test(x.packError({ unit: 'shishe', qm: -700 }, 'l')), /tjetër nga njësia/.test(x.packError({ unit: 'l', qm: 700 }, 'l')), /numra të plotë/.test(x.packError({ unit: 'pako', qm: 1500 }, 'copë'))],
+      ['', '', true, true, true, true, true, true], 'packError: unit non-empty, qm an integer > 0 (thousandths), another unit than the product\'s, whole for a whole-number unit');
+    eq([x.packOf(x.prodOf(d(), 'RUM')), x.packOf(x.prodOf(d(), 'LED-18')), x.packOf({ ...x.prodOf(d(), 'RUM'), pack: { unit: 'l', qm: 700 } }), x.packOf({ ...x.prodOf(d(), 'RUM'), recipe: [{ sku: 'LED-18', qm: 1000 }] })], [{ unit: 'shishe', qm: 700 }, null, null, null], 'packOf: a valid pack; none without one, for an invalid one or on a recipe');
+    eq([x.packEq(x.prodOf(d(), 'RUM'), 8400), x.packEq(x.prodOf(d(), 'RUM'), 1000), x.packEq(x.prodOf(d(), 'BIR'), 48000), x.packEq(x.prodOf(d(), 'LED-18'), 5000), x.packNote({ unit: 'shishe', qm: 700, n_q: 12000 }, 'l')], ['≈ 12 shishe', '≈ 1.43 shishe', '≈ 2 pako', '', '12 shishe × 0.7 l'], 'packEq / packNote: 8.4 l ≈ 12 shishe, 1 l ≈ 1.43 shishe; nothing without a pack');
+    x.state.toast = null; eq([x.updateProduct('RUM', { pack: { unit: '', qm: 700 } }), /Paketimi/.test(x.state.toast || ''), x.updateProduct('RUM', { pack: { unit: 'shishe', qm: 0 } }), x.updateProduct('RUM', { pack: { unit: 'shishe', qm: 1.5 } }), x.addProduct(P('BAD', 'Bad', 'copë', 0, 10, { pack: { unit: 'pako', qm: 2500 } })), x.prodOf(d(), 'RUM').pack, !!x.prodOf(d(), 'BAD')],
+      [false, true, false, false, false, { unit: 'shishe', qm: 700 }, false], 'addProduct / updateProduct refuse an invalid pack (empty unit, qm 0 or not whole thousandths, a fraction of a whole-number unit) with a toast'); x.state.toast = null; });
+  blk('pack product form', () => {
+    x.openForm('product'); x.setF({ name: 'Xhin', sku: 'xh-1', cat: 'Pije', catQ: 'Pije', unit: 'l', unitQ: 'l', tax: 'E', opening: '0', minStock: '0' }); xt('cost', '10.00'); xt('price', '15.00');
+    const st = () => [x.formVals().actions[0].disabled, xf('packQty').err];
+    eq(st(), [false, ''], 'product form: no pack → ready');
+    x.setF({ packUnit: 'shishe', packUnitQ: 'shishe', packQty: '' }); const a = st(); x.setF({ packUnit: '', packUnitQ: '', packQty: '0.7' }); const b = st(); x.setF({ packUnit: 'shishe', packUnitQ: 'shishe', packQty: '0' }); const c0 = st(); x.setF({ packQty: 'abc' }); const c1 = st(); x.setF({ packQty: '0.0005' }); const c2 = st();
+    x.setF({ packUnit: 'l', packUnitQ: 'l', packQty: '0.7' }); const c3 = [...st(), /tjetër nga njësia/.test(xf('packQty').hint)];
+    eq([a, b, c0, c1, c2, c3], [[true, '1'], [true, '1'], [true, '1'], [true, '1'], [true, '1'], [true, '1', true]], 'product form: the pack needs both halves; qty 0 / text / 4 decimals / the product\'s own unit are refused (save disabled, the reason as hint)');
+    x.setF({ unit: 'copë', unitQ: 'copë', packUnit: 'pako', packUnitQ: 'pako', packQty: '1.5' }); const c4 = [...st(), /numra të plotë/.test(xf('packQty').hint)];
+    x.setF({ unit: 'l', unitQ: 'l', packUnit: 'shishe', packUnitQ: 'shishe', packQty: '0.7' }); eq([c4, st(), xf('packQty').hint.startsWith('1 shishe = 0.7 l')], [[true, '1', true], [false, ''], true], 'product form: a whole-number unit needs a whole pack; shishe × 0.7 l is ready (hint 1 shishe = 0.7 l)');
+    x.formVals().actions[0].go(); eq(x.prodOf(d(), 'XH-1').pack, { unit: 'shishe', qm: 700 }, 'product form: saved pack {unit, qm thousandths}');
+    x.openProduct('XH-1'); x.drawerVals().actions[0].go(); eq([x.state.frm.packUnit, x.state.frm.packQty], ['shishe', '0.7'], 'product edit form: the pack pre-filled'); x.state.frm = null; x.state.dr = null; });
+  // ── a purchase typed in packs: 12 shishe × €12.00 → 8.4 l at €17.1429 / l (€17.14), the line = 12 × 12.00 = €144.00 exactly
+  let bl1 = '';
+  blk('pack purchase', () => {
+    let v = buy([pl('RUM', '12', { pk: true, net: '12.00' })]); let L = v.lines[0];
+    eq([L.hasPack, L.packOpts.map(o => [o.label, o.on]), L.ev.qm, L.ev.packQ, L.ev.unitT, L.ev.netC, L.ev.line, L.lineHint, L.packHint, L.perLbl, L.unitHint, v.summary.subFmt, v.summary.totFmt],
+      [true, [['l', ''], ['shishe (0.7 l)', '1']], 8400, 12000, 171429, 1714, { sub: 14400, disc: 0, vatc: 2592, tot: 16992 }, '12 shishe (8.4 l) ×', '= 8.4 l · €17.1429 / l', ' / shishe', '· shishe', x.fmt(14400), x.fmt(16992)],
+      'purchase line in packs: 12 shishe = 8.4 l; €12.00 / shishe → €17.1429 / l (cents €17.14); the line is 12 × 12.00 = €144.00 (+ 18 %)');
+    const s0 = x.stockOf('RUM'), ap0 = x.balances()['2200'].bal; v.actions[0].go(); const p = d().purchases[0]; bl1 = p.no;
+    eq([p.items[0], p.sub, p.total], [{ name: 'Rum', sku: 'RUM', unit: 'l', qty: 8.4, unit_c: 1714, unit_t: 171429, rate: 18, tax: 'E', disc: 0, sub: 14400, vatc: 2592, tot: 16992, pk: { unit: 'shishe', qm: 700, n_q: 12000, price_c: 1200 } }, 14400, 16992], 'stored in the product\'s unit: qty 8.4 l, unit_c 1714 + unit_t 171429; `pk` keeps what was typed (12 shishe à €12.00)');
+    const m = d().movements.filter(z => z.ref === p.no);
+    eq([m.map(z => [z.type, z.sku, z.qm, z.unit_c, z.note]), Object.keys(m[0]).sort(), x.stockOf('RUM') - s0, x.balances()['2200'].bal - ap0], [[['purchase', 'RUM', 8400, 1714, '12 shishe × 0.7 l']], ['date', 'note', 'party', 'qm', 'ref', 'sku', 'type', 'unit_c', 'wh'], 8400, 16992], 'receiving: +8.4 l (base unit) at €17.14 / l, the packs only in the movement note (no new movement field); payables + €169.92');
+    const r = x.prodOf(d(), 'RUM'); eq([r.cost_c, r.cost_t, x.avgCost(d(), 'RUM'), x.costT(r)], [1714, 171429, Math.round((10000 * 2000 + 8400 * 1714) / 18400), 171429], 'cost per base unit: cost_c €17.14, cost_t €17.1429; avgCost (10 l × 20.00 + 8.4 l × 17.14) / 18.4 l');
+    const J = x.journal(); eq([J.reduce((a, e) => a + e.lines.reduce((s, l) => s + l[1], 0), 0) === J.reduce((a, e) => a + e.lines.reduce((s, l) => s + l[2], 0), 0), J.find(e => e.ref === p.no).lines], [true, [['1300', 14400, 0], ['2410', 2592, 0], ['2200', 0, 16992]]], 'journal: the purchase books the exact €144.00 + VAT');
+    x.openDr('purchase', p.no); const row = x.drawerVals().sections[0].rows[0].cells; eq([row[2].t, row[2].sub, row[3].t, row[3].sub, row[5].t], ['8.4 l', '12 shishe × 0.7 l', '€17.1429', '€12.00 / shishe', x.fmt(16992)], 'purchase drawer: 8.4 l (12 shishe × 0.7 l), €17.1429 (€12.00 / shishe)'); x.state.dr = null;
+    eq(x.docPrintHtml(p).includes('RUM · 12 shishe × 0.7 l · 12,00 € / shishe'), true, 'A4 print: the packs under the article');
+    x.openProduct('RUM'); const dm = x.drawerVals().meta, mv = k => (dm.find(z => z.k === k) || {}).v; eq([mv('Gjendja'), mv('Kosto e blerjes (pa TVSH)'), mv('Paketimi')], ['18.4 l ≈ 26.29 shishe', '€17.1429', '1 shishe = 0.7 l'], 'product drawer: the stock with its pack equivalent, the cost per l with 4 decimals'); x.state.dr = null;
+    x.state.section = 'stok'; x.state.page = 'Gjendja'; const g = x.pageTable('Gjendja').rows.find(z => z.cells[1].t === 'RUM').cells[3]; eq([g.t, g.sub], ['18.4 l', '≈ 26.29 shishe'], 'Gjendja: the pack equivalent under the stock');
+    x.state.section = 'produkte'; x.state.page = 'Produktet'; eq([x.renderVals().products.find(z => z.sku === 'RUM').stock, x.renderVals().products.find(z => z.sku === 'LED-18').stock], ['18.4 l ≈ 26.29 shishe', '25 copë'], 'Produktet: the pack equivalent (none without a pack)'); });
+  blk('pack rounding', () => {
+    const L = buy([pl('RUM', '3', { pk: true, net: '10.00' })]).lines[0];
+    eq([L.ev.unitT, L.ev.netC, L.ev.qm, L.ev.line.sub, x.calcLine({ unit_c: L.ev.netC, qm: L.ev.qm, rate: 18, bp: 0 }).sub], [142857, 1429, 2100, 3000, 3001], 'rounding: €10.00 / 0.7 l = €14.285714 → unit_t 142857 (Math.round, 4 decimals), unit_c 1429 (cOfT); the line stays 3 × 10.00 = €30.00 (not 2.1 l × 14.29 = 30.01)');
+    const L1 = buy([pl('RUM', '0.5', { pk: true, net: '7.77', disc: '10' })]).lines[0];
+    eq([L1.ev.qm, L1.ev.unitT, L1.ev.netC, L1.ev.line], [350, 111000, 1110, x.calcLine({ unit_c: 777, qm: 500, rate: 18, bp: 1000 })], 'half a bottle × €7.77, −10 %: 0.35 l, €11.10 / l; the discount / VAT on the pack amount');
+    const L2 = buy([pl('RUM', '2', { pk: true, net: '', gross: '' })]).lines[0];
+    eq([L2.ev.qm, L2.ev.unitT, L2.ev.netC, L2.ev.line.sub, L2.netPh], [1400, undefined, 1714, Math.round(1714 * 1400 / 1000), 'bosh = kosto e fundit (12.00 / shishe)'], 'no price typed: the product\'s cost per l (as without packs), 2 shishe = 1.4 l');
+    x.openForm('purchase', { supplier: sup, supplierQ: sup, lines: [pl('RUM', '12', { pk: true })], receive: true }); x.formVals().lines[0].setGross({ target: { value: '14.16' } });
+    eq([x.state.frm.lines[0].net, x.formVals().lines[0].ev.line.sub], ['12.00', 14400], 'the gross per pack typed (€14.16 @18 %) → net €12.00 per pack');
+    eq([buy([pl('RUM', '0', { pk: true, net: '12.00' })]).lines[0].ev.err, buy([pl('RUM', '1.2345', { pk: true, net: '12.00' })]).lines[0].ev.err, buy([pl('RUM', '12', { pk: true, net: '12.001' })]).lines[0].ev.err], ['invalid', 'invalid', 'invalid'], 'packs: 0 / 4 decimals / a 3-decimal pack price are refused like any line');
+    x.state.frm = null; });
+  blk('pack switch', () => {
+    x.openForm('purchase', { supplier: sup, supplierQ: sup, lines: [pl('RUM', '8.4', { net: '17.14' })], receive: true }); let L = x.formVals().lines[0];
+    eq([L.packOpts.map(o => o.on), L.ev.qm, L.ev.pk, L.perLbl], [['1', ''], 8400, undefined, ''], 'in the product\'s unit by default');
+    L.packOpts[1].go(); L = x.formVals().lines[0]; eq([x.state.frm.lines[0].pk, x.state.frm.lines[0].qty, x.state.frm.lines[0].net, x.state.frm.lines[0].gross, L.ev.qm, L.ev.line.sub], [true, '12', '12.00', '14.16', 8400, 14400], '"Sasia në: shishe": 8.4 l → 12 shishe, €17.14 / l → €12.00 / shishe (gross re-derived)');
+    L.packOpts[0].go(); eq([x.state.frm.lines[0].pk, x.state.frm.lines[0].qty, x.state.frm.lines[0].net], [false, '8.4', '17.14'], 'and back: 8.4 l, €17.14 / l');
+    x.formVals().lines[0].packOpts[1].go(); x.setFormLine(x.state.frm.lines[0].id, { sku: '', artQ: 'Bir' }); x.formVals().lines[0].opts.find(o => o.sku === 'BIR').pick({ preventDefault() {} });
+    eq([x.state.frm.lines[0].sku, x.state.frm.lines[0].pk, x.formVals().lines[0].packOpts.map(o => o.on)], ['BIR', false, ['1', '']], 'picking another article starts it in its own unit (copë), its pack offered'); x.state.frm = null; });
+  // ── purchase order in packs → purchase (pre-filled in packs, the same amount) → purchase return of a pack line (exact to the cent)
+  blk('pack po', () => {
+    x.openForm('po', { supplier: sup, supplierQ: sup, lines: [pl('RUM', '12', { pk: true, net: '12.00' })], wh: 'W1' }); x.formVals().actions[0].go(); const po = d().purchaseOrders[0];
+    eq([po.items[0].qty, po.items[0].unit_t, po.items[0].sub, po.items[0].pk, x.incomingOf('RUM')], [8.4, 171429, 14400, { unit: 'shishe', qm: 700, n_q: 12000, price_c: 1200 }, 8400], 'purchase order in packs: 8.4 l "Në ardhje", the pack kept for the conversion');
+    x.poToPurchase(po.no); const L = x.formVals().lines[0];
+    eq([x.state.frm.lines[0].pk, x.state.frm.lines[0].qty, x.state.frm.lines[0].net, L.ev.qm, L.ev.line.sub], [true, '12', '12.00', 8400, 14400], 'PO → purchase: pre-filled in packs (12 shishe × €12.00) → the same 8.4 l / €144.00');
+    x.formVals().actions[0].go(); eq([d().purchases[0].fromPo, d().purchases[0].total, d().purchaseOrders[0].status, x.incomingOf('RUM')], [po.no, 16992, 'Pranuar', 0], 'received from the PO: €169.92, PO closed');
+    const prod = x.prodOf(d(), 'RUM'); x.state.db = { ...d(), products: d().products.map(z => z.sku === 'RUM' ? { ...z, pack: { unit: 'shishe', qm: 750 } } : z) };
+    eq(x.linesFrom([po.items[0]])[0].pk, undefined, 'a pack changed since the order (0.75 l) → the line comes back in litres, as stored'); x.state.db = { ...d(), products: d().products.map(z => z.sku === 'RUM' ? prod : z) }; });
+  blk('pack return', () => {
+    const p = d().purchases.find(z => z.no === bl1), k1 = x.createReturn({ kind: 'purchase', ref: bl1, items: [{ li: 0, qty: 4.2 }], date: '2026-09-20', reason: '' }), r1 = d().returns.find(z => z.no === k1);
+    eq([r1.items[0].sub, r1.items[0].vatc, r1.total], [7200, 1296, 8496], 'purchase return of half the pack line (4.2 l = 6 shishe): priced with €17.1429 / l → €72.00');
+    const k2 = x.createReturn({ kind: 'purchase', ref: bl1, items: [{ li: 0, qty: 4.2 }], date: '2026-09-20', reason: '' }), r2 = d().returns.find(z => z.no === k2);
+    eq([r2.total, r1.total + r2.total === p.total, d().purchases.find(z => z.no === bl1).credited], [8496, true, p.total], 'the rest of the line returns its exact remainder — the returns add up to the purchase to the cent');
+    x.openForm('purchase', { supplier: sup, supplierQ: sup, lines: [pl('RUM', '1000', { pk: true, net: '10.00' })], receive: true }); x.formVals().actions[0].go(); const big = d().purchases[0];
+    eq([big.items[0].qty, big.items[0].unit_t, big.sub, x.calcLine({ unit_c: big.items[0].unit_t / 100, qm: 700000, rate: 18, bp: 0 }).sub], [700, 142857, 1000000, 999999], '1000 shishe × €10.00 = €10,000.00 (700 l at €14.2857 would give €9,999.99)');
+    const k3 = x.createReturn({ kind: 'purchase', ref: big.no, items: [{ li: 0, qty: 700 }], date: '2026-09-20', reason: '' }); eq([d().returns.find(z => z.no === k3).sub, d().purchases.find(z => z.no === big.no).credited === big.total], [1000000, true], 'returning the whole line: exactly what was booked (€10,000.00), not the unit-price recomputation'); });
+  // ── transfer and stock count in packs
+  blk('pack transfer + count', () => {
+    const w1 = x.stockOfWh('RUM', 'W1'), w2 = x.stockOfWh('RUM', 'W2');
+    x.openForm('transfer', { from: 'W1', to: 'W2', lines: [pl('RUM', '5', { pk: true })] }); let v = x.formVals();
+    eq([v.noPrice, v.lines[0].hasPack, v.lines[0].ev.qm, v.lines[0].srcStock, v.lines[0].packHint, v.actions[0].disabled], [true, true, 3500, x.fmtQ(w1) + ' l ' + x.packEq(x.prodOf(d(), 'RUM'), w1), '= 3.5 l', false], 'transfer in packs: 5 shishe = 3.5 l, the source stock with its pack equivalent');
+    x.setFormLine(x.state.frm.lines[0].id, { qty: String(Math.ceil(w1 / 700) + 1) }); v = x.formVals(); eq([v.actions[0].disabled, /ka vetëm/.test(v.msg)], [true, true], 'transfer in packs: more than the source holds is refused (checked in litres)');
+    x.setFormLine(x.state.frm.lines[0].id, { qty: '5' }); x.formVals().actions[0].go(); const tr = d().transfers[0];
+    eq([x.stockOfWh('RUM', 'W1') - w1, x.stockOfWh('RUM', 'W2') - w2, tr.items[0], d().movements.filter(m => m.ref === tr.no).map(m => [m.qm, m.wh, m.note])], [-3500, 3500, { name: 'Rum', sku: 'RUM', unit: 'l', qty: 3.5, pk: { unit: 'shishe', qm: 700, n_q: 5000 } }, [[-3500, 'W1', '5 shishe × 0.7 l'], [3500, 'W2', '5 shishe × 0.7 l']]], 'transfer: moved in litres, the packs in the note');
+    x.openDr('transfer', tr.no); eq([x.drawerVals().sections[0].rows[0].cells[2].t, x.drawerVals().sections[0].rows[0].cells[2].sub], ['3.5 l', '5 shishe × 0.7 l'], 'transfer drawer: 3.5 l (5 shishe × 0.7 l)'); x.state.dr = null;
+    const s0 = x.stockOf('RUM'); x.openForm('adjust', { art: 'RUM', artQ: 'Rum', sku: 'RUM' }); const seg = () => x.formVals().fields.find(f => f.label === 'Numërimi në');
+    eq([seg().opts.map(o => [o.label, o.on]), x.formVals().fields.find(f => f.label === 'Gjendja në sistem').value], [[['l', '1'], ['shishe (0.7 l)', '']], x.fmtQ(s0) + ' l ' + x.packEq(x.prodOf(d(), 'RUM'), s0)], 'count form: "Numërimi në" l / shishe, the stock with its pack equivalent');
+    xt('counted', '7'); seg().opts[1].go(); eq([x.state.frm.pk, x.state.frm.counted], [true, '10'], 'switching to packs converts what was typed (7 l → 10 shishe)');
+    xt('counted', '20'); v = x.formVals(); const cf = v.fields.find(f => f.key === 'counted');
+    eq([cf.label, cf.hint, v.fields.find(f => f.label === 'Diferenca').value, v.actions[0].disabled], ['Sasia e numëruar (shishe)', '= 14 l', x.fmtQ(14000 - s0) + ' l ' + x.packEq(x.prodOf(d(), 'RUM'), 14000 - s0), false], 'count in packs: 20 shishe = 14 l, the difference in litres');
+    x.setF({ note: 'numërim mujor' }); x.formVals().actions[0].go(); const m = d().movements[d().movements.length - 1];
+    eq([x.stockOf('RUM'), m.type, m.qm, m.note], [14000, 'adjust', 14000 - s0, 'numërim mujor · numëruar 20 shishe × 0.7 l'], 'the count is booked in litres (stock 14 l), the packs in the note'); x.state.dr = null; });
+  // ── a product without a pack: exactly as before
+  blk('no pack', () => {
+    let v = buy([pl('LED-18', '3', { pk: true, net: '5.00' })]); const L = v.lines[0];
+    eq([L.hasPack, L.packOpts, L.perLbl, L.ev.pk, L.ev.qm, L.ev.line.sub, L.lineHint], [false, [], '', undefined, 3000, 1500, '3 copë ×'], 'no pack: no switch, the quantity is the product\'s unit (a stray pk flag is ignored)');
+    v.actions[0].go(); const p = d().purchases[0];
+    eq([Object.keys(p.items[0]), d().movements.filter(m => m.ref === p.no).map(m => m.note), x.prodOf(d(), 'LED-18').cost_t], [['name', 'sku', 'unit', 'qty', 'unit_c', 'rate', 'tax', 'disc', 'sub', 'vatc', 'tot'], [''], undefined], 'no pack: the same item keys and movement as before (no unit_t / pk / note, no cost_t written)');
+    x.openForm('adjust', { art: 'LED-18', artQ: 'LED', sku: 'LED-18' }); eq(x.formVals().fields.some(f => f.label === 'Numërimi në'), false, 'count form: no "Numërimi në" without a pack'); x.state.frm = null;
+    eq([x.evalLine(pl('RUM', '12', { pk: true, net: '12.00' }), 'sale').qm, x.evalLine(pl('RUM', '12', { pk: true, net: '12.00' }), 'sale').pk], [12000, undefined], 'sales lines are never in packs (12 = 12 l)');
+    x.openForm('invoice', { lines: [pl('RUM', '1')] }); eq(x.formVals().lines[0].hasPack, false, 'invoice form: no pack switch'); x.state.frm = null;
+    eq('pack' in x.posCatalogPayload().products.find(z => z.sku === 'RUM'), false, 'catalogue: the pack is never sent to the tills'); });
+}
 // local / server sync with stubbed transports: nothing is pushed while nothing is visible, the manual sync names it, the timer stays quiet
 (async () => {
   const off = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' };

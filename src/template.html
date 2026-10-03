@@ -1582,10 +1582,13 @@ input,select{font-family:inherit}
                 </div>
               </sc-if>
             </div>
+            <sc-if value="{{ ln.hasPack }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px 10px;margin-top:10px"><span class="mf-lbl" style="margin:0">Sasia në</span><div class="mf-seg"><sc-for list="{{ ln.packOpts }}" as="o" hint-placeholder-count="2"><button sc-camel-on-click="{{ o.go }}" data-on="{{ o.on }}">{{ o.label }}</button></sc-for></div><span style="font-size:12px;color:#526477;font-variant-numeric:tabular-nums">{{ ln.packHint }}</span></div>
+            </sc-if>
             <sc-if value="{{ !frm.noPrice }}" hint-placeholder-val="{{ true }}">
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px 16px;margin-top:10px">
-              <label><span class="mf-lbl">Çmimi pa TVSH</span><input class="mf-in" sc-camel-input-mode="decimal" value="{{ ln.L.net }}" sc-camel-on-change="{{ ln.setNet }}" placeholder="{{ ln.netPh }}" data-err="{{ ln.netErr }}" disabled="{{ !ln.hasProd }}"></label>
-              <label><span class="mf-lbl">Çmimi me TVSH</span><input class="mf-in" sc-camel-input-mode="decimal" value="{{ ln.L.gross }}" sc-camel-on-change="{{ ln.setGross }}" placeholder="{{ ln.grossPh }}" data-err="{{ ln.grossErr }}" disabled="{{ !ln.hasProd }}"></label>
+              <label><span class="mf-lbl">Çmimi pa TVSH{{ ln.perLbl }}</span><input class="mf-in" sc-camel-input-mode="decimal" value="{{ ln.L.net }}" sc-camel-on-change="{{ ln.setNet }}" placeholder="{{ ln.netPh }}" data-err="{{ ln.netErr }}" disabled="{{ !ln.hasProd }}"></label>
+              <label><span class="mf-lbl">Çmimi me TVSH{{ ln.perLbl }}</span><input class="mf-in" sc-camel-input-mode="decimal" value="{{ ln.L.gross }}" sc-camel-on-change="{{ ln.setGross }}" placeholder="{{ ln.grossPh }}" data-err="{{ ln.grossErr }}" disabled="{{ !ln.hasProd }}"></label>
             </div>
             <div style="display:grid;grid-template-columns:minmax(90px,1fr) minmax(200px,1.6fr) minmax(80px,.8fr);gap:12px 16px;margin-top:10px">
               <label style="min-width:0"><span class="mf-lbl">Sasia <span style="font-weight:500;color:#8FA3B8">{{ ln.unitHint }}</span></span><input class="mf-in" sc-camel-input-mode="decimal" value="{{ ln.L.qty }}" sc-camel-on-change="{{ ln.setQty }}" data-err="{{ ln.qtyErr }}"></label>
@@ -1983,7 +1986,7 @@ class Component extends DCLogic {
     for(const i of doc.items){ const prod=this.prodOf(db,i.sku); if(!prod) continue;
       const qm=Math.round(i.qty*1000)*(reverse?-1:1), wh=doc.wh||this.mainWh(db);
       if(this.isRecipe(prod)){ if(sale) for(const r of prod.recipe){ if(!this.prodOf(db,r.sku)) continue; const c=this.rha(qm*r.qm,1000); if(c) db.movements.push({date:doc.date,type,sku:r.sku,qm:-c,wh,ref:doc.no,party,unit_c:this.avgCost(db,r.sku),note:'',via:i.sku}); } continue; }
-      db.movements.push({date:doc.date,type,sku:i.sku,qm:sale?-qm:qm,wh,ref:doc.no,party,unit_c:sale?this.avgCost(db,i.sku):i.unit_c,note:''}); }
+      db.movements.push({date:doc.date,type,sku:i.sku,qm:sale?-qm:qm,wh,ref:doc.no,party,unit_c:sale?this.avgCost(db,i.sku):i.unit_c,note:i.pk?this.packNote(i.pk,i.unit):''}); } // a line typed in packs: in the product's unit, the packs only in the note
   }
   // ── movement index: ONE pass over db.movements, memoised per (array identity, length) and extended in place when the array only grew
   // (every writer appends to its own copy or builds a new array — nothing edits a movement in place). Per sku: quantity, quantity per
@@ -2015,6 +2018,23 @@ class Component extends DCLogic {
   UNITS = ['copë','m','m²','m³','kg','l','pako','shishe','gotë','thes','kovë'];
   INT_UNITS = ['copë','pako','thes','kovë','shishe','gotë'];
   unitDecimals(u){ return this.INT_UNITS.includes(u)?0:3; }
+  // packaging (optional): pack = {unit, qm} — 1 pack = qm thousandths of the product's OWN unit (Rum in `l`: {unit:'shishe', qm:700}). Purchases,
+  // purchase orders, transfers and stock counts can be TYPED in packs (qty in packs, price per pack); they are converted and stored in the
+  // product's unit — movements, documents and stock never change unit. A pack that breaks these rules is ignored by the editors.
+  packError(pk,unit){ if(pk==null) return ''; const u=String((pk&&pk.unit)||'').trim(), q=pk&&pk.qm;
+    if(!u) return 'Paketimi: zgjidhni njësinë e paketimit (p.sh. shishe, pako).';
+    if(!Number.isInteger(q)||q<=0) return 'Paketimi: sasia në paketim duhet të jetë më e madhe se 0 (në njësinë e produktit, deri në 3 decimale).';
+    if(unit&&u===unit) return 'Paketimi: njësia e paketimit duhet të jetë tjetër nga njësia e produktit ('+unit+').';
+    if(unit&&!this.unitDecimals(unit)&&q%1000) return 'Paketimi: '+unit+' numërohet me numra të plotë — sasia në paketim duhet të jetë e plotë.'; return ''; }
+  packOf(p){ const k=p&&!this.isRecipe(p)?p.pack:null; return k&&!this.packError(k,p.unit)?k:null; }
+  // "≈ 12 shishe": a quantity of the product's unit in packs (2 decimals), '' without a (valid) pack
+  packEq(p,qm){ const k=this.packOf(p); if(!k||!qm) return ''; return '≈ '+(Math.round(qm*100/k.qm)/100).toLocaleString('en-US',{maximumFractionDigits:2})+' '+k.unit; }
+  // the display note of a line / movement typed in packs: "12 shishe × 0.7 l"
+  packNote(pk,unit){ return pk&&pk.n_q?this.fmtQ(pk.n_q)+' '+pk.unit+' × '+this.fmtQ(pk.qm)+' '+(unit||''):''; }
+  // the line editor's "Sasia në" switch (product unit ⇄ pack): the typed quantity and net price follow (the gross is derived again)
+  linePackSwitch(l,prod,pk,on){ const q=this.toQ(l.qty), c=l.net===''?null:this.toC(l.net), rate=this.effRate(l.tax||prod.tax), str=v=>this.fmtQ(v).replace(/,/g,'');
+    const qty=q===null?l.qty:on?str(Math.round(q*1000/pk.qm)||1):str(Math.round(q*pk.qm/1000)||1), net=c===null?l.net:this.fromC(on?Math.round(c*pk.qm/1000):this.cOfT(Math.round(c*100000/pk.qm)));
+    return {pk:on,qty,net,gross:net===''||this.toC(net)===null?'':this.fromC(this.grossOf(this.toC(net),rate))}; }
   // a recipe product (cocktail, a glass poured from a bottle…): recipe = [{sku, qm}], qm = thousandths of the INGREDIENT's unit per 1 unit sold.
   // Single level both ways; it holds no stock of its own (opening/cost 0) — its ingredients leave the warehouse when it is sold
   isRecipe(p){ return !!p&&Array.isArray(p.recipe)&&p.recipe.length>0; }
@@ -2056,6 +2076,7 @@ class Component extends DCLogic {
     return ''; }
   // a product change as a whole: recipe rules (when the recipe is set) and the unit lock (when the unit changes)
   productError(d,next,cur,patch){ const P=patch||next; if(P.recipe!==undefined&&this.isRecipe(next)){ const e=this.recipeError(d,next.sku,next.recipe,next.opening); if(e) return e; }
+    if(next.pack!=null&&!this.isRecipe(next)&&(P.pack!==undefined||P.unit!==undefined)){ const e=this.packError(next.pack,next.unit); if(e) return e; } // a pack set now, or a unit change under a kept pack
     if(cur&&P.unit!==undefined&&next.unit!==cur.unit&&this.unitLocked(d,cur)) return 'Njësia nuk ndryshohet: produkti ka gjendje fillestare, lëvizje stoku, përdoret në një recetë ose është në një dokument draft.'; return ''; }
   // rows for every stock-type page: a recipe row carries makeable qty, the recipe cost, no stock value and is never "low"
   stockRowsOf(db){ return db.products.map(p=>{ if(this.isRecipe(p)) return {...p,qm:this.makeQm(p,db),cost:this.recipeCost(p,db),value:0,low:false,isRecipe:true}; const qm=this.stockOf(p.sku,db), cost=this.avgCost(db,p.sku); return {...p,qm,cost,value:Math.round(qm*cost/1000),low:qm<p.minStock,isRecipe:false}; }); }
@@ -2113,10 +2134,13 @@ class Component extends DCLogic {
   // receiving a purchase (Draft -> Pranuar) books the goods into stock and the amount into payables
   // a line whose product is a recipe (a draft made before it became one) is refused: the goods would reach the ledger but never the stock
   RECIPE_BUY = 'është recetë — receta nuk blihet (nuk ka stok as kosto të vetën); hiqni rreshtin ose blini përbërësit.';
+  // the product's cost after a purchase: the line's price per unit (cents; a line typed in packs also brings its 4-decimal unit_t). A stored
+  // cost_t follows it (else the product form / drawer would keep showing the cost from before the purchase)
+  boughtCost(pr,it){ return {...pr,cost_c:it.unit_c,...(it.unit_t!=null?{cost_t:it.unit_t}:pr.cost_t!=null?{cost_t:it.unit_c*100}:{})}; }
   receivePurchase(no){
     { const p0=(this.state.db.purchases||[]).find(x=>x.no===no), rec=p0&&p0.status==='Draft'?this.recipeSkus(this.state.db,p0.items):[]; if(rec.length){ this.toast('Blerja '+no+' nuk u pranua: '+rec.join(', ')+' '+this.RECIPE_BUY,'#B45309'); return; } }
     this.commit(d=>{ const p=d.purchases.find(x=>x.no===no); if(!p||p.status!=='Draft'||this.recipeSkus(d,p.items).length) return {}; const nd={...d,movements:[...d.movements]}; this._pushMovements(nd,p,'purchase');
-      const products=d.products.map(pr=>{ const it=p.items.find(i=>i.sku===pr.sku); return it&&!this.isRecipe(pr)?{...pr,cost_c:it.unit_c}:pr; }); // last purchase price becomes the product's cost (never a recipe's)
+      const products=d.products.map(pr=>{ const it=p.items.find(i=>i.sku===pr.sku); return it&&!this.isRecipe(pr)?this.boughtCost(pr,it):pr; }); // last purchase price becomes the product's cost (never a recipe's)
       return {purchases:d.purchases.map(x=>x.no===no?{...p,status:'Pranuar',history:[...p.history,{t:this.stamp(),a:'Malli u pranua · stoku u shtua',u:this.who()}]}:x),movements:nd.movements,products}; },'Blerja u pranua · stoku u përditësua');
   }
   cancelPurchase(no){
@@ -2140,7 +2164,7 @@ class Component extends DCLogic {
   }
   // products reference their category BY NAME (p.cat — the POS catalogue and every report read it); db.categories is the managed list behind that name
   // the stored name is canonicalised to the managed record (typing 'ndërtim' when 'Ndërtim' exists stores 'Ndërtim' — filters and reports group by the raw name)
-  // a recipe product is stored with opening 0 and cost 0 (its cost is derived from the ingredients); `pos` (default true) = shown on the tills; `pack` = info only.
+  // a recipe product is stored with opening 0 and cost 0 (its cost is derived from the ingredients); `pos` (default true) = shown on the tills; `pack` = how the product is bought / counted (packError; never sent to the tills).
   // Both refuse (toast, false) what productError() rejects: recipe rules, a unit change once the unit is locked
   _recipeNorm(p){ const n={...p}; if(!this.isRecipe(n)) delete n.recipe; if(n.pack===null) delete n.pack; return this.isRecipe(n)?{...n,opening:0,openCost_c:0,cost_c:0,cost_t:0}:n; }
   addProduct(p){ const err=this.productError(this.view(),p,null); if(err){ this.toast(err,'#B45309'); return false; } // the rules see the POS ledger's movements too (view)
@@ -2189,10 +2213,10 @@ class Component extends DCLogic {
   transferStock({from,to,items,date,note}){
     const no=this.nextNo('TR')(1);
     this.commit(d=>{ const dt=this.fmtDate(date), movements=[...d.movements];
-      const its=items.map(i=>({name:i.name,sku:i.sku,unit:i.unit,qty:i.qty}));
-      for(const i of its){ const qm=Math.round(i.qty*1000), cost=this.avgCost(d,i.sku);
-        movements.push({date:dt,type:'transfer',sku:i.sku,qm:-qm,wh:from,ref:no,party:this.whName(from,d)+' → '+this.whName(to,d),unit_c:cost,note:note||''});
-        movements.push({date:dt,type:'transfer',sku:i.sku,qm:qm,wh:to,ref:no,party:this.whName(from,d)+' → '+this.whName(to,d),unit_c:cost,note:note||''}); }
+      const its=items.map(i=>({name:i.name,sku:i.sku,unit:i.unit,qty:i.qty,...(i.pk?{pk:{unit:i.pk.unit,qm:i.pk.qm,n_q:i.pk.n_q}}:{})})); // typed in packs: moved in the product's unit, the packs only for the display
+      for(const i of its){ const qm=Math.round(i.qty*1000), cost=this.avgCost(d,i.sku), nt=[note||'',i.pk?this.packNote(i.pk,i.unit):''].filter(Boolean).join(' · ');
+        movements.push({date:dt,type:'transfer',sku:i.sku,qm:-qm,wh:from,ref:no,party:this.whName(from,d)+' → '+this.whName(to,d),unit_c:cost,note:nt});
+        movements.push({date:dt,type:'transfer',sku:i.sku,qm:qm,wh:to,ref:no,party:this.whName(from,d)+' → '+this.whName(to,d),unit_c:cost,note:nt}); }
       const tr={kind:'Transferim',no,from,to,fromName:this.whName(from,d),toName:this.whName(to,d),date:dt,status:'Kryer',items:its,note:note||'',history:[{t:this.stamp(),a:'Transferimi u krye · '+this.whName(from,d)+' → '+this.whName(to,d),u:this.who()}]};
       return {transfers:[tr,...(d.transfers||[])],movements}; },'Transferimi '+no+' u krye');
     return no;
@@ -2225,7 +2249,10 @@ class Component extends DCLogic {
   }
   cancelPo(no){ this.commit(d=>({purchaseOrders:d.purchaseOrders.map(o=>o.no===no&&o.status==='Hapur'?{...o,status:'Anuluar',history:[...o.history,{t:this.stamp(),a:'Porosia u anulua',u:this.who()}]}:o)}),'Porosia '+no+' u anulua','#8FA3B8'); }
   // conversions: the new document is pre-filled from the source; the link is kept both ways once it is created
-  linesFrom(items){ return items.map(i=>({...this.newLine(),fresh:false,artOpen:false,sku:i.sku,artQ:i.name,qty:this.fmtQ(Math.round(i.qty*1000)).replace(/,/g,''),net:this.fromC(i.unit_c),gross:this.fromC(this.grossOf(i.unit_c,i.rate)),disc:String(i.disc||0),tax:Object.keys(this.TAX).find(k=>this.TAX[k].rate===i.rate)||'E'})); }
+  // a line typed in packs with a price per pack comes back the same way (packs × the pack price — the same amount as the source document)
+  // while the product still has that pack; otherwise in the product's unit, as stored
+  linesFrom(items){ return items.map(i=>{ const cur=i.pk?this.packOf(this.prodOf(this.state.db,i.sku)):null, pk=cur&&cur.qm===i.pk.qm&&cur.unit===i.pk.unit&&i.pk.price_c!=null&&i.pk.n_q>0?i.pk:null, c=pk?pk.price_c:i.unit_c;
+    return {...this.newLine(),fresh:false,artOpen:false,sku:i.sku,artQ:i.name,qty:this.fmtQ(pk?pk.n_q:Math.round(i.qty*1000)).replace(/,/g,''),net:this.fromC(c),gross:this.fromC(this.grossOf(c,i.rate)),disc:String(i.disc||0),tax:Object.keys(this.TAX).find(k=>this.TAX[k].rate===i.rate)||'E',...(pk?{pk:true}:{})}; }); }
   quoteToOrder(no){ const q=(this.state.db.quotes||[]).find(x=>x.no===no); if(!q) return; this.openForm('order',{customer:q.customer,customerQ:q.customer,note:q.note,lines:this.linesFrom(q.items),fromQuote:q.no}); }
   quoteToInvoice(no){ const q=(this.state.db.quotes||[]).find(x=>x.no===no); if(!q) return; this.openForm('invoice',{customer:q.customer,customerQ:q.customer,note:q.note,lines:this.linesFrom(q.items),fromQuote:q.no}); }
   orderToInvoice(no){ const o=(this.state.db.orders||[]).find(x=>x.no===no); if(!o||o.status!=='Hapur') return; this.openForm('invoice',{customer:o.customer,customerQ:o.customer,note:o.note,lines:this.linesFrom(o.items),fromOrder:o.no}); }
@@ -2246,7 +2273,7 @@ class Component extends DCLogic {
       const sub=items.reduce((a,i)=>a+i.sub,0), vat=items.reduce((a,i)=>a+i.vatc,0);
       const p={kind:'Blerje',no,supplier:sup.name,nui:sup.nui,fiscalNo:sup.fiscal,address:sup.address,date:this.fmtDate(date),due:this.fmtDate(due),status:receive?'Pranuar':'Draft',items,sub,vat,total:sub+vat,paid:0,note:note||'',supplierRef:'—',fiscal:'—',wh:wh||this.mainWh(d),fromPo:fromPo||'',history:[{t:this.stamp(),a:'Blerja u regjistrua'+(fromPo?' nga porosia '+fromPo:''),u:this.who()}]};
       const nd={...d,movements:[...d.movements]}; let products=d.products;
-      if(receive){ this._pushMovements(nd,p,'purchase'); p.history.push({t:this.stamp(),a:'Malli u pranua · stoku u shtua · '+this.whName(p.wh,d),u:this.who()}); products=d.products.map(pr=>{const it=items.find(i=>i.sku===pr.sku);return it&&!this.isRecipe(pr)?{...pr,cost_c:it.unit_c}:pr;}); }
+      if(receive){ this._pushMovements(nd,p,'purchase'); p.history.push({t:this.stamp(),a:'Malli u pranua · stoku u shtua · '+this.whName(p.wh,d),u:this.who()}); products=d.products.map(pr=>{const it=items.find(i=>i.sku===pr.sku);return it&&!this.isRecipe(pr)?this.boughtCost(pr,it):pr;}); }
       return {purchases:[p,...d.purchases],movements:nd.movements,products,...(fromPo?this._linkSource(d,'po',fromPo,no):{})}; },'Blerja '+no+' u '+(receive?'pranua · stoku u përditësua':'ruajt si draft'));
     return no;
   }
@@ -2262,7 +2289,10 @@ class Component extends DCLogic {
   // items: [{li, qty}] against the original document's lines; the price, discount and VAT rate are those of the original line
   createReturn({kind,ref,items,date,reason,account}){
     const isSale=kind==='sale', d0=this.state.db, src=this.returnable(kind,d0).find(x=>x.doc.no===ref); if(!src) return '';
-    const its=[]; for(const {li,qty} of items){ const L=src.lines[li]; if(!L||!(qty>0)||qty>L.left+1e-9) continue; const it=L.it; const qm=Math.round(qty*1000); const line=this.calcLine({unit_c:it.unit_c,qm,rate:it.rate,bp:Math.round((it.disc||0)*100)}); its.push({li,name:it.name,sku:it.sku,unit:it.unit,qty:qm/1000,unit_c:it.unit_c,rate:it.rate,disc:it.disc||0,sub:line.sub,vatc:line.vatc,tot:line.tot}); }
+    // a line typed in packs (unit_t, amount = packs × pack price): priced with its 4-decimal unit price, and what is left of it returns its exact remainder
+    const back=li=>(d0.returns||[]).filter(r=>r.ref===ref&&r.status!=='Anuluar').flatMap(r=>r.items.filter(x=>x.li===li)), left=(it,li)=>{ const b=back(li), sub=it.sub-b.reduce((a,x)=>a+x.sub,0), vatc=it.vatc-b.reduce((a,x)=>a+x.vatc,0); return {sub,vatc,tot:sub+vatc}; };
+    const its=[]; for(const {li,qty} of items){ const L=src.lines[li]; if(!L||!(qty>0)||qty>L.left+1e-9) continue; const it=L.it; const qm=Math.round(qty*1000), bp=Math.round((it.disc||0)*100);
+      const line=it.unit_t==null?this.calcLine({unit_c:it.unit_c,qm,rate:it.rate,bp}):qty>L.left-1e-9?left(it,li):this.calcLine({unit_c:it.unit_t/100,qm,rate:it.rate,bp}); its.push({li,name:it.name,sku:it.sku,unit:it.unit,qty:qm/1000,unit_c:it.unit_c,rate:it.rate,disc:it.disc||0,sub:line.sub,vatc:line.vatc,tot:line.tot}); }
     if(!its.length) return '';
     const no=this.nextNo(isSale?'KR':'KD')(1);
     this.commit(d=>{
@@ -3134,7 +3164,7 @@ class Component extends DCLogic {
       +(money?'<th class="vt r">TVSH</th>':'')+'<th class="am r">Shuma</th></tr></thead>';
     const rows=lines.map((x,n)=>{ const i=x.it;
       return '<tr><td class="nr">'+(n+1)+'</td>'
-        +'<td><div class="d1">'+e(i.name)+'</div>'+(i.sku&&i.sku!=='—'?'<div class="d2">'+e(i.sku)+'</div>':'')+'</td>'
+        +'<td><div class="d1">'+e(i.name)+'</div>'+(i.sku&&i.sku!=='—'||i.pk?'<div class="d2">'+e([i.sku&&i.sku!=='—'?i.sku:'',i.pk?this.packNote(i.pk,i.unit)+(money&&i.pk.price_c!=null?' · '+F(i.pk.price_c)+' / '+i.pk.unit:''):''].filter(Boolean).join(' · '))+'</div>':'')+'</td>'
         +'<td class="un">'+e(i.unit||'')+'</td>'
         +'<td class="qt r">'+e(this.fmtQ(Math.round((i.qty||0)*1000)))+'</td>'
         +(money?'<td class="pr r">'+F(i.unit_c||0)+'</td>':'')
@@ -3293,6 +3323,9 @@ class Component extends DCLogic {
   normCell(c){ const go=c.go; const stop=go?(e=>{ if(e&&e.stopPropagation) e.stopPropagation(); go(e); }):undefined; return {...c,go:stop,plain:!c.badge&&!c.sw&&!c.act,onS:c.on?'1':'',lockedS:c.locked?'1':'',title:c.locked?'Pronari ka gjithçka — nuk ndryshohet':(c.on?'Aktiv — kliko për ta hequr':'Jo aktiv — kliko për ta dhënë')}; } // buttons inside clickable rows must not also open the row
   moneyCell(c,o={}){ return this.cell(this.fmt(c),{align:'right',b:o.b,color:o.color||(c<0?'#B91C1C':'#10243A'),sub:o.sub}); }
   badgeCell(status,o={}){ const st=this.st(status); return this.cell(status,{badge:{bg:st.bg,fg:st.fg},sub:o.sub}); }
+  // a document line's quantity / unit price; a line typed in packs shows them under it ("12 shishe × 0.7 l", "€12.00 / shishe"), its 4-decimal unit price
+  itemQtyCell(i,o={}){ return this.cell(this.fmtQ(Math.round(i.qty*1000))+' '+i.unit,{align:'right',...o,sub:i.pk?this.packNote(i.pk,i.unit):o.sub||''}); }
+  itemPriceCell(i,o={}){ return i.unit_t!=null?this.cell(this.fmtT(i.unit_t),{align:'right',sub:[o.sub,i.pk&&i.pk.price_c!=null?this.fmt(i.pk.price_c)+' / '+i.pk.unit:''].filter(Boolean).join(' · ')}):this.moneyCell(i.unit_c,o); }
   openDr(kind,id){ // a POS-ledger receipt row (buyer NUI) opens as the server's receipt (GET /pos/receipts/{id}); a day summary keeps its own drawer
     if(kind==='pos'&&this.state.db&&this.ledgerLive(this.state.db)){ const r=(this.view().posReceipts||[]).find(x=>x.id===id); if(r&&r._srv&&!r.summary){ this.openPosReceipt(id); return; } }
     this.setState({dr:{kind,id},drawer:null,frm:null}); }
@@ -3311,7 +3344,7 @@ class Component extends DCLogic {
       expense:{category:'',categoryQ:'',categoryOpen:false,vendor:'',desc:'',net:'',rate:this.defaultTax(),account:this.bankAccount()},
       product:{name:'',sku:'',barcode:'',cat:'',catQ:'',catOpen:false,unit:'copë',unitQ:'copë',unitOpen:false,tax:this.defaultTax(),price:'',priceG:'',cost:'',costG:'',opening:'0',minStock:'0',pos:true,rec:false,lines:[{...this.newLine(),fresh:false,artOpen:false}],packUnit:'',packUnitQ:'',packUnitOpen:false,packQty:''},
       category:{name:'',note:''},
-      adjust:{sku:'',artQ:'',artOpen:false,counted:''},
+      adjust:{sku:'',artQ:'',artOpen:false,counted:'',pk:false},
       customer:{name:'',type:'Biznes',nui:'',fiscal:'',city:'',contact:'',address:''},
       supplier:{name:'',nui:'',fiscal:'',city:'',contact:'',address:''},
       branch:{name:'',address:'',phone:'',manager:'',unitNo:'',licence:''},
@@ -3348,26 +3381,34 @@ class Component extends DCLogic {
       const e=isR?this.evalRecipeLine(L):this.evalLine(L,mode), prod=e.prod, id=L.id, set=p=>setLine(id,p);
       const q=this.norm(L.artQ);
       const opts=this.PRODUCTS.filter(p=>!(stockOnly&&this.isRecipe(p))&&!(isR&&p.sku===self)).filter(p=>!q||L.sku||this.norm(p.name).includes(q)||this.norm(p.sku).includes(q)).map(p=>({name:p.name,sku:p.sku,cat:p.cat,unit:p.unit,rate:this.effRate(p.tax),priceFmt:this.fmt(isP||isR?p.cost_c:p.price_c),bg:p.sku===L.sku?'rgba(37,99,235,.08)':'transparent',
-        pick:ev=>{ev.preventDefault();set({sku:p.sku,artQ:p.name,artOpen:false,tax:p.tax,net:'',gross:'',fresh:false});}}));
+        pick:ev=>{ev.preventDefault();set({sku:p.sku,artQ:p.name,artOpen:false,tax:p.tax,net:'',gross:'',fresh:false,...(L.pk?{pk:false}:{})});}})); // another article starts in its own unit
       const taxOpts=Object.entries(this.TAX).filter(([code])=>this.vatOn()||code==='A').map(([code,t])=>({code,rate:t.rate,name:t.name,on:code===e.taxCode?'1':'',go:()=>set(l=>{const nc=l.net===''?null:this.toC(l.net);return {tax:code,gross:nc===null?'':this.fromC(this.grossOf(nc,t.rate))};})}));
       const base=prod?(isP?prod.cost_c:prod.price_c):0;
-      return {n:idx+1,L,prod:prod||{},hasProd:!!prod,open:L.artOpen&&!L.sku,opts,optsEmpty:opts.length===0,padR:prod?'118px':'11px',
+      // purchase / purchase order / transfer of a product with a pack: "Sasia në" switch (its unit ⇄ the pack); in packs the quantity and the
+      // prices are per pack — the hint shows what is stored (the product's unit, the price per unit with 4 decimals)
+      const pk=(isP||mode==='transfer')&&prod?this.packOf(prod):null, inPk=!!(pk&&e.pk), sw=on=>()=>{ if(on!==inPk) set(l=>this.linePackSwitch(l,prod,pk,on)); };
+      const packFields={hasPack:!!pk,packOpts:pk?[{label:prod.unit,on:inPk?'':'1',go:sw(false)},{label:pk.unit+' ('+this.fmtQ(pk.qm)+' '+prod.unit+')',on:inPk?'1':'',go:sw(true)}]:[],
+        packHint:inPk&&e.qm?'= '+this.fmtQ(e.qm)+' '+prod.unit+(e.unitT!=null?' · '+this.fmtT(e.unitT)+' / '+prod.unit:''):pk?'1 '+pk.unit+' = '+this.fmtQ(pk.qm)+' '+prod.unit:'',perLbl:inPk?' / '+pk.unit:''};
+      return {n:idx+1,L,prod:prod||{},hasProd:!!prod,open:L.artOpen&&!L.sku,opts,optsEmpty:opts.length===0,padR:prod?'118px':'11px',...packFields,
         artInput:ev=>set({artQ:ev.target.value,sku:'',artOpen:true,fresh:false}),artFocus:()=>set({artOpen:true}),artBlur:()=>set({artOpen:false,fresh:false}),
         artKey:ev=>{ if(ev.key==='Escape') set({artOpen:false}); if(ev.key==='Enter'&&!L.sku&&opts.length===1) opts[0].pick(ev); },
         artClear:ev=>{ev.preventDefault();set({sku:'',artQ:'',artOpen:true,net:'',gross:''});},
-        netPh:prod?'bosh = '+(isP?'kosto e fundit':'katalogu')+' ('+this.fromC(base)+')':'bosh = '+(isP?'kosto e fundit':'çmimi i katalogut'),grossPh:prod?'katalogu: '+this.fromC(this.grossOf(base,e.rate)):'',
+        netPh:prod?'bosh = '+(isP?'kosto e fundit':'katalogu')+' ('+this.fromC(inPk?Math.round(base*pk.qm/1000):base)+(inPk?' / '+pk.unit:'')+')':'bosh = '+(isP?'kosto e fundit':'çmimi i katalogut'),grossPh:prod?'katalogu: '+this.fromC(this.grossOf(inPk?Math.round(base*pk.qm/1000):base,e.rate)):'',
         netErr:e.netErr?'1':'',grossErr:e.grossErr?'1':'',qtyErr:e.qtyErr?'1':'',discErr:e.discErr?'1':'',bad:e.err==='invalid'?'1':'',
         setNet:ev=>{const v=ev.target.value,c=this.toC(v);set({net:v,gross:v===''?'':c===null?'':this.fromC(this.grossOf(c,e.rate))});},
         setGross:ev=>{const v=ev.target.value,c=this.toC(v);set({gross:v,net:v===''?'':c===null?'':this.fromC(this.netOf(c,e.rate))});},
-        setQty:ev=>set({qty:ev.target.value}),setDisc:ev=>set({disc:ev.target.value}),unitHint:prod?'· '+prod.unit+(isR&&prod.unit==='l'?' (p.sh. 0.04 ose 4 cl / 40 ml)':isR?' për 1 njësi të shitur':''):'',taxOpts,
-        hasLine:!!e.line,lineHint:e.line?this.fmtQ(e.qm)+' '+prod.unit+' ×':'',totFmt:e.line?this.fmt(e.line.tot):'',remove:()=>removeLine(id),ev:e,
+        setQty:ev=>set({qty:ev.target.value}),setDisc:ev=>set({disc:ev.target.value}),unitHint:prod?'· '+(inPk?pk.unit:prod.unit)+(isR&&prod.unit==='l'?' (p.sh. 0.04 ose 4 cl / 40 ml)':isR?' për 1 njësi të shitur':''):'',taxOpts,
+        hasLine:!!e.line,lineHint:e.line?(inPk?this.fmtQ(e.packQ)+' '+pk.unit+' ('+this.fmtQ(e.qm)+' '+prod.unit+') ×':this.fmtQ(e.qm)+' '+prod.unit+' ×'):'',totFmt:e.line?this.fmt(e.line.tot):'',remove:()=>removeLine(id),ev:e,
         srcLabel:isR?'Kosto e përbërësit (kosto mes.)':'Gjendja në depon burim',srcStock:isR?(prod&&e.qm?this.fmt(Math.round(this.avgCost(this.state.db,prod.sku)*e.qm/1000))+' · në stok '+this.fmtQ(this.stockOf(prod.sku))+' '+prod.unit:'—'):''};
     });
   }
   // one ingredient line of the recipe editor: qty typed in the ingredient's unit (for `l` also cl / ml) → qm thousandths
   evalRecipeLine(L){ const prod=this.PRODUCTS.find(p=>p.sku===L.sku)||null, qm=prod?this.recipeQm(L.qty,prod.unit):null, qtyErr=!!prod&&qm===null;
     return {prod,qm,qtyErr,netErr:false,grossErr:false,discErr:false,err:!prod?'noprod':qtyErr?'invalid':(this.isRecipe(prod)?'recipe':null),line:null,taxCode:'',rate:0}; }
-  linesToItems(ev){ return ev.map(e=>({name:e.prod.name,sku:e.prod.sku,unit:e.prod.unit,qty:e.qm/1000,unit_c:e.netC,rate:e.rate,tax:e.taxCode,disc:e.bp/100,sub:e.line.sub,vatc:e.line.vatc,tot:e.line.tot})); }
+  // a line typed in packs is stored in the product's unit (qty, unit_c, unit_t with 4 decimals) + `pk` = what was typed (packs, pack, price per
+  // pack) — only for the display ("12 shishe × 0.7 l") and to pre-fill a purchase from its purchase order the same way
+  linesToItems(ev){ return ev.map(e=>({name:e.prod.name,sku:e.prod.sku,unit:e.prod.unit,qty:e.qm/1000,unit_c:e.netC,...(e.unitT!=null?{unit_t:e.unitT}:{}),rate:e.rate,tax:e.taxCode,disc:e.bp/100,sub:e.line.sub,vatc:e.line.vatc,tot:e.line.tot,
+    ...(e.pk?{pk:{unit:e.pk.unit,qm:e.pk.qm,n_q:e.packQ,...(e.packC!=null?{price_c:e.packC}:{})}}:{})})); }
   // render object for the open form (fields + handlers + submit), or null
   formVals(){
     const f=this.state.frm; if(!f) return null;
@@ -3391,7 +3432,7 @@ class Component extends DCLogic {
       const isP=K==='purchase'||K==='po', isT=K==='transfer', partyKey=isP?'supplier':'customer';
       const list=isT?[]:(isP?this.SUPPLIERS:this.CUSTOMERS).map(c=>({id:c.name,label:c.name,sub:(c.nui!=='—'?'NUI '+c.nui+' · ':'')+c.city,tag:c.nui!=='—'?c.nui:''}));
       lines=this.lineVals(f.lines,(id,p)=>this.setFormLine(id,p),id=>set(x=>x.lines.length>1?{lines:x.lines.filter(l=>l.id!==id)}:{}),isT?'transfer':isP?'purchase':'sale');
-      if(isT){ noPrice=true; lines=lines.map(l=>({...l,srcStock:l.hasProd?this.fmtQ(this.stockOfWh(l.prod.sku,f.from))+' '+l.prod.unit:'—'})); }
+      if(isT){ noPrice=true; lines=lines.map(l=>{ const q=l.hasProd?this.stockOfWh(l.prod.sku,f.from):0, eq=l.hasProd?this.packEq(l.prod,q):''; return {...l,srcStock:l.hasProd?this.fmtQ(q)+' '+l.prod.unit+(eq?' '+eq:''):'—'}; }); }
       const ev=lines.map(l=>l.ev), ok=ev.length>0&&ev.every(e=>!e.err), partyOk=isT?(!!f.from&&!!f.to&&f.from!==f.to):!!f[partyKey];
       const tot=ok?ev.reduce((a,e)=>({sub:a.sub+e.line.sub+e.line.disc,disc:a.disc+e.line.disc,vatc:a.vatc+e.line.vatc,tot:a.tot+e.line.tot}),{sub:0,disc:0,vatc:0,tot:0}):null;
       const whOpts=(db.warehouses||[]).map(w=>[w.id,w.name]);
@@ -3495,7 +3536,7 @@ class Component extends DCLogic {
       title=edit?'Redakto produktin':'Produkt i ri'; sub=(edit?'Çmimi pa TVSH është baza e librave, çmimi me TVSH shtypet në kupon siç e shkruani; stoku ndryshohet vetëm me blerje, shitje ose inventarizim.':'Gjendja fillestare hyn në stok me koston e blerjes. Shkruani cilëndo anë të çmimit, tjetra llogaritet — ana me TVSH shtypet në kuponin fiskal siç e shkruani.')+(vatOn?'':' Kompania nuk është e regjistruar për TVSH: shitet në grupin A (0 %).');
       // unit: the full list as a combo, LOCKED (info field) once the product has an opening, a movement or is an ingredient of a recipe;
       // "Shfaqe në POS" (pos, default on); Lloji: stock product or RECIPE — the recipe lines are the ingredients (stock products only, qty in
-      // the ingredient's unit, `l` also in cl/ml), the cost comes from them (no cost / opening / minimum fields); pack = optional info only
+      // the ingredient's unit, `l` also in cl/ml), the cost comes from them (no cost / opening / minimum fields); pack = optional (purchases / transfers / counts may be typed in packs)
       const sku=(edit||f.sku||'').trim().toUpperCase(), unitLock=!!orig&&this.unitLocked(db,orig), users=orig?this.usedIn(db,orig.sku):[];
       const recBlock=orig&&!this.isRecipe(orig)?(users.length?'përdoret si përbërës te '+users.map(p=>p.name).join(', '):(orig.opening||this.stockOf(orig.sku)||this.hasMoves(db,orig.sku))?'ka gjendje fillestare ose lëvizje stoku':''):'';
       const isRec=!!f.rec&&!recBlock, unit=unitLock?orig.unit:f.unit;
@@ -3503,7 +3544,9 @@ class Component extends DCLogic {
       if(isRec){ hasLines=true; noPrice=true; lines=this.lineVals(f.lines||[],(id,p)=>this.setFormLine(id,p),id=>set(x=>x.lines.length>1?{lines:x.lines.filter(l=>l.id!==id)}:{}),'recipe',sku); }
       const recipe=lines.map(l=>({sku:l.ev.prod?l.ev.prod.sku:'',qm:l.ev.qm})), badLine=lines.find(l=>l.ev.err);
       const recErr=isRec&&!badLine?this.recipeError(db,sku,recipe,0):'', recCost=isRec&&!badLine?this.recipeCost({recipe},db):null;
-      const packQm=f.packQty===''||f.packQty==null?null:this.toQ(f.packQty), packErr=!isRec&&(!!f.packUnit!==(f.packQty!==''&&f.packQty!=null)||(f.packQty!==''&&f.packQty!=null&&packQm===null)), pack=!isRec&&f.packUnit&&packQm?{unit:f.packUnit,qm:packQm}:null;
+      // pack: both halves or none; qm a whole number of thousandths > 0 (toQ), another unit than the product's, whole for a whole-number unit
+      const packQm=f.packQty===''||f.packQty==null?null:this.toQ(f.packQty), pack=!isRec&&f.packUnit&&packQm?{unit:f.packUnit,qm:packQm}:null, packE=pack?this.packError(pack,unit):'';
+      const packErr=!isRec&&(!!f.packUnit!==(f.packQty!==''&&f.packQty!=null)||(f.packQty!==''&&f.packQty!=null&&packQm===null)||!!packE);
       fields=[txt('name','Emri',{half:true,err:false}),txt('sku','SKU',{half:true,err:skuDup,hint:skuDup?'SKU ekziston':(edit?'nuk ndryshohet':''),dis:!!edit}),txt('barcode','Barkodi',{half:true,ph:'opsional'}),combo('cat','Kategoria',cats,{free:true,half:true,ph:'zgjidhni ose shkruani një të re',hint:f.cat&&!this.findCategory(this.CATEGORIES,f.cat)?'e re — krijohet me ruajtjen':''}),
         unitLock?info('Njësia',orig.unit+' · nuk ndryshohet (ka gjendje fillestare, lëvizje, përdoret në recetë ose është në një dokument draft)',{half:true,color:'#526477'}):combo('unit','Njësia',units,{half:true,max:units.length,ph:'zgjidhni njësinë',hint:f.unit?'':'zgjidhni nga lista'}),taxSeg,
         seg('pos','Shfaqe në POS',[[true,'Po — shitet në arkë'],[false,'Jo — vetëm në ERP']],{half:true}),
@@ -3513,7 +3556,7 @@ class Component extends DCLogic {
             info('Marzhi',price&&recCost!==null?Math.round((price-recCost*100)/price*100)+'%'+(price>recCost*100?' · fitim '+this.fmtT(price-recCost*100)+' / njësi':''):'—',{half:true,color:price&&recCost!==null&&price<recCost*100?'#B91C1C':'#10243A'})]
           :[info('Marzhi',price&&cost!==null?Math.round((price-cost)/price*100)+'%'+(price>cost?' · fitim '+this.fmtT(price-cost)+' / njësi':''):'—',{half:true,color:price&&cost!==null&&price<cost?'#B91C1C':'#10243A'}),
             ...(edit?[info('Gjendja',this.fmtQ(this.stockOf(edit))+' '+(orig?orig.unit:''),{half:true})]:[txt('opening','Gjendja fillestare',{half:true,decimal:true,err:opening===null})]),txt('minStock','Stoku minimal',{half:true,decimal:true,err:minS===null}),
-            combo('packUnit','Paketimi (opsional, vetëm info)',units,{half:true,max:units.length,ph:'p.sh. pako, shishe'}),txt('packQty','Sasia në paketim'+(unit?' ('+unit+')':''),{half:true,decimal:true,err:packErr,ph:'p.sh. 24 ose 0.7',hint:pack?'1 '+pack.unit+' = '+this.fmtQ(pack.qm)+' '+(unit||''):''})])];
+            combo('packUnit','Paketimi (opsional)',units,{half:true,max:units.length,ph:'p.sh. pako, shishe'}),txt('packQty','Sasia në paketim'+(unit?' ('+unit+')':''),{half:true,decimal:true,err:packErr,ph:'p.sh. 24 ose 0.7',hint:packE||(pack?'1 '+pack.unit+' = '+this.fmtQ(pack.qm)+' '+(unit||'')+' · blerjet, transferimet dhe numërimi mund të shkruhen në '+pack.unit:'')})])];
       if(isRec) sub='Receta: kur shitet produkti dalin nga stoku përbërësit e saj (sasia në njësinë e përbërësit për 1 njësi të shitur); produkti nuk ka stok as kosto të vetën — kostoja llogaritet nga përbërësit.'+(vatOn?'':' Kompania nuk është e regjistruar për TVSH: shitet në grupin A (0 %).');
       if(isRec) msg=badLine?(badLine.ev.err==='noprod'?'Zgjidhni përbërësin te rreshti '+badLine.n+' ose hiqeni.':badLine.ev.err==='recipe'?'“'+badLine.ev.prod.name+'” (rreshti '+badLine.n+') ka vetë recetë — përbërësit duhet të jenë mall me stok.':'Kontrolloni sasinë te rreshti '+badLine.n+' (në njësinë e përbërësit, > 0).'):recErr;
       const ready=!!f.name.trim()&&!!f.sku.trim()&&!skuDup&&price!==null&&priceG!==null&&!!f.cat&&!!unit&&(isRec?(!badLine&&!recErr):(cost!==null&&costG!==null&&opening!==null&&minS!==null&&!packErr));
@@ -3531,12 +3574,18 @@ class Component extends DCLogic {
       if(edit&&cur) actions.unshift({label:'Fshi',disabled:used>0,hint:used?used+' produkte e përdorin':'',go:()=>this.setState({confirm:{title:'Fshi kategorinë “'+cur.name+'”?',body:'Asnjë produkt nuk e përdor; hiqet nga lista.',color:'#B91C1C',ok:()=>{ if(this.deleteCategory(edit)) close(); }}})});
       if(edit&&used) msg=used+' produkte e përdorin këtë kategori — mund të riemërohet, por jo të fshihet.';
     } else if(K==='adjust'){
-      const prod=this.PRODUCTS.find(p=>p.sku===f.sku), cur=prod?this.stockOf(prod.sku):0, counted=f.counted===''?null:(this.toQ(f.counted)??(f.counted==='0'?0:null)), diff=counted===null?null:counted-cur;
+      // a product with a pack can be counted in packs ("Numërimi në"): 12.5 shishe → 8.75 l; the adjustment is booked in the product's unit
+      const prod=this.PRODUCTS.find(p=>p.sku===f.sku), cur=prod?this.stockOf(prod.sku):0, pk=prod?this.packOf(prod):null, inPk=!!(pk&&f.pk);
+      const typed=f.counted===''?null:(this.toQ(f.counted)??(f.counted==='0'?0:null)), counted=typed===null?null:inPk?Math.round(typed*pk.qm/1000):typed, diff=counted===null?null:counted-cur;
+      const eq=q=>prod&&pk?' '+this.packEq(prod,q):'', swQ=on=>{ const q=this.toQ(f.counted); return q===null?f.counted:this.fmtQ(on?Math.round(q*1000/pk.qm):Math.round(q*pk.qm/1000)).replace(/,/g,''); };
       const list=this.PRODUCTS.filter(p=>!this.isRecipe(p)).map(p=>({id:p.sku,label:p.name,sub:p.sku+' · gjendja '+this.fmtQ(this.stockOf(p.sku))+' '+p.unit,tag:p.sku})); // a recipe has no stock to count
       title='Inventarizim / rregullim stoku'; sub='Diferenca regjistrohet si lëvizje rregullimi me koston mesatare.';
-      fields=[combo('art','Produkti',list,{ph:'kërko me emër ose SKU'}),info('Gjendja në sistem',prod?this.fmtQ(cur)+' '+prod.unit:'—',{half:true}),txt('counted','Sasia e numëruar',{half:true,decimal:true,err:f.counted!==''&&counted===null}),date('date','Data',{half:true}),info('Diferenca',diff===null?'—':(diff>0?'+':'')+this.fmtQ(diff)+(prod?' '+prod.unit:''),{half:true,color:diff>0?'#15803D':diff<0?'#B91C1C':'#10243A'}),txt('note','Arsyeja',{ph:'p.sh. numërim fizik, dëmtim, humbje'})];
-      const ready=!!prod&&counted!==null&&diff!==0;
-      actions=[{label:'Regjistro rregullimin',primary:true,disabled:!ready,go:()=>{ this.adjustStock({sku:prod.sku,counted_qm:counted,note:f.note,date:this.fmtDate(f.date)}); this.setState({frm:null}); this.openProduct(prod.sku); }}];
+      fields=[combo('art','Produkti',list,{ph:'kërko me emër ose SKU'}),info('Gjendja në sistem',prod?this.fmtQ(cur)+' '+prod.unit+eq(cur):'—',{half:true}),
+        ...(pk?[seg('pk','Numërimi në',[[false,prod.unit],[true,pk.unit+' ('+this.fmtQ(pk.qm)+' '+prod.unit+')']],{half:true,pick:v=>{ if(!!v!==inPk) set({pk:!!v,counted:swQ(!!v)}); }})]:[]),
+        txt('counted','Sasia e numëruar'+(inPk?' ('+pk.unit+')':prod?' ('+prod.unit+')':''),{half:true,decimal:true,err:f.counted!==''&&typed===null,hint:inPk&&counted!==null?'= '+this.fmtQ(counted)+' '+prod.unit:''}),date('date','Data',{half:true}),
+        info('Diferenca',diff===null?'—':(diff>0?'+':'')+this.fmtQ(diff)+(prod?' '+prod.unit:'')+eq(diff),{half:true,color:diff>0?'#15803D':diff<0?'#B91C1C':'#10243A'}),txt('note','Arsyeja',{ph:'p.sh. numërim fizik, dëmtim, humbje'})];
+      const ready=!!prod&&counted!==null&&diff!==0, note=inPk&&typed?[String(f.note||'').trim(),'numëruar '+this.packNote({unit:pk.unit,qm:pk.qm,n_q:typed},prod.unit)].filter(Boolean).join(' · '):f.note;
+      actions=[{label:'Regjistro rregullimin',primary:true,disabled:!ready,go:()=>{ this.adjustStock({sku:prod.sku,counted_qm:counted,note,date:this.fmtDate(f.date)}); this.setState({frm:null}); this.openProduct(prod.sku); }}];
       // `art` combo stores the sku in f.art
       if(f.art!==f.sku) set({sku:f.art||''});
     } else if(K==='customer'||K==='supplier'){
@@ -3641,7 +3690,7 @@ class Component extends DCLogic {
       return {title:p.supplier,subtitle:'Blerje',no:p.no,badge:{text:status,bg:st.bg,fg:st.fg},actions,close,
         meta:[{k:'Data',v:p.date},{k:'Afati',v:p.due},{k:'NUI',v:p.nui,mono:true},{k:'Ref. furnitori',v:p.supplierRef||'—',mono:true},{k:'Depo',v:this.whName(p.wh,db)}],
         sections:[{title:'Artikujt',cols:[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Kosto',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'}],
-          rows:p.items.map(i=>({cells:[this.cell(i.name,{b:true}),this.cell(i.sku,{mono:true,color:'#526477'}),this.cell(this.fmtQ(Math.round(i.qty*1000))+' '+i.unit,{align:'right'}),this.moneyCell(i.unit_c),this.cell(i.rate+'%',{align:'right',color:'#526477'}),this.moneyCell(i.tot,{b:true})]}))},
+          rows:p.items.map(i=>({cells:[this.cell(i.name,{b:true}),this.cell(i.sku,{mono:true,color:'#526477'}),this.itemQtyCell(i),this.itemPriceCell(i),this.cell(i.rate+'%',{align:'right',color:'#526477'}),this.moneyCell(i.tot,{b:true})]}))},
           ...(rets.length?[{title:'Kthimet',cols:[{label:'Numri'},{label:'Data'},{label:'Statusi'},{label:'Totali',align:'right'},{label:'Rimbursim',align:'right'}],rows:rets.map(r=>({open:()=>this.openDr('return',r.no),cells:[this.cell(r.no,{mono:true}),this.cell(r.date,{color:'#526477'}),this.badgeCell(r.status),this.moneyCell(r.total,{b:true}),this.moneyCell(r.refund||0)]}))}]:[])],
         totals:[{k:'Nëntotali',v:this.fmt(p.sub)},{k:'TVSH',v:this.fmt(p.vat)},{k:'Totali',v:this.fmt(p.total),b:true},{k:'Paguar',v:this.fmt(p.paid),color:'#15803D'},...(p.credited?[{k:'Kthime',v:this.fmt(p.credited),color:'#6D28D9'}]:[]),{k:'Mbetur',v:this.fmt(this.rem(p)),color:'#B91C1C'}],
         note:p.note||'',hasNote:!!p.note,history:p.history};
@@ -3676,14 +3725,14 @@ class Component extends DCLogic {
       return {title:isPo?o.supplier:o.customer,subtitle:isQ?'Ofertë':isPo?'Porosi blerjeje · '+this.whName(o.wh,db):'Porosi shitjeje',no:o.no,badge:{text:status,bg:st.bg,fg:st.fg},actions,close,
         meta:[{k:'Data',v:o.date},{k:isQ?'Vlen deri':isPo?'Pritet':'Dorëzimi',v:o.due,color:!isQ&&o.status==='Hapur'&&this.toIso(o.due)<this.today()?'#B91C1C':'#10243A'},{k:'NUI',v:o.nui,mono:true},...(isQ?[]:[{k:isPo?'Në ardhje':'Rezervuar',v:o.status==='Hapur'?'po':'jo (mbyllur)'}])],
         sections:[{title:'Artikujt',cols:[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},...(stockCol?[{label:isPo?'Gjendja tani':'Në stok',align:'right'}]:[]),{label:'Çmimi',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'}],
-          rows:o.items.map(i=>{ const pr=this.prodOf(db,i.sku), q=pr?this.availQm(pr,db):0; return {cells:[this.cell(i.name,{b:true}),this.cell(i.sku,{mono:true,color:'#526477'}),this.cell(this.fmtQ(Math.round(i.qty*1000))+' '+i.unit,{align:'right'}),...(stockCol?[this.cell(this.fmtQ(q)+' '+i.unit,{align:'right',color:!isPo&&q<Math.round(i.qty*1000)?'#B91C1C':'#526477'})]:[]),this.moneyCell(i.unit_c,{sub:i.disc?'−'+i.disc+'%':''}),this.cell(i.rate+'%',{align:'right',color:'#526477'}),this.moneyCell(i.tot,{b:true})]}; })}],
+          rows:o.items.map(i=>{ const pr=this.prodOf(db,i.sku), q=pr?this.availQm(pr,db):0; return {cells:[this.cell(i.name,{b:true}),this.cell(i.sku,{mono:true,color:'#526477'}),this.itemQtyCell(i),...(stockCol?[this.cell(this.fmtQ(q)+' '+i.unit,{align:'right',color:!isPo&&q<Math.round(i.qty*1000)?'#B91C1C':'#526477'})]:[]),this.itemPriceCell(i,{sub:i.disc?'−'+i.disc+'%':''}),this.cell(i.rate+'%',{align:'right',color:'#526477'}),this.moneyCell(i.tot,{b:true})]}; })}],
         totals:[{k:'Nëntotali',v:this.fmt(o.sub)},{k:'TVSH',v:this.fmt(o.vat)},{k:'Totali',v:this.fmt(o.total),b:true}],note:o.note||'',hasNote:!!o.note,history:o.history};
     }
     if(d.kind==='transfer'){
       const t=(db.transfers||[]).find(x=>x.no===d.id); if(!t) return null; const mv=this.mvByRef(db,t.no).filter(m=>m.qm>0);
       return {title:t.fromName+' → '+t.toName,subtitle:'Transferim mes depove',no:t.no,badge:{text:t.status,...this.st('Në rregull')},actions:[{label:'Printo fletë-transferimin',kind:'',go:()=>this.printDocs([t])},{label:'Lëvizjet',kind:'',go:()=>{ this.setState({pdq:t.no}); this.go('stok','Lëvizjet'); }}],close,
         meta:[{k:'Data',v:t.date},{k:'Nga',v:t.fromName},{k:'Në',v:t.toName},{k:'Vlera (kosto mes.)',v:this.fmt(mv.reduce((a,m)=>a+Math.round(m.qm*m.unit_c/1000),0))}],
-        sections:[{title:'Artikujt',cols:[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Kosto',align:'right'},{label:'Tani te '+t.fromName,align:'right'},{label:'Tani te '+t.toName,align:'right'}],rows:t.items.map(i=>{ const m=mv.find(x=>x.sku===i.sku)||{unit_c:0}; return {cells:[this.cell(i.name,{b:true}),this.cell(i.sku,{mono:true,color:'#526477'}),this.cell(this.fmtQ(Math.round(i.qty*1000))+' '+i.unit,{align:'right',b:true}),this.moneyCell(m.unit_c),this.cell(this.fmtQ(this.stockOfWh(i.sku,t.from,db)),{align:'right',color:'#526477'}),this.cell(this.fmtQ(this.stockOfWh(i.sku,t.to,db)),{align:'right',color:'#526477'})]}; })}],
+        sections:[{title:'Artikujt',cols:[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Kosto',align:'right'},{label:'Tani te '+t.fromName,align:'right'},{label:'Tani te '+t.toName,align:'right'}],rows:t.items.map(i=>{ const m=mv.find(x=>x.sku===i.sku)||{unit_c:0}; return {cells:[this.cell(i.name,{b:true}),this.cell(i.sku,{mono:true,color:'#526477'}),this.itemQtyCell(i,{b:true}),this.moneyCell(m.unit_c),this.cell(this.fmtQ(this.stockOfWh(i.sku,t.from,db)),{align:'right',color:'#526477'}),this.cell(this.fmtQ(this.stockOfWh(i.sku,t.to,db)),{align:'right',color:'#526477'})]}; })}],
         totals:[],note:t.note||'',hasNote:!!t.note,history:t.history};
     }
     if(d.kind==='queue'){
@@ -3739,7 +3788,7 @@ class Component extends DCLogic {
       const reserved=this.reservedOf(p.sku,db), incoming=this.incomingOf(p.sku,db);
       return {title:p.name,subtitle:p.cat+' · '+p.unit+' · TVSH '+p.tax+' · '+this.TAX[p.tax].rate+'%'+(this.vatOn()?'':' (shitet në grupin A — kompania pa TVSH)'),no:p.sku,badge:low?{text:'Nën minimum',bg:this.ST['Vonuar'].bg,fg:this.ST['Vonuar'].fg}:{text:'Në rregull',bg:this.ST['Në rregull'].bg,fg:this.ST['Në rregull'].fg},close,
         actions:[edit,{label:'Rregullo stokun',kind:'',go:()=>this.openForm('adjust',{art:p.sku,artQ:p.name,sku:p.sku})},{label:'Blerje e re',kind:'',go:()=>this.openForm('purchase',{lines:[{...this.newLine(),fresh:false,sku:p.sku,artQ:p.name,tax:p.tax}]})},{label:'Faturo',kind:'',go:()=>this.openForm('invoice',{lines:[{...this.newLine(),fresh:false,sku:p.sku,artQ:p.name,tax:p.tax}]})},...(multiWh?[{label:'Transfero',kind:'',go:()=>this.openForm('transfer',{lines:[{...this.newLine(),fresh:false,sku:p.sku,artQ:p.name,tax:p.tax}]})}]:[]),{label:'Etiketë / barkod',kind:'',go:()=>this.printLabels([p])}],
-        meta:[{k:'Gjendja',v:this.fmtQ(qm)+' '+p.unit,color:low?'#B91C1C':'#10243A'},{k:'Minimumi',v:this.fmtQ(p.minStock)+' '+p.unit},...(multiWh?whs.map(w=>({k:w.name,v:this.fmtQ(this.stockOfWh(p.sku,w.id,db))+' '+p.unit})):[]),{k:'Rezervuar (porosi)',v:reserved?this.fmtQ(reserved)+' '+p.unit:'—',color:reserved?'#B45309':'#526477'},{k:'Në ardhje (porosi blerjeje)',v:incoming?this.fmtQ(incoming)+' '+p.unit:'—',color:incoming?'#2563EB':'#526477'},{k:'I disponueshëm',v:this.fmtQ(qm-reserved)+' '+p.unit,color:qm-reserved<0?'#B91C1C':'#10243A'},{k:'Kosto mesatare',v:this.fmt(cost)},{k:'Kosto e blerjes (pa TVSH)',v:this.fmtT(this.costT(p))},{k:'Vlera në stok',v:this.fmt(Math.round(qm*cost/1000))},{k:'Çmimi i shitjes (pa TVSH)',v:this.fmtT(this.priceT(p))},{k:'Çmimi me TVSH '+this.effRate(p.tax)+'%'+(this.vatOn()?'':' (grupi A)'),v:this.fmtT(this.grossT(p)),color:'#2563EB'},{k:'Marzhi',v:p.price_c?Math.round((p.price_c-cost)/p.price_c*100)+'%':'—'},{k:'Shitur gjithsej',v:this.fmtQ(sold)+' '+p.unit},...(users.length||used?[{k:'Përdoret në',v:users.length?users.map(u=>u.name).join(', '):'— (receta të vjetra)',color:'#2563EB'},{k:'Konsumuar në receta',v:this.fmtQ(used)+' '+p.unit}]:[]),{k:'Blerë gjithsej',v:this.fmtQ(bought)+' '+p.unit},posMeta,...packMeta,{k:'Barkodi',v:p.barcode,mono:true}],
+        meta:[{k:'Gjendja',v:this.fmtQ(qm)+' '+p.unit+(this.packEq(p,qm)?' '+this.packEq(p,qm):''),color:low?'#B91C1C':'#10243A'},{k:'Minimumi',v:this.fmtQ(p.minStock)+' '+p.unit},...(multiWh?whs.map(w=>{ const q=this.stockOfWh(p.sku,w.id,db), e=this.packEq(p,q); return {k:w.name,v:this.fmtQ(q)+' '+p.unit+(e?' '+e:'')}; }):[]),{k:'Rezervuar (porosi)',v:reserved?this.fmtQ(reserved)+' '+p.unit:'—',color:reserved?'#B45309':'#526477'},{k:'Në ardhje (porosi blerjeje)',v:incoming?this.fmtQ(incoming)+' '+p.unit:'—',color:incoming?'#2563EB':'#526477'},{k:'I disponueshëm',v:this.fmtQ(qm-reserved)+' '+p.unit,color:qm-reserved<0?'#B91C1C':'#10243A'},{k:'Kosto mesatare',v:this.fmt(cost)},{k:'Kosto e blerjes (pa TVSH)',v:this.fmtT(this.costT(p))},{k:'Vlera në stok',v:this.fmt(Math.round(qm*cost/1000))},{k:'Çmimi i shitjes (pa TVSH)',v:this.fmtT(this.priceT(p))},{k:'Çmimi me TVSH '+this.effRate(p.tax)+'%'+(this.vatOn()?'':' (grupi A)'),v:this.fmtT(this.grossT(p)),color:'#2563EB'},{k:'Marzhi',v:p.price_c?Math.round((p.price_c-cost)/p.price_c*100)+'%':'—'},{k:'Shitur gjithsej',v:this.fmtQ(sold)+' '+p.unit},...(users.length||used?[{k:'Përdoret në',v:users.length?users.map(u=>u.name).join(', '):'— (receta të vjetra)',color:'#2563EB'},{k:'Konsumuar në receta',v:this.fmtQ(used)+' '+p.unit}]:[]),{k:'Blerë gjithsej',v:this.fmtQ(bought)+' '+p.unit},posMeta,...packMeta,{k:'Barkodi',v:p.barcode,mono:true}],
         sections:[{title:'Lëvizjet e stokut',cols:[{label:'Data'},{label:'Lloji'},{label:'Referenca'},{label:'Pala'},{label:'Sasia',align:'right'},{label:'Kosto',align:'right'},{label:'Gjendja',align:'right'}],rows}],
         totals:[],note:'',hasNote:false,history:[]};
     }
@@ -4502,7 +4551,7 @@ class Component extends DCLogic {
         T.actions=[{label:'Rregullim / numërim',p:isInv?'1':'',go:()=>this.openForm('adjust')},{label:'+ Blerje',p:isInv?'':'1',go:()=>this.openForm('purchase')},...(multiWh&&!isInv?[{label:'Transferim',p:'',go:()=>this.openForm('transfer')}]:[])];
         const anyRes=list.some(p=>this.reservedOf(p.sku,db)), anyInc=list.some(p=>this.incomingOf(p.sku,db));
         T.cols=[{label:'Produkti'},{label:'SKU'},{label:'Kategoria'},{label:'Gjendja',align:'right'},...(multiWh?whs.map(w=>({label:w.name.replace(/^Depo /,''),align:'right'})):[]),...(anyRes?[{label:'Rezervuar',align:'right'}]:[]),...(anyInc?[{label:'Në ardhje',align:'right'}]:[]),{label:'Minimumi',align:'right'},{label:'Kosto mes.',align:'right'},{label:'Vlera',align:'right'},{label:'Statusi'}];
-        T.rows=list.map(p=>{ const res=this.reservedOf(p.sku,db), inc=this.incomingOf(p.sku,db); return {open:()=>isInv?this.openForm('adjust',{art:p.sku,artQ:p.name,sku:p.sku}):this.openProduct(p.sku),cells:[C(p.name,{b:true}),C(p.sku,{mono:true,color:'#3C5268'}),C(p.cat,{color:'#526477'}),C(this.fmtQ(p.qm)+' '+p.unit,{align:'right',b:true,color:p.low?'#B91C1C':'#10243A'}),...(multiWh?whs.map(w=>{ const q=this.stockOfWh(p.sku,w.id,db); return C(q?this.fmtQ(q):'—',{align:'right',color:q<0?'#B91C1C':q?'#10243A':'#8FA3B8'}); }):[]),...(anyRes?[C(res?this.fmtQ(res):'—',{align:'right',color:res?'#B45309':'#8FA3B8'})]:[]),...(anyInc?[C(inc?'+'+this.fmtQ(inc):'—',{align:'right',color:inc?'#2563EB':'#8FA3B8'})]:[]),C(this.fmtQ(p.minStock)+' '+p.unit,{align:'right',color:'#526477'}),M(p.cost),M(p.value,{b:true}),B(p.low?'Nën minimum':'Në rregull')]}; });
+        T.rows=list.map(p=>{ const res=this.reservedOf(p.sku,db), inc=this.incomingOf(p.sku,db); return {open:()=>isInv?this.openForm('adjust',{art:p.sku,artQ:p.name,sku:p.sku}):this.openProduct(p.sku),cells:[C(p.name,{b:true}),C(p.sku,{mono:true,color:'#3C5268'}),C(p.cat,{color:'#526477'}),C(this.fmtQ(p.qm)+' '+p.unit,{align:'right',b:true,color:p.low?'#B91C1C':'#10243A',sub:this.packEq(p,p.qm)}),...(multiWh?whs.map(w=>{ const q=this.stockOfWh(p.sku,w.id,db); return C(q?this.fmtQ(q):'—',{align:'right',color:q<0?'#B91C1C':q?'#10243A':'#8FA3B8'}); }):[]),...(anyRes?[C(res?this.fmtQ(res):'—',{align:'right',color:res?'#B45309':'#8FA3B8'})]:[]),...(anyInc?[C(inc?'+'+this.fmtQ(inc):'—',{align:'right',color:inc?'#2563EB':'#8FA3B8'})]:[]),C(this.fmtQ(p.minStock)+' '+p.unit,{align:'right',color:'#526477'}),M(p.cost),M(p.value,{b:true}),B(p.low?'Nën minimum':'Në rregull')]}; });
         T.footer=plural(list.length,'artikull','artikuj')+' · vlera '+money(sum(list,'value'));
         break; }
       case 'Lëvizjet': case 'Hyrje në stok': case 'Dalje nga stok': {
@@ -4588,11 +4637,16 @@ class Component extends DCLogic {
     const prod=this.PRODUCTS.find(p=>p.sku===L.sku)||null;
     const taxCode=this.effTax(L.tax||(prod?prod.tax:'E')), rate=this.TAX[taxCode].rate; // group A / 0 % for a company not registered for VAT
     const base=prod?(mode==='purchase'?prod.cost_c:prod.price_c):null;
-    const netC=prod?(L.net===''?base:this.toC(L.net)):null, qm=this.toQ(L.qty), bp=this.toBp(L.disc);
+    // typed in packs (purchase / purchase order / transfer, a product with a pack): qty = packs, net / gross = per pack → converted to the
+    // product's unit: qm = packs × pack.qm, unit_t = pack price × 1000 / pack.qm (4 decimals), unit_c = its cents; the line amount is
+    // packs × pack price (the supplier's invoice to the cent). An empty price keeps the product's own price per unit, as without packs.
+    const pk=(mode==='purchase'||mode==='transfer')&&L.pk?this.packOf(prod):null, nq=this.toQ(L.qty);
+    const pc=pk&&L.net!==''?this.toC(L.net):null, unitT=pc!==null?Math.round(pc*100000/pk.qm):null;
+    const netC=prod?(unitT!==null?this.cOfT(unitT):L.net===''?base:this.toC(L.net)):null, qm=pk?(nq===null?null:Math.round(nq*pk.qm/1000)||null):nq, bp=this.toBp(L.disc);
     const netErr=L.net!==''&&this.toC(L.net)===null, grossErr=L.gross!==''&&this.toC(L.gross)===null, qtyErr=qm===null, discErr=bp===null;
     const err=!prod?'noprod':(netErr||grossErr||qtyErr||discErr)?'invalid':((mode==='purchase'||mode==='transfer')&&this.isRecipe(prod))?'recipe':null; // a recipe has no stock to buy or move
-    const line=err?null:this.calcLine({unit_c:netC,qm,rate,bp});
-    return {prod,taxCode,rate,netC,qm,bp,netErr,grossErr,qtyErr,discErr,err,line};
+    const line=err?null:pc!==null?this.calcLine({unit_c:pc,qm:nq,rate,bp}):this.calcLine({unit_c:netC,qm,rate,bp});
+    return {prod,taxCode,rate,netC,qm,bp,netErr,grossErr,qtyErr,discErr,err,line,...(pk?{pk,packQ:nq,packC:pc,unitT}:{})};
   }
   // Excel / CSV / TSV text -> {header, rows}. Delimiter is sniffed from the header line; quoted cells are honoured.
   parseTable(text){
@@ -4929,7 +4983,7 @@ class Component extends DCLogic {
     const cats=[...new Set([...this.CATEGORIES.map(c=>c.name),...db.products.map(p=>p.cat)])].sort();
     const pSortOpts=[['name','Emri A–Z'],['stock','Gjendja ↑'],['price','Çmimi ↓'],['value','Vlera në stok ↓'],['sku','SKU']].map(([id,label])=>({id,label,on:s.pSort===id}));
     const pFilterOpts=[['Të gjitha','Të gjitha kategoritë'],['Nën minimum','Vetëm nën minimum'],['Pa barkod','Pa barkod'],...cats.map(c=>[c,c])].map(([id,label])=>({id,label,on:s.pFilter===id}));
-    let products=stockRows.map(p=>({...p,catName:p.cat,tax:p.tax+' · '+this.TAX[p.tax].rate+'%',price:this.fmtT(this.priceT(p)),priceGross:this.fmtT(this.grossT(p)),cost:this.fmt(p.cost),stock:this.fmtQ(p.qm)+' '+p.unit+(p.isRecipe?' · recetë':''),stockColor:p.low?'#B91C1C':'#10243A',open:()=>this.openProduct(p.sku)}));
+    let products=stockRows.map(p=>({...p,catName:p.cat,tax:p.tax+' · '+this.TAX[p.tax].rate+'%',price:this.fmtT(this.priceT(p)),priceGross:this.fmtT(this.grossT(p)),cost:this.fmt(p.cost),stock:this.fmtQ(p.qm)+' '+p.unit+(p.isRecipe?' · recetë':this.packEq(p,p.qm)?' '+this.packEq(p,p.qm):''),stockColor:p.low?'#B91C1C':'#10243A',open:()=>this.openProduct(p.sku)}));
     products=products.filter(p=>{ const f=s.pFilter; return f==='Të gjitha'||(f==='Nën minimum'?p.low:f==='Pa barkod'?(!p.barcode||p.barcode==='—'):p.catName===f); });
     products.sort({name:(a,b)=>a.name.localeCompare(b.name),stock:(a,b)=>a.qm-b.qm,price:(a,b)=>b.price_c-a.price_c,value:(a,b)=>b.value-a.value,sku:(a,b)=>a.sku.localeCompare(b.sku)}[s.pSort]||((a,b)=>a.name.localeCompare(b.name)));
 
