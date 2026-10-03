@@ -2483,8 +2483,9 @@ class Component extends DCLogic {
     if(mig.categories!==raw.categories) this.apiCommit({categories:mig.categories}); // same as apiLoadAll: a product with an unknown category → the appended record is persisted, not only shown
     this.posLedgerAfterLoad(); }
   // a reload replaces the book with the server's; the POS-ledger markers always follow the server (a discarded local migration must never
-  // leave posLedgerV on top of an unmigrated book — that would count its POS rows twice)
-  bookMerge(cur,srv,m){ const out={...(cur||{}),...(srv||{}),...(m||{})}; for(const k of this.LEDGER_KEYS) if(!(k in (srv||{}))) delete out[k]; return out; }
+  // leave posLedgerV on top of an unmigrated book — that would count its POS rows twice); so does posProposalsDone (the KONTABO BAR proposals
+  // this book has applied: a batch whose commit lost a 409 must not stay marked as applied on top of the server's book)
+  bookMerge(cur,srv,m){ const out={...(cur||{}),...(srv||{}),...(m||{})}; for(const k of [...this.LEDGER_KEYS,'posProposalsDone']) if(!(k in (srv||{}))) delete out[k]; return out; }
   // commits: the patch is applied locally first, then sent in order; 409 → the server state wins and is reloaded; offline → pending + retry
   // apiKeys is server data only where the server keeps the keys (/api-keys, the POS-ledger backend); on an older backend the book keeps them (as before)
   serverKey(k){ return this.SERVER_KEYS.includes(k)&&(k!=='apiKeys'||this.apiKeysOn()); }
@@ -2651,9 +2652,10 @@ class Component extends DCLogic {
   LEDGER_POLL = 2000; // ms between "is the server's POS book ready?" polls during the migration
   LEDGER_FS = {fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',failed:'Dështoi'};
   ledgerFresh(tenantId){ this._ledGen=(this._ledGen||0)+1; return {tenantId:tenantId||'',epoch:null,rev:0,rows:new Map(),shifts:new Map(),ready:false,mode:'off',pending:0,loaded:false,gen:this._ledGen,ver:0}; }
-  // GET /health → true (posLedger:1) / false (a server without it) / null (no answer; with `retry` asked again after HEALTH_RETRY ms)
+  // GET /health → true (posLedger:1) / false (a server without it) / null (no answer; with `retry` asked again after HEALTH_RETRY ms);
+  // every answer also says whether the server takes KONTABO BAR's product proposals (posProposals:1 → this._propFeat)
   HEALTH_RETRY = [500,1500];
-  async ledgerProbe(retry){ const waits=retry?this.HEALTH_RETRY:[]; for(let i=0;;i++){ try{ const h=await this.apiFetch('/health',{noAuth:true},false); return Array.isArray(h&&h.features)&&h.features.includes('posLedger:1'); }
+  async ledgerProbe(retry){ const waits=retry?this.HEALTH_RETRY:[]; for(let i=0;;i++){ try{ const h=await this.apiFetch('/health',{noAuth:true},false), f=Array.isArray(h&&h.features)?h.features:[]; this._propFeat=f.includes('posProposals:1'); return f.includes('posLedger:1'); }
     catch(e){ if(e.status>=400&&e.status<500) return false; if(i>=waits.length) return null; await this.sleep(waits[i]); } } }
   // the ledger switched on after the load (a later /health answered, or the book is on the ledger): fetched from 0 like at a load
   ledgerEnable(){ const tid=this.apiCfg().tenantId; this._ledProbe=''; this._ledFeat=true; this._ledger=this.ledgerFresh(tid); this.posRtLoad(); this.setState(s=>({ledgerTick:(s.ledgerTick||0)+1})); this.posLedgerStart(); }
@@ -2663,7 +2665,8 @@ class Component extends DCLogic {
     finally{ this._reprobing=false; } }
   // the old relay (/pos/sales, the catalogue in db.posSync) must not run: /health still unknown, or the book is on the ledger
   ledgerUnsure(){ return this.apiAuthed()&&!this.ledgerOn()&&(this._ledProbe==='fail'||!!(this.state.db&&this.state.db.posLedgerV===1)); }
-  ledgerReset(){ this._ledger=null; this._ledFeat=false; this._ledProbe=''; this._posRt=null; this._ledActivated=''; this._migFail=0; this._plGen=(this._plGen||0)+1; this._rcGen=(this._rcGen||0)+1; this._plWant=null; clearTimeout(this._plT); this._plT=null; this.posListAutoStop(); } // + any receipt list / receipt still on its way is dropped, the list's auto-refresh stops
+  ledgerReset(){ this._ledger=null; this._ledFeat=false; this._ledProbe=''; this._posRt=null; this._ledActivated=''; this._migFail=0; this._plGen=(this._plGen||0)+1; this._rcGen=(this._rcGen||0)+1; this._plWant=null; clearTimeout(this._plT); this._plT=null; this.posListAutoStop();
+    this._propFeat=false; this._propGen=(this._propGen||0)+1; this._propSent=null; this._propFail=0; } // + any receipt list / receipt still on its way is dropped, the list's auto-refresh stops; a KONTABO BAR proposals run still on its way stops
   ledgerOn(){ return !!this._ledger&&this.apiAuthed(); }
   // the book is shown with the ledger only once it is on the ledger (posLedgerV 1) AND the ledger was loaded this session — never both halves twice
   ledgerLive(b){ const L=this._ledger; return !!(L&&L.loaded&&b&&b.posLedgerV===1&&this.apiAuthed()); }
@@ -2674,8 +2677,9 @@ class Component extends DCLogic {
   posRt(patch,quiet){ this._posRt={...(this._posRt||{}),...patch}; try{ localStorage.setItem(this.posRtKey(),JSON.stringify(this._posRt)); }catch(e){} if(!quiet) this.setState(s=>({posTick:(s.posTick||0)+1})); }
   // GET /pos/ledger?since=&limit=200 while `more` — single-flight per ledger, dropped when the company changed meanwhile; a new epoch (the server
   // book was emptied) or a cursor ahead of the server restarts from 0. Resolves true when the ledger in memory is current.
+  // A tick that loaded also applies KONTABO BAR's pending product / category proposals (posPropTick — its own single-flight, not awaited here)
   ledgerTick(){ const L=this._ledger; if(!L||!this.apiAuthed()) return Promise.resolve(false); if(this._ledgerP&&this._ledgerPG===L.gen) return this._ledgerP;
-    const p=this._ledgerLoad(L).catch(e=>{ if(this._ledger&&this._ledger.gen===L.gen) this.posRt({lastError:'Libri i POS-it: '+(e.message||e)}); return false; }).then(ok=>{ if(this._ledgerP===p) this._ledgerP=null; if(ok) this.posLedgerAfterTick(); return ok; });
+    const p=this._ledgerLoad(L).catch(e=>{ if(this._ledger&&this._ledger.gen===L.gen) this.posRt({lastError:'Libri i POS-it: '+(e.message||e)}); return false; }).then(ok=>{ if(this._ledgerP===p) this._ledgerP=null; if(ok){ this.posLedgerAfterTick(); this.posPropTick(); } return ok; });
     this._ledgerP=p; this._ledgerPG=L.gen; return p; }
   async _ledgerLoad(L){
     const tid=L.tenantId, same=()=>!!this._ledger&&this._ledger.gen===L.gen&&this.apiCfg().tenantId===tid&&this.apiAuthed();
@@ -2812,6 +2816,106 @@ class Component extends DCLogic {
       keep('posReceipts',r=>legacy.has(r.no)); keep('posShifts',s=>lsh.has(s.id)); keep('payments',p=>p.kind!=='pos'||legacy.has(p.ref)); keep('movements',m=>!posMv(m)||legacy.has(m.ref)); keep('queue',q=>!posQ(q)||legacy.has(q.ref)); return out; };
     if(!Object.keys(plan(b)).length) return false;
     this.commit(d=>d.posLedgerV===1?plan(d):{}); return true; }
+  /* ───────── KONTABO BAR → Kontabo Finance: products and categories proposed by the bars (API mode, server feature "posProposals:1").
+     A bar saves its change locally and queues a proposal {key 'p:<bar id>' | 'k:<bar id>', kind, before, after, sku}; this page applies the
+     pending ones on the ledger tick — only a user with the `produkte` permission or the Pronar — in ONE commit per batch, and resolves them on
+     the server (POST /pos/proposals/resolve) once that commit landed. The ERP ALWAYS wins: a field takes the bar's value only where the ERP's
+     current value still equals the `before` the bar saw (three-way merge per field); a field missing from `before` counts as changed by the ERP.
+     Idempotent: every handled proposal stays in the book (posProposalsDone, the last PROP_KEEP, with its state and result) and is never applied
+     twice — one still pending on the server is resolved again with the stored result. Stock and cost stay ERP-only; printer / POS order never
+     come here; recipe products are never created from a bar. ───────── */
+  PROP_FIELDS = ['name','cat','gross_t','tax','unit','active']; // result field names: `tax` = the letter (or the bar's rate), `active` = shown on the tills (active && !ingredient → p.pos)
+  PROP_LBL = {name:'emri',cat:'kategoria',gross_t:'çmimi me TVSH',tax:'TVSH',unit:'njësia',active:'shfaqja në POS'};
+  PROP_RATE = {'-1':'A','0':'C','8':'D','18':'E'}; // the bar's VAT rate (norma; -1 = exempt) → ATK letter, when the letter itself is missing / unknown
+  PROP_KEEP = 1000; PROP_ROUNDS = 5; PROP_BACKOFF = 300000; // ids kept in the book · batches per tick (while `more`) · ms of rest after the server refused a batch
+  propPerm(){ const s=this.state.session; return !!s&&(s.role==='Pronar'||!!(s.perms||{}).produkte); } // who applies (the server lets `pos` read too)
+  propTax(x){ const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k); if(!x) return undefined; if(typeof x.tax==='string'&&own(this.TAX,x.tax)) return x.tax; const r=x.rate==null?'':String(x.rate); return own(this.PROP_RATE,r)?this.PROP_RATE[r]:undefined; }
+  // one side of a proposal (before / after) in the ERP's terms; undefined = missing or not valid (strings 1–200 chars, gross_t an integer ≥ 0)
+  propSide(x){ const s=v=>{ const t=typeof v==='string'?v.trim():''; return t&&t.length<=200?t:undefined; };
+    return {name:s(x.name),cat:s(x.cat),gross_t:Number.isSafeInteger(x.gross_t)&&x.gross_t>=0?x.gross_t:undefined,tax:this.propTax(x),unit:s(x.unit),active:x.active==null?undefined:!!x.active&&!x.ingredient}; }
+  propHas(x,f){ return f==='tax'?x.tax!=null||x.rate!=null:x[f]!=null; } // the bar sent the field (valid or not)
+  propEq(f,a,b){ return f==='cat'?this.norm(a)===this.norm(b):a===b; } // a category is the same category by its normalised name (canonCat / findCategory)
+  propLow(s){ return typeof s==='string'?s.trim().toLowerCase().replace(/\s+/g,' '):''; }
+  // the next free 'BAR-<n>' (after the highest BAR-n there is; unique under the SKU rule — norm() of every SKU)
+  propSku(P){ const taken=new Set(P.map(p=>this.norm(p.sku))); let n=0; for(const p of P){ const m=/^BAR-(\d{1,9})$/i.exec(String(p.sku||'').trim()); if(m) n=Math.max(n,parseInt(m[1],10)); } let s; do{ s='BAR-'+(++n); }while(taken.has(this.norm(s))); return s; }
+  // a product proposal against the working book W (W.products / W.categories are replaced, never mutated; V = W's book + the POS ledger, for the
+  // unit lock). Located by sku, else by barKey === key, else (only a proposal with no `before`) by the case-insensitive name; not found → created
+  // when `before` is null, else rejected. → {state, result:{sku, applied, kept, reason}, created}
+  propProduct(W,V,it){ const key=String(it.key||''), A=it.after&&typeof it.after==='object'?it.after:null, B=it.before&&typeof it.before==='object'?it.before:null, sku=typeof it.sku==='string'?it.sku.trim():'', P=W.products, L=this.PROP_LBL;
+    const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason}});
+    if(!A) return no('Propozimi nuk ka të dhënat e produktit.');
+    const a=this.propSide(A), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&P.find(x=>x.barKey===key))||(!B&&lo&&P.find(x=>this.propLow(x.name)===lo))||null;
+    if(!p){ if(B) return no('Produkti nuk gjendet në ERP'+(sku?' (SKU '+sku+')':'')+' — nuk krijohet sërish nga arka.');
+      const miss=['name','cat','gross_t','tax','unit'].filter(f=>a[f]===undefined||(f==='unit'&&!this.UNITS.includes(a.unit))); if(miss.length) return no('Produkti i ri nuk u krijua: mungon ose është e pavlefshme '+miss.map(f=>L[f]).join(', ')+'.');
+      const nsku=this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
+      W.products=[...P,{name:a.name,sku:nsku,barcode:'—',cat:this.canonCat(W,a.cat),unit:a.unit,tax:a.tax,price_t:pt,price_c:this.cOfT(pt),cost_t:0,cost_c:0,gross_t:a.gross_t,openCost_c:0,opening:0,minStock:0,pos:a.active!==false,barKey:key}]; W.categories=this.withCategory(W,a.cat);
+      return {state:'applied',created:nsku,result:{sku:nsku,applied:this.PROP_FIELDS.slice(),kept:[],reason:''}}; }
+    const b=B?this.propSide(B):{}, cur={name:p.name,cat:p.cat,gross_t:this.grossT(p,W),tax:p.tax,unit:p.unit,active:p.pos!==false}, applied=[], kept=[], erp=[], why=[], set={};
+    for(const f of this.PROP_FIELDS){ if(!this.propHas(A,f)) continue; const av=a[f], bv=b[f], ev=cur[f];
+      if(av===undefined||(f==='unit'&&!this.UNITS.includes(av))){ kept.push(f); why.push('vlerë e pavlefshme: '+L[f]); continue; }
+      if(bv!==undefined&&this.propEq(f,av,bv)) continue; // the bar did not change it
+      if(ev!=null&&this.propEq(f,av,ev)){ applied.push(f); continue; } // the ERP already has the bar's value
+      if(bv===undefined||!this.propEq(f,ev,bv)){ kept.push(f); erp.push(f); continue; } // changed in the ERP since the bar saw it (or no base): the ERP wins
+      if(f==='unit'){ const e=this.productError(V,{...p,unit:av},p,{unit:av}); if(e){ kept.push(f); why.push(e); continue; } } // the unit lock (opening / movements incl. the POS ledger / recipe / draft) and the pack rule
+      set[f]=av; applied.push(f); }
+    if(Object.keys(set).length){ const q={};
+      if('name' in set) q.name=set.name; if('unit' in set) q.unit=set.unit; if('active' in set) q.pos=set.active;
+      if('cat' in set){ q.cat=this.canonCat(W,set.cat); W.categories=this.withCategory(W,set.cat); }
+      // the gross the till prints stays verbatim; the net (price_t / price_c, the books' base) is derived from it at the (new) letter's effective rate
+      if('gross_t' in set||'tax' in set){ const tax=set.tax||p.tax, G='gross_t' in set?set.gross_t:cur.gross_t, pt=this.netOfT(G,this.effRate(tax,W)); Object.assign(q,{tax,gross_t:G,price_t:pt,price_c:this.cOfT(pt)}); }
+      const np={...p,...q}; W.products=W.products.map(x=>x===p?np:x); }
+    const reason=[erp.length?(B?'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: ':'produkti ekziston në ERP — mbeten vlerat e ERP-së: ')+erp.map(f=>L[f]).join(', '):'',...why].filter(Boolean).join(' · ').slice(0,300);
+    return {state:!kept.length?'applied':applied.length?'partial':'rejected',result:{sku:p.sku,applied,kept,reason}}; }
+  // a category proposal: rename when the ERP still has the `before` name unchanged (the category and every product's `cat`), create when no
+  // category has the `after` name, else the ERP wins (rejected; nothing to do when the ERP has exactly that name already)
+  propCategory(W,it){ const A=it.after&&typeof it.after==='object'?it.after:{}, nm=typeof A.name==='string'?A.name.trim():'', bn=it.before&&typeof it.before==='object'&&typeof it.before.name==='string'?it.before.name.trim():'', K=W.categories;
+    const R=(state,reason,on)=>({state,result:{applied:state==='applied'&&on?['name']:[],kept:state==='rejected'?['name']:[],reason}});
+    if(!nm||nm.length>200) return R('rejected','Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.');
+    const cur=bn?K.find(c=>String(c.name||'').trim()===bn)||null:null, ex=this.findCategory(K,nm);
+    if(cur){ if(cur.name===nm) return R('applied','',false); if(ex&&ex.id!==cur.id) return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.');
+      W.categories=K.map(c=>c.id===cur.id?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); return R('applied','',true); }
+    if(!ex){ W.categories=[...K,this.newCategory(nm,K)]; return R('applied','',true); }
+    if(ex.name===nm) return R('applied','',true);
+    return R('rejected',bn?'Kategoria “'+bn+'” është ndryshuar në ERP; “'+ex.name+'” ekziston.':'Kategoria ekziston në ERP si “'+ex.name+'”.'); }
+  // one batch against the book d: proposals already in posProposalsDone are only resolved again (`again`, their stored result); the others are
+  // applied on one working copy — the categories first (a renamed category is renamed before a product of it is merged), each kind in the
+  // server's order → {patch (products / categories / posProposalsDone, {} when nothing new), res, again}
+  propBatch(d,items){ const done=new Map((d.posProposalsDone||[]).filter(e=>e&&e.id).map(e=>[e.id,e])), P0=d.products||[], K0=d.categories||[], W={...d,products:P0,categories:K0}, V=this.view(d), res=[], again=[], seen=new Set(), isK=x=>!!x&&x.kind==='category';
+    for(const it of [...items.filter(isK),...items.filter(x=>!isK(x))]){ if(!it||!it.id||seen.has(it.id)) continue; seen.add(it.id); const old=done.get(it.id); if(old){ again.push({id:it.id,state:old.state,result:old.result}); continue; }
+      const r=it.kind==='product'?this.propProduct(W,V,it):it.kind==='category'?this.propCategory(W,it):{state:'rejected',result:{applied:[],kept:[],reason:'Lloj i panjohur propozimi.'}};
+      res.push({id:it.id,kind:it.kind,key:it.key,terminal:it.terminal||null,state:r.state,result:r.result,created:r.created||''}); }
+    if(!res.length) return {patch:{},res,again};
+    const patch={posProposalsDone:[...(d.posProposalsDone||[]),...res.map(x=>({id:x.id,state:x.state,result:x.result}))].slice(-this.PROP_KEEP)};
+    if(W.products!==P0) patch.products=W.products; if(W.categories!==K0) patch.categories=W.categories; return {patch,res,again}; }
+  // the second half of every ledger tick (only the `produkte` permission / the Pronar act): GET /pos/proposals?state=pending → apply → ONE commit
+  // → wait until it landed → POST /pos/proposals/resolve; again while `more` (the resolved ones leave the pending list). Single-flight, company-
+  // guarded; never while unsent changes wait (the book must be the server's before anything is resolved) or while the POS migration runs
+  posPropTick(){ if(this._propP) return this._propP; const p=this._propRun().catch(e=>{ this._propErr=String((e&&e.message)||e); return 0; }).then(n=>{ if(this._propP===p) this._propP=null; return n; }); this._propP=p; return p; }
+  async _propRun(){ const tid=this.apiCfg().tenantId, gen=this._propGen, ok=()=>this._propGen===gen&&this.apiCfg().tenantId===tid&&this.apiAuthed()&&this.propPerm();
+    const go=()=>ok()&&this._propFeat===true&&!!this._ledger&&!this._entering&&!this._migrating&&!!this.state.db&&Date.now()-(this._propFail||0)>=this.PROP_BACKOFF, busy=()=>(this._pending||[]).length>0||!!this._flushing;
+    let n=0;
+    for(let round=0;round<this.PROP_ROUNDS;round++){
+      if(!go()||!await this.propSettle(ok)||busy()||!go()) return n;
+      const pg=await this.apiFetch('/pos/proposals'+this.qs({state:'pending',limit:200}),{timeout:30000}), items=((pg&&pg.items)||[]).filter(x=>x&&x.id);
+      if(!go()||!items.length||busy()) return n;
+      const doneIds=new Set((this.state.db.posProposalsDone||[]).map(e=>e&&e.id)); let out=null;
+      if(items.some(x=>!doneIds.has(x.id))){ this.commit(d=>(out=this.propBatch(d,items)).patch);
+        if(out.res.length){ this._propSent={p:this._sent,ids:out.res.map(x=>x.id)}; const st=await this.propSettle(ok); if(!st) return n; if(st==='lost') continue; this.propAudit(out.res); } }
+      else out=this.propBatch(this.state.db,items);
+      const R=[...out.res.map(x=>({id:x.id,state:x.state,result:x.result})),...out.again];
+      for(let i=0;i<R.length;i+=200){ await this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:R.slice(i,i+200)},timeout:30000}); if(!ok()) return n; }
+      n+=out.res.length; if(!pg.more||!out.res.length) return n; }
+    return n; }
+  // the batch this page committed and has not confirmed yet: 'acked' (it landed) · 'lost' (a 409 — the server's book was reloaded — or the server
+  // refused it: its marks stayed in the local book only → the server's book is loaded again and the next try waits PROP_BACKOFF) · false (still
+  // unsent, or another company by now) · 'none'
+  async propSettle(ok){ const s=this._propSent; if(!s) return 'none'; if(!await this.posFlushed(ok)||this._propSent!==s) return false;
+    this._propSent=null; if(this.apiAcked(s.p)) return 'acked'; const ids=new Set(s.ids);
+    if(((this.state.db||{}).posProposalsDone||[]).some(e=>e&&ids.has(e.id))){ this._propFail=Date.now(); await this.apiReloadState().catch(()=>{}); } return 'lost'; }
+  // one audit line (+ a toast) per batch that landed: "N produkte / M kategori nga KONTABO BAR (arkat): … të zbatuara · … pjesërisht · … të refuzuara · produktet e reja"
+  propAudit(res){ const np=res.filter(x=>x.kind==='product').length, c=s=>res.filter(x=>x.state===s).length, made=res.filter(x=>x.created).map(x=>x.created), terms=[...new Set(res.map(x=>x.terminal&&(x.terminal.name||x.terminal.posId)).filter(Boolean))];
+    const a=np+' produkte / '+(res.length-np)+' kategori nga KONTABO BAR'+(terms.length?' ('+terms.join(', ')+')':'')+': '+[c('applied')+' të zbatuara',c('partial')?c('partial')+' pjesërisht (fiton ERP-ja)':'',c('rejected')?c('rejected')+' të refuzuara':'',made.length?'të reja: '+made.slice(0,10).join(', ')+(made.length>10?' …':''):''].filter(Boolean).join(' · ');
+    this.logAudit(a); this.toast(a,c('applied')+c('partial')?'#22C55E':'#B45309'); }
   // the POS sync with the ledger: never a commit, never /pos/sales or /pos/ack. Terminal heartbeats and the catalogue only for the POS permission;
   // the catalogue (its stock includes the ledger) is PUT only once the ledger has loaded this session and only when its hash changed
   // The catalogue's stock is the book + the ledger: it is PUT only while ledgerLive (the ledger loaded AND the book migrated — before that the page
