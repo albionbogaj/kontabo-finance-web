@@ -319,6 +319,12 @@ c.openDr('pos', 'r-1'); eq(c.drawerVals().actions.some(a => /Kthimi/.test(a.labe
   eq(c.importPosSales([{ ...R5, status: 'nonsense' }], []).receipts + c.importPosSales([{ ...R5, status: 'nonsense' }], []).updated, 0, 'unknown receipt statuses are ignored');
   for (const p of ['P:Shitje', 'P:Kthime', 'P:Operatorët', 'P:Raportet e arkës']) { const t = c.pageTable(p); eq(!!t && t.cols.length > 0, true, 'POS page with cancels: ' + p); }
   c.state.section = 'dashboard'; c.state.page = 'Paneli'; c.state.range = 'Gjithçka'; eq(c.renderVals().kpis.length, 8, 'dashboard renders with cancels'); }
+{ // a 4-decimal POS line (0.3755) and its return net to zero in stock: exact thousandths from qty_q, halves away from zero (Math.round on the float left 1/1000)
+  const s0 = c.stockOf('RR-001'), L1 = { ...it('RR-001', 'Rërë', 376, 1000), qty_q: 3755 }, L2 = { ...it('RR-001', 'Rërë', -376, 1000), qty_q: -3755 };
+  c.importPosSales([rcpt('r-q4', 'POS-0001/000090', 'final', 'pending', [L1], L1.tot_c, 0)], []); const s1 = c.stockOf('RR-001');
+  c.importPosSales([rcpt('r-q4r', 'POS-0001/000091', 'return', 'pending', [L2], L2.tot_c, 0, { orig_id: 'r-q4' })], []);
+  eq([s1 - s0, c.stockOf('RR-001') - s0], [-376, 0], 'local POS import: 0.3755 out and back in nets to zero (−376 / +376)');
+}
 
 // ── operator PINs (hash must equal Python hashlib.sha256 on "salt:pin") ──
 eq(c.sha256('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad', 'sha256 test vector');
