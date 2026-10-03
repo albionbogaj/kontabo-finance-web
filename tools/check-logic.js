@@ -1602,6 +1602,8 @@ apiBlock.then(async () => {
       eq([await R.invoiceFromReceipt('r1', I.r1), R.state.toast], [null, 'Fatura A4 krijohet vetëm nga një kupon i finalizuar (ky është “Kthim”)'], 'A4: only from a Finalizuar receipt (a return is refused)');
       eq([await R.invoiceFromReceipt('s1'), R.state.toast], [null, 'Fatura A4 krijohet vetëm nga një kupon i finalizuar (ky është “Kthyer”)'], 'A4 by id: the receipt is read from the server first (a returned sale is refused)');
       eq([await R.invoiceFromReceipt('nope'), R.state.toast, T9.tries - n2], [null, 'Kuponi nuk u lexua nga serveri: Kuponi nuk u gjet', 0], 'A4: a receipt the server does not have → nothing made');
+      const n3 = T9.tries, [a1, a2] = await Promise.all([R.invoiceFromReceipt('s7'), R.invoiceFromReceipt('s7')]); await until(() => !(R._pending || []).length && !R._flushing);
+      eq([[a1, a2].filter(Boolean), R.state.db.invoices.filter(i => i.fromPos === 's7').map(i => i.no), T9.state.invoices.filter(i => i.fromPos === 's7').length, T9.tries - n3], [['FSH-2026-00002'], ['FSH-2026-00002'], 1, 1], 'A4: two clicks at once (the receipt read from the server meanwhile) → one invoice, one commit');
       // the A4 shows on P:Shitje and in the receipt drawer; the invoice's receipt link opens the receipt through the API
       R.go('pos', 'Shitje'); R.posFilter({ range: '31', from: '', to: '', terminal: '' }); await settle(R);
       eq(R.pageTable('P:Shitje').rows.find(r => r.cells[0].t === 'BAR-1/0012').cells[11].t, 'FSH-2026-00001', 'P:Shitje: the "Fatura A4" column (db.invoices fromPos)');
@@ -1674,6 +1676,13 @@ apiBlock.then(async () => {
       Object.assign(R.state, { frm: null, dr: null, posRc: null, posList: null, apiKeysSrv: null, section: 'dashboard', page: 'Paneli' });
       eq(errs, [], 'ledger mode (E-L2): every page, the receipt lists in every state, every receipt / summary drawer state and the API key page render without throwing'); }
     eq([S.bad, S.noHdr, writesRc()], [[], [], []], 'mock server (E-L2): no commit carried `_srv` or posSync runtime fields, every call had X-Kontabo-Client: 2, nothing ever wrote to a server receipt');
+    // leaving the page while the search waits for the typing to stop: nothing is asked; switching the company drops what is still on its way
+    { R.go('pos', 'Shitje'); await settle(R); const k0 = S.calls.length; R.pageTable('P:Shitje').setQ({ target: { value: 'Ana' } }); await wait(20); R.go('dashboard', 'Paneli'); await wait(350); await settle(R);
+      eq([rcOf('t9', k0), R._plT], [[], null], 'search typed, then another page before 300 ms: the pending search is dropped');
+      R.posFilter({ q: '' }); R.go('pos', 'Shitje'); await settle(R); const hL = defer(), hR = defer(); S.rcHold = (tid, path) => (tid === 't9' ? (path.startsWith('/pos/receipts?') ? hL.p : hR.p) : null);
+      R.posListSync(true); R.openPosReceipt('s2'); await wait(); await R.apiSwitchTenant('t1'); await until(() => R._ledger && R._ledger.tenantId === 't1' && R._ledger.loaded);
+      hL.open(); hR.open(); S.rcHold = null; await wait(20);
+      eq([R.apiCfg().tenantId, R.state.posList, R.state.posRc, R.state.dr, R.state.page], ['t1', null, null, null, 'Paneli'], 'company switch: a receipt list and a receipt of the old company still on their way are dropped'); }
     R.logout(); done(R); clearTimeout(R._plT);
     // ── the ledger feature off (an older server): the book's own pages and drawers as before — no /pos/receipts, /api-keys or token rotation
     S.features = []; const T10 = mkT('t10', 'Relay SH.P.K.', legacyBook()); T10.terms = [{ id: 'k1', name: 'Arka Bar', branch: 'Qendra', posId: 'BAR-1', warehouse: 'W2', status: 'Aktiv', lastSeen: '' }];
