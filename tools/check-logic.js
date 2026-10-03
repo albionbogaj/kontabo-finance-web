@@ -1652,5 +1652,49 @@ apiBlock.then(async () => {
       L.posFetch = async (path, o = {}) => { cl.push((o.method || 'GET') + ' ' + path.split('?')[0]); if (path === '/health') return { pos_name: 'Arka', pos_id: 'POS-0001', version: '1', pending_sync: 0, fiscal: { pending: 0, mode: 'ATK_ELECTRONIC' } }; if (path.startsWith('/sales')) return { receipts: [], shifts: [], cursor: 0 }; return {}; };
       await L.posSync(false); await L.posSync(false); await L.posSync(false);
       eq([h1 === h2, ops.length > 0, ops.every(o => o.pinSalt && o.pinHash === L.pinHash('0000', o.pinSalt)), cl.filter(x => x === 'POST /catalog').length], [true, true, true, 1], 'users without a PIN: the catalogue hash is stable → pushed once, not on every tick'); clearTimeout(L._t); }
+    // ── render sweep (ledger mode): every page, the POS lists / fiscal tab in every state, every receipt and summary drawer state, the key page
+    { const errs = [], tryR = (what, f) => { try { f(); R.renderVals(); R.drawerVals(); R.formVals(); } catch (e) { errs.push(what + ': ' + e.message); } };
+      const items = Object.values(I).concat([old, { ...I.c3, frozen: null, ledgerState: 'wait_orig' }, { id: 'bare' }]), w = { Shitje: 'list|Shitje|2026-08-21|2026-09-20||final,returned,void|t9|q=', Kthime: 'list|Kthime|2026-08-21|2026-09-20||return,cancel|t9|q=', fiscal: 'fiscal|2025-09-21|2026-09-20|t9' };
+      const lists = [{ busy: true, err: '', items: [], total: 0 }, { busy: false, err: '', items, total: 70 }, { busy: true, err: '', items, total: 70 }, { busy: false, err: 'Nuk keni leje', items: [], total: 0 }, { busy: false, err: 'Gabim', items, total: 70 }, { busy: false, err: '', items: [], total: 0 }];
+      for (const n of R.NAV) for (const pg of n.items) tryR(n.id + '/' + pg, () => Object.assign(R.state, { admin: false, section: n.id, page: pg, dr: null, frm: null }));
+      for (const [pg, base] of Object.entries(w)) for (const [i, L] of lists.entries()) tryR(pg + ' list state ' + i, () => Object.assign(R.state, { section: pg === 'fiscal' ? 'settings' : 'pos', page: pg === 'fiscal' ? 'Fiskalizimi' : pg, fiscalTab: 'Kuponët', posList: { key: base + '|p1', base, pages: 1, ...L } }));
+      for (const it of items) for (const st of [{ busy: true, item: null }, { busy: true, item: it }, { busy: false, item: it, related: items.slice(0, 4) }, { busy: false, err: 'Kuponi nuk u gjet në server', item: null }]) tryR('receipt drawer ' + it.id, () => Object.assign(R.state, { dr: { kind: 'posApi', id: it.id }, posRc: { id: it.id, related: [], err: '', ...st } }));
+      for (const r of R.view().posReceipts) tryR('POS document ' + r.id, () => Object.assign(R.state, { dr: { kind: 'pos', id: r.id } }));
+      tryR('API keys page', () => Object.assign(R.state, { dr: null, section: 'settings', page: 'API', apiKeysSrv: { busy: false, err: '', items: [{ id: 'k1', name: 'A', prefix: 'kk_x', scopes: ['pos:read'], createdBy: 'X', createdAt: '2026-09-20T10:00:00Z', lastUsedAt: '2026-09-20T10:05:00Z', revokedAt: null }, { id: 'k2', name: 'B', prefix: 'kk_y', scopes: [], createdAt: null, revokedAt: '2026-09-20T11:00:00Z' }] }, apiSecret: { name: 'A', key: 'kk_secret', scopes: 'pos:read' } }));
+      tryR('API keys page (error)', () => Object.assign(R.state, { apiKeysSrv: { busy: false, err: 'Nuk keni leje', items: [] }, apiSecret: null }));
+      tryR('API key form', () => Object.assign(R.state, { frm: { kind: 'apiKeySrv', name: 'x'.repeat(90), sPos: false, sState: true, busy: true } }));
+      Object.assign(R.state, { frm: null, dr: null, posRc: null, posList: null, apiKeysSrv: null, section: 'dashboard', page: 'Paneli' });
+      eq(errs, [], 'ledger mode (E-L2): every page, the receipt lists in every state, every receipt / summary drawer state and the API key page render without throwing'); }
+    eq([S.bad, S.noHdr, writesRc()], [[], [], []], 'mock server (E-L2): no commit carried `_srv` or posSync runtime fields, every call had X-Kontabo-Client: 2, nothing ever wrote to a server receipt');
+    R.logout(); done(R); clearTimeout(R._plT);
+    // ── the ledger feature off (an older server): the book's own pages and drawers as before — no /pos/receipts, /api-keys or token rotation
+    S.features = []; const T10 = mkT('t10', 'Relay SH.P.K.', legacyBook()); T10.terms = [{ id: 'k1', name: 'Arka Bar', branch: 'Qendra', posId: 'BAR-1', warehouse: 'W2', status: 'Aktiv', lastSeen: '' }];
+    { const X = mkR(); await enter(X, 'own', 't10'); const k0 = S.calls.length, srvCalls = () => S.calls.slice(k0).filter(x => /^\/pos\/receipts|^\/api-keys|\/rotate$/.test(x.p)).map(x => x.m + ' ' + x.p);
+      X.go('pos', 'Shitje'); await settle(X); const T = X.pageTable('P:Shitje');
+      eq([X._ledger, X.posListWant(), X.apiKeysOn(), X.state.posList, T.sub.startsWith('Kuponët e sinkronizuar nga POS-i desktop'), T.hasFilters, T.count, T.rows.map(r => r.cells[0].t), T.actions.map(a => a.label)], [null, null, false, null, true, false, '3', ['BAR-1/0004', 'BAR-1/0002', 'BAR-1/0001'], ['Sinkronizo tani', 'Eksporto CSV']], 'feature off: P:Shitje is the book\'s list (no server list, no filters)');
+      X.go('pos', 'Kthime'); await settle(X); eq(X.pageTable('P:Kthime').rows.map(r => r.cells[0].t), ['BAR-1/0003'], 'feature off: P:Kthime from the book');
+      X.go('pos', 'Arkat'); await settle(X); const A = X.pageTable('P:Arkat'); eq([A.cols.length, A.rows.map(r => r.cells.length), A.kpis[1].label], [11, [11], 'Sinkronizimi nga serveri'], 'feature off: P:Arkat without "Rigjenero tokenin"');
+      eq([X.pageTable('P:Operatorët').cols.length, X.pageTable('P:Mbyllja e arkës').cols.length, X.pageTable('P:Operatorët').hasPeriod], [10, 10, false], 'feature off: P:Operatorët and Mbyllja e arkës as before');
+      X.go('settings', 'API'); await settle(X); const P = X.settingsPage('API');
+      eq([P.cards.map(c => c.title), P.cards[0].table.cols.map(c => c.label), lab(P.cards[0].actions)], [['Çelësat API', 'Dokumentimi'], ['Emri', 'Çelësi', 'Krijuar', 'Përdorur së fundi', 'Të drejtat', 'Statusi', ''], ['+ Çelës i ri']], 'feature off: Cilësime › API is the book\'s page (as before)');
+      X.setState({ section: 'settings', page: 'Fiskalizimi', fiscalTab: 'Kuponët' }); await settle(X); const v = X.renderVals();
+      eq([v.fiscalReceiptsCount, v.fiscalReceiptsNote, v.fiscalReceipts.map(x => x.no), v.fiscalHasMore], ['4', 'kuponë të sinkronizuar · vetëm lexim', ['BAR-1/0004', 'BAR-1/0003', 'BAR-1/0002', 'BAR-1/0001'], false], 'feature off: the fiscal "Kuponët" tab lists the book\'s receipts');
+      X.openDr('pos', 'rA'); let D = X.drawerVals(); eq([X.state.dr, D.no, lab(D.actions)[0]], [{ kind: 'pos', id: 'rA' }, 'BAR-1/0001', 'Gjenero faturë A4 nga kuponi'], 'feature off: a receipt opens the book\'s drawer');
+      D.actions[0].go(); X.state.confirm.ok(); await until(() => !(X._pending || []).length && !X._flushing); await wait(10);
+      const last = T10.commits[T10.commits.length - 1] || {};
+      eq([Object.keys(last).sort(), (last.invoices || [])[0] && last.invoices[0].fromPos, (last.posReceipts || []).find(r => r.id === 'rA').invoiceNo, X.state.drawer], [['invoices', 'posReceipts'], 'rA', 'FSH-2026-00001', 'FSH-2026-00001'], 'feature off: the A4 invoice as before (the receipt in the book gets invoiceNo)');
+      X.go('dashboard', 'Paneli'); eq([X.renderVals().alerts.some(a => /kuponëve POS/.test(a.t)), srvCalls()], [false, []], 'feature off: no POS-ledger alert; never /pos/receipts, /api-keys or a rotation');
+      X.logout(); done(X); clearTimeout(X._plT); }
+    S.features = ['posLedger:1'];
+    // ── local mode (no server): as before — no server list, the book's API keys, the A4 invoice of a booked receipt
+    { const Lc = new C({}), set = Lc.setState.bind(Lc); let q = false; Lc.setState = u => { set(u); if (!q) { q = true; Promise.resolve().then(() => { q = false; Lc.componentDidUpdate(); }); } };
+      Lc._api = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' }; Lc.state.db = Lc.seedDb(); Lc.state.session = { name: 'Arben Berisha', role: 'Pronar', userId: 'u1' };
+      const k0 = S.calls.length; Lc.go('pos', 'Shitje'); await wait(10); Lc.go('settings', 'API'); await wait(10); Lc.setState({ section: 'settings', page: 'Fiskalizimi', fiscalTab: 'Kuponët' }); await wait(10);
+      eq([S.calls.length - k0, Lc.posListWant(), Lc.apiKeysOn(), Lc.state.posList, Lc.state.apiKeysSrv, Lc.pageTable('P:Shitje').hasFilters, Lc.pageTable('P:Arkat').cols.length], [0, null, false, null, null, false, 11], 'local mode: no server calls, the book\'s POS pages');
+      const P = Lc.settingsPage('API'), n0 = (Lc.state.db.apiKeys || []).length; P.cards[0].actions[0].go(); Lc.setF({ name: 'Web', scope: 'lexo', env: 'test' }); Lc.formVals().actions[0].go();
+      eq([n0, Lc.state.db.apiKeys.length, Lc.state.db.apiKeys[n0].name, /^kf_test_/.test(Lc.state.secret.key), JSON.parse(store.getItem(Lc.KEY)).apiKeys.length], [1, 2, 'Web', true, 2], 'local mode: Cilësime › API keeps its keys in the book (as before)');
+      Lc.importPosSales([pay('lx', 'BAR-1/0500', 'final', [pli('LED-18', 'Ndriçues LED 18W', 'copë', 10000, 590)], { time: '10:00:00' })], []); Lc.invoiceFromReceipt('lx');
+      const rr = Lc.state.db.posReceipts.find(r => r.id === 'lx'), iv = Lc.state.db.invoices.find(i => i.fromPos === 'lx');
+      eq([!!iv, iv && iv.posNo, rr.invoiceNo, iv && iv.no === rr.invoiceNo, S.calls.length - k0], [true, 'BAR-1/0500', iv && iv.no, true, 0], 'local mode: the A4 invoice of a booked receipt as before'); clearTimeout(Lc._t); }
     // @@E-L2-END@@
   }).catch(e => { console.log('FAIL E-L2 tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
