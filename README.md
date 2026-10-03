@@ -24,7 +24,7 @@ kontabo-finance/
 │  ├─ unpack.js            ← zbërthen një bundle .html në src/
 │  ├─ pack.js              ← ribën dist/Kontabo finance.html nga src/
 │  ├─ dev.js               ← gjeneron dev/index.html për preview pa pack (asset-e me path relativ)
-│  ├─ check-logic.js       ← kontroll sintakse + 1142 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU BAR-n, kategoritë, idempotenca, lejet), render sweep)
+│  ├─ check-logic.js       ← kontroll sintakse + 1156 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU BAR-n, kategoritë, idempotenca, lejet), render sweep)
 │  └─ verify-roundtrip.js  ← verifikon që pack(unpack(x)) == x
 ├─ dev/index.html          ← preview i shpejtë (gjenerohet)
 └─ dist/
@@ -178,6 +178,13 @@ zëvendësohet me API; operacionet e mësipërme mbeten të njëjtat.
 
 ## Njësitë, recetat dhe “Shfaqe në POS” (Produkte)
 
+- **SKU-ja caktohet gjithmonë vetvetiu** (03.10.2026): formulari i produktit nuk ka fushë kodi — e shfaq vetëm-lexim
+  kodin që do të ruhet. Prefiksi vjen nga fjala e parë e emrit që nis me shkronjë (3 shkronja pa diakritikë:
+  „Çimento 25kg“ → `CIM`; pa emër nga kategoria; pa asnjë të dyja → `ART`), pastaj numri rendor i prefiksit +1 me zero
+  deri në 3 shifra (`CIM-001`, `CIM-002` — `skuPrefix` / `newSku`). Kodi kërkohet derisa të gjendet i lirë mbi çdo SKU
+  që ekziston (katalogu + lëvizjet e arkave), dhe caktohet te `addProduct` mbi gjendjen që po ruhet — dy produkte të
+  shtuar në të njëjtin sekond nuk marrin kurrë të njëjtin kod, as një thirrje që dërgon një kod të zënë. Te redaktimi
+  SKU-ja shfaqet si „nuk ndryshohet (është kyçi i çdo lëvizjeje)“.
 - **Njësitë** (`UNITS`): copë, m, m², m³, kg, **l**, pako, **shishe**, **gotë**, thes, kovë — kombo te formulari i produktit.
   Copë, pako, shishe, gotë, thes dhe kovë numërohen me numra të plotë (`INT_UNITS`), të tjerat me deri në 3 decimale; çmimi
   është për njësi. Produkte › Njësitë tregon për çdo njësi produktet, gjendjen, vlerën, shitjet e muajit dhe decimalet.
@@ -245,6 +252,23 @@ tregojnë ekuivalentin `≈ 12 shishe` (`packEq`). Rreshtat e shitjes nuk janë 
   (ose `reason`) te kuponi i anulimit — ruhet te anulimi **dhe** te origjinali (`cancelReason`), shfaqet te sirtari
   (“Arsyeja e anulimit”) dhe te radha fiskale (“… · Arsyeja: …”). Sirtari i kuponit tregon sasinë/çmimin me 4 decimale
   kur POS-i i dërgoi ashtu, zbritjen në % ose “−€x”, dhe shkronjën + normën (`E · 18%`).
+
+## Telefoni dhe tableti (nga 03.10.2026)
+
+E njëjta faqe përdoret nga kompjuteri dhe nga telefoni — nuk ka version të dytë. Nën **900 px**:
+
+| Çfarë | Si |
+| --- | --- |
+| Shelli | shiriti i ikonave + menyja e seksionit bëhen **sirtar** mbi përmbajtjen (butoni ☰ te koka), përmbajtja merr gjithë gjerësinë; zgjedhja e një faqeje e mbyll sirtarin |
+| Gjendja | `narrow` te komponenti (dëgjues `resize`/`orientationchange`, kalon vetëm kur kapërcehet kufiri) → `shellCols`, `railFix`, `menuFix`, `searchW`, `padMain`, `padHead` |
+| Faqet | një bllok `@media (max-width: 899px)` te `<style>`: rrjetat shumë-kolonëshe → një kolonë, titujt zbuten, rreshtat e tabeve rrëshqasin anash, tabelat rrëshqasin brenda kartelës (`:has(> table)`), sirtarët e detajeve zënë gjithë ekranin, format dhe parapamja A4 bëhen ekran i plotë |
+| Pse me `[style*="…"]` | stilet e aplikacionit janë **inline**, prandaj rregullat e kapin elementin sipas përmbajtjes së atributit `style` dhe e mbivendosin me `!important`. **Shfletuesi e rishkruan atë atribut me hapësira** (`grid-template-columns: repeat(4, 1fr)`), prandaj selektorët duhet të kenë pikërisht atë formë — pa hapësirë nuk përputhen kurrë |
+| Hyrja | paneli i marketingut fshihet; mbetet vetëm kartela e hyrjes, me rrotullim |
+| Prekja | fushat 16 px (iOS-i nuk e zmadhon faqen), objektivat ≥ 36 px |
+| Tableti 900–1200 px | shelli mbetet si në desktop, rrjetat me 4 kolona bëhen 2 |
+
+Kontrollet e `check-logic.js` mbulojnë gjendjen `narrow` (shelli, sirtari, mbyllja te zgjedhja e faqes, kthimi në desktop)
+dhe praninë e rregullave kryesore të fletës së telefonit — përfshirë që selektorët përdorin formën me hapësira.
 
 ## Formati A4 i faturës — “Precision Flow”
 

@@ -416,6 +416,31 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
 // ── printing, barcodes, labels, e-mail templates ──
 { const h = c.docPrintHtml(invOf('FSH-2026-00125')); eq([h.includes('FSH-2026-00125'), h.includes('FATURË'), h.includes('Drini Market'), h.includes(c.fmtEu(277064)), h.includes('KS-TX-7F3A21')], [true, true, true, true, true], 'print html: invoice carries number, title, customer, total, fiscal ref'); }
 { const h = c.docPrintHtml(purOf('BL-2026-00033')); eq([h.includes('BLERJE'), h.includes('FURNITORI')], [true, true], 'print html: purchase document'); }
+// ── telefoni: gjendja `narrow` dhe sirtari i menysë ──
+{ const m = new C({}); m.state.db = m.seedDb(); m.state.session = { userId: 'u1', role: 'Pronar' };
+  m.state.narrow = true; m.state.nav = false;
+  const v = m.renderVals();
+  eq([v.narrow, v.shellCols, v.navOpen, v.railFix.includes('display: none') || v.railFix === 'display:none', v.searchLabel],
+     [true, '1fr', false, true, 'Kërko'], 'telefoni: shelli bëhet një kolonë dhe sirtari rri i mbyllur');
+  v.toggleNav(); const v2 = m.renderVals();
+  eq([v2.navOpen, v2.railFix.includes('position:fixed'), v2.menuFix.includes('left:72px')], [true, true, true], 'telefoni: butoni i menysë e hap sirtarin mbi përmbajtjen');
+  v2.closeNav(); eq(m.renderVals().navOpen, false, 'telefoni: sirtari mbyllet');
+  m.state.narrow = false; const v3 = m.renderVals();
+  eq([v3.shellCols, v3.railFix, v3.menuFix, v3.searchW], ['72px 224px 1fr', '', '', '420px'], 'desktopi mbetet si ishte (asnjë stil i telefonit)');
+  // zgjedhja e një faqeje e mbyll sirtarin vetëm në telefon
+  m.state.narrow = true; m.state.nav = true; m.state.section = 'shitje';
+  const sub = m.renderVals().subnav[0]; sub.go();
+  eq(m.state.nav, false, 'telefoni: zgjedhja e faqes e mbyll sirtarin');
+}
+// fleta e telefonit duhet të jetë e pranishme dhe të përdorë formën e serializuar të stileve inline
+{ const css = html.match(/@media \(max-width: 899px\)[\s\S]*?@media/);
+  eq(!!css, true, 'telefoni: fleta @media ekziston në shabllon');
+  eq([/\[style\*="grid-template-columns"\]/.test(css[0]), /aside\[role="dialog"\]/.test(css[0]), /font-size: 16px/.test(css[0])], [true, true, true],
+     'telefoni: rregullat kryesore (rrjetat, sirtarët e detajeve, fushat 16 px) janë aty');
+  eq([/width: min\(1060px, 100%\)/.test(css[0]), /grid-template-columns:repeat\(/.test(css[0])], [true, false],
+     'telefoni: selektorët përdorin formën me hapësira (si e serializon shfletuesi), jo atë pa hapësira');
+}
+
 // ── formati A4 “Precision Flow” (dizajni i faturës) ──
 // Invariantët e parasë te dokumenti i shtypur: kolona “Shuma” mbledh bazën, TVSH-ja ndahet pa rreshta negativë,
 // dhe shkalla e pagesave mbyllet (Totali − paguar − notë krediti = Mbetja) — edhe kur nota e kreditit u rimbursua.
@@ -932,18 +957,33 @@ typeF('price', '9.26'); eq(c.state.frm.priceG, '10.0008', 'net 9.26 @8% → gros
 typeF('priceG', 'abc'); eq([fld('priceG').err, c.state.frm.price, c.formVals().actions[0].disabled], ['1', '', true], 'unparsable gross → err flag, net cleared, save blocked');
 typeF('price', '1.999'); eq([fld('price').err, c.state.frm.priceG], ['', '2.1589'], 'net with 3 decimals is valid now (4-decimal prices; letter D → 1.999 × 1.08)');
 typeF('price', '1.99999'); eq([fld('price').err, c.state.frm.priceG], ['1', ''], 'unparsable net (5 decimals) → err flag, gross cleared');
-c.setF({ name: 'Tub PVC 50mm', sku: 'tb-050', cat: 'Hidraulikë', catQ: 'Hidraulikë', unit: 'm', tax: 'E', opening: '0', minStock: '10' }); typeF('costG', '1.18'); typeF('priceG', '2.20');
+c.setF({ name: 'Tub PVC 50mm', cat: 'Hidraulikë', catQ: 'Hidraulikë', unit: 'm', tax: 'E', opening: '0', minStock: '10' }); typeF('costG', '1.18'); typeF('priceG', '2.20');
 eq([fld('cat').hint, c.formVals().actions[0].disabled], ['e re — krijohet me ruajtjen', false], 'product form: a typed new category is announced, form ready');
+// the SKU is the system's (2026-10-03): the form shows the next code for this name as a READ-ONLY field — nothing to type, nothing to clash
+{ const sf = c.formVals().fields.find(f => f.label === 'SKU');
+  eq([!!sf.isInfo, sf.value, c.formVals().fields.some(f => f.key === 'sku')], [true, 'TUB-001 · caktohet vetvetiu', false], 'product form: SKU is a read-only field carrying the code the save will use');
+  c.setF({ name: 'Çimento 25kg' }); eq(c.formVals().fields.find(f => f.label === 'SKU').value, 'CIM-001 · caktohet vetvetiu', 'product form: the code follows the name (Ç → C) while it is still being typed');
+  c.setF({ name: 'Tub PVC 50mm' }); }
 c.formVals().actions[0].go();
-{ const p = db().products.find(x => x.sku === 'TB-050'); eq([p.price_c, p.cost_c, p.price_t, p.cost_t, p.cat, db().categories.some(x => x.name === 'Hidraulikë')], [186, 100, 18644, 10000, 'Hidraulikë', true], 'stored price_c/cost_c are NET cents (rounded) next to the exact price_t/cost_t ten-thousandths; the new category was created on save');
-  const cp = c.posCatalogPayload().products.find(x => x.sku === 'TB-050'); eq([cp.price_c, cp.price_t], [186, 18644], 'catalog payload: product price stays net cents (POS contract unchanged) + price_t with 4 decimals'); }
+{ const p = db().products.find(x => x.sku === 'TUB-001'); eq([p.price_c, p.cost_c, p.price_t, p.cost_t, p.cat, db().categories.some(x => x.name === 'Hidraulikë')], [186, 100, 18644, 10000, 'Hidraulikë', true], 'the product is saved under the generated SKU TUB-001; stored price_c/cost_c are NET cents (rounded) next to the exact price_t/cost_t ten-thousandths; the new category was created on save');
+  const cp = c.posCatalogPayload().products.find(x => x.sku === 'TUB-001'); eq([cp.price_c, cp.price_t], [186, 18644], 'catalog payload: product price stays net cents (POS contract unchanged) + price_t with 4 decimals'); }
 { const cat = c.posCatalogPayload(); eq([Array.isArray(cat.categories), cat.categories.length, cat.categories[0], cat.products.every(p => typeof p.cat === 'string')], [true, 6, { id: 'K-ndertim', name: 'Ndërtim' }, true], 'catalog payload: carries the categories list + per-product cat'); }
 // edit form from the drawer: prices shown both ways, saved as net
 c.openProduct('PS-050'); { const d = c.drawerVals(); eq([d.actions[0].label, d.meta.find(m => m.k === 'Çmimi i shitjes (pa TVSH)').v, d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v], ['Redakto', '€18.50', '€21.83'], 'product drawer: Redakto + net and gross sale price');
-  d.actions[0].go(); const v = c.formVals(); eq([v.title, c.state.frm.price, c.state.frm.priceG, c.state.frm.cost, c.state.frm.costG, fld('sku').dis, v.fields.some(f => f.key === 'opening')], ['Redakto produktin', '18.50', '21.83', '11.20', '13.2160', true, false], 'product edit form: pre-filled both sides (a seed product without price_t is read as cents × 100), sku locked, no opening stock field');
+  d.actions[0].go(); const v = c.formVals(); eq([v.title, c.state.frm.price, c.state.frm.priceG, c.state.frm.cost, c.state.frm.costG, v.fields.find(f => f.label === 'SKU').value, v.fields.some(f => f.key === 'opening')], ['Redakto produktin', '18.50', '21.83', '11.20', '13.2160', 'PS-050 · nuk ndryshohet (është kyçi i çdo lëvizjeje)', false], 'product edit form: pre-filled both sides (a seed product without price_t is read as cents × 100), the SKU shown read-only as the key of every movement, no opening stock field');
   typeF('priceG', '23.60'); fld('cat').set({ target: { value: 'Dysheme' } }); c.setF({ minStock: '120' }); c.formVals().actions[0].go();
   const p = db().products.find(x => x.sku === 'PS-050'); eq([p.price_c, p.cost_c, p.cat, p.minStock, c.state.frm, c.state.dr && c.state.dr.id], [2000, 1120, 'Dysheme', 120000, null, 'PS-050'], 'product edit: gross 23.60 saved as net 20.00, category/minStock updated, drawer reopened');
   eq(c.renderVals().products.find(x => x.sku === 'PS-050').priceGross, '€23.60', 'product list: shows the gross sale price next to the net one'); }
+// ── SKU automatik (2026-10-03): prefiksi nga emri, numri rendor i PREFIKSIT, gjithmonë i lirë ──
+eq([c.skuPrefix('Tub PVC 50mm', ''), c.skuPrefix('Çimento 25kg', ''), c.skuPrefix('50mm kabllo', ''), c.skuPrefix('', 'Hidraulikë'), c.skuPrefix('', ''), c.skuPrefix('50/70', '')],
+   ['TUB', 'CIM', 'KAB', 'HID', 'ART', '50'], 'skuPrefix: the first word that starts with a letter, 3 ASCII letters (Ç → C); the category is the fallback, then ART');
+eq([c.newSku([], 'Tub PVC', ''), c.newSku([{ sku: 'TUB-001' }, { sku: 'TUB-007' }, { sku: 'PS-050' }], 'Tub PVC', ''), c.newSku([{ sku: 'tub-009' }], 'Tub', ''), c.newSku([{ sku: 'ART-001' }], '', '')],
+   ['TUB-001', 'TUB-008', 'TUB-010', 'ART-002'], 'newSku: the running number of the prefix + 1, zero-padded to 3 (an existing code in any case is counted), other prefixes ignored');
+{ const n0 = db().products.length; c.addProduct({ name: 'Bojë fasade 15l', barcode: '—', cat: 'Ndërtim', unit: 'copë', tax: 'E', price_c: 1500, cost_c: 1000, openCost_c: 1000, opening: 0, minStock: 0 });
+  c.addProduct({ name: 'Bojë fasade 5l', barcode: '—', cat: 'Ndërtim', unit: 'copë', tax: 'E', price_c: 700, cost_c: 500, openCost_c: 500, opening: 0, minStock: 0 });
+  eq([db().products.length - n0, db().products.slice(-2).map(p => p.sku).join(' ')], [2, 'BOJ-001 BOJ-002'], 'addProduct without a SKU: the code is generated against the state being committed — two products of the same name never share one');
+  c.addProduct({ name: 'Bojë fasade 2l', sku: 'BOJ-001', barcode: '—', cat: 'Ndërtim', unit: 'copë', tax: 'E', price_c: 400, cost_c: 300, openCost_c: 300, opening: 0, minStock: 0 });
+  eq(db().products.slice(-1)[0].sku, 'BOJ-003', 'addProduct with a SKU that is already taken: a fresh code is generated instead of a duplicate'); }
 // a case/space variant of an existing category is stored with the managed record's spelling (no split rows in filters/reports)
 { const n0 = db().categories.length, u0 = c.catUsage('K-ndertim'); c.addProduct({ name: 'Çimento 25kg', sku: 'CM-025', barcode: '—', cat: 'ndërtim ', unit: 'thes', tax: 'E', price_c: 500, cost_c: 400, openCost_c: 400, opening: 0, minStock: 0 });
   eq([db().products.find(x => x.sku === 'CM-025').cat, db().categories.length, c.catUsage('K-ndertim')], ['Ndërtim', n0, u0 + 1], 'addProduct: typed “ndërtim ” stored as the record name “Ndërtim”, no new record, counted');
@@ -965,31 +1005,31 @@ eq([c.fromT(123456), c.fromT(123400), c.fromT(70000), c.fmtT(123456), c.fmtT(185
 eq([c.cOfT(123456), c.cOfT(123450), c.cOfT(123449), c.grossOfT(18644, 18), c.netOfT(22000, 18)], [1235, 1235, 1234, 22000, 18644], 'cOfT rounds to cents; grossOfT/netOfT are exact to the 4th decimal');
 eq([c.priceT({ price_c: 1850 }), c.priceT({ price_c: 1850, price_t: 18501 }), c.costT({ cost_c: 100 })], [185000, 18501, 10000], 'priceT/costT: stored ten-thousandths win, else cents × 100 (older books)');
 // ── product with a 4-decimal price through the form → stored both ways, listed with 4 decimals, catalog carries price_t
-c.openForm('product'); c.setF({ name: 'Vidë 3.5×25', sku: 'VD-3525', cat: 'Ndërtim', catQ: 'Ndërtim', unit: 'copë', tax: 'E', opening: '1000', minStock: '0' }); typeF('cost', '0.0123'); typeF('price', '0.0275');
+c.openForm('product'); c.setF({ name: 'Vidë 3.5×25', cat: 'Ndërtim', catQ: 'Ndërtim', unit: 'copë', tax: 'E', opening: '1000', minStock: '0' }); typeF('cost', '0.0123'); typeF('price', '0.0275');
 eq([c.state.frm.priceG, c.state.frm.costG, fld('price').hint, c.formVals().actions[0].disabled], ['0.0325', '0.0145', 'deri në 4 numra pas presjes', false], 'product form: 4-decimal net prices → gross exact to the 4th decimal (0.0275 × 1.18 = 0.03245 → 0.0325)');
 c.formVals().actions[0].go();
-{ const p = db().products.find(x => x.sku === 'VD-3525'); eq([p.price_t, p.price_c, p.cost_t, p.cost_c, p.openCost_c], [275, 3, 123, 1, 1], 'product saved: price_t/cost_t exact, price_c/cost_c = rounded cents (0.0275 → 0.03, 0.0123 → 0.01)');
-  c.state.section = 'produkte'; c.state.page = 'Produktet'; const row = c.renderVals().products.find(x => x.sku === 'VD-3525'); eq([row.price, row.priceGross], ['€0.0275', '€0.0325'], 'product list: shows the 4-decimal price when the precision exists');
+{ const p = db().products.find(x => x.sku === 'VID-001'); eq([p.price_t, p.price_c, p.cost_t, p.cost_c, p.openCost_c], [275, 3, 123, 1, 1], 'product saved: price_t/cost_t exact, price_c/cost_c = rounded cents (0.0275 → 0.03, 0.0123 → 0.01)');
+  c.state.section = 'produkte'; c.state.page = 'Produktet'; const row = c.renderVals().products.find(x => x.sku === 'VID-001'); eq([row.price, row.priceGross], ['€0.0275', '€0.0325'], 'product list: shows the 4-decimal price when the precision exists');
   eq(c.renderVals().products.find(x => x.sku === 'PS-050').price, '€18.50', 'product list: whole-cent prices keep 2 decimals');
-  c.openProduct('VD-3525'); const d = c.drawerVals(); eq([d.meta.find(m => m.k === 'Çmimi i shitjes (pa TVSH)').v, d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v], ['€0.0275', '€0.0325'], 'product drawer: 4-decimal net + gross');
+  c.openProduct('VID-001'); const d = c.drawerVals(); eq([d.meta.find(m => m.k === 'Çmimi i shitjes (pa TVSH)').v, d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v], ['€0.0275', '€0.0325'], 'product drawer: 4-decimal net + gross');
   d.actions[0].go(); eq([c.state.frm.price, c.state.frm.priceG, c.state.frm.cost], ['0.0275', '0.0325', '0.0123'], 'product edit form: pre-filled from price_t/cost_t (no cent rounding)'); c.state.frm = null; c.state.dr = null;
-  const cp = c.posCatalogPayload().products.find(x => x.sku === 'VD-3525'); eq([cp.price_c, cp.price_t, cp.tax, cp.rate], [3, 275, 'E', 18], 'catalog payload: price_c (cents) + price_t (ten-thousandths) per product');
+  const cp = c.posCatalogPayload().products.find(x => x.sku === 'VID-001'); eq([cp.price_c, cp.price_t, cp.tax, cp.rate], [3, 275, 'E', 18], 'catalog payload: price_c (cents) + price_t (ten-thousandths) per product');
   eq(c.posCatalogPayload().products.every(x => Number.isInteger(x.price_t) && x.price_t >= 0), true, 'catalog payload: every product ships an integer price_t');
-  c.state.section = 'produkte'; c.state.page = 'Çmimet'; const t = c.pageTable('Çmimet'); const r = t.rows.find(x => x.cells[1].t === 'VD-3525'); eq([r.cells[4].t, r.cells[7].t], ['€0.0275', '€0.0325'], 'Lista e çmimeve: 4-decimal net and gross'); }
+  c.state.section = 'produkte'; c.state.page = 'Çmimet'; const t = c.pageTable('Çmimet'); const r = t.rows.find(x => x.cells[1].t === 'VID-001'); eq([r.cells[4].t, r.cells[7].t], ['€0.0275', '€0.0325'], 'Lista e çmimeve: 4-decimal net and gross'); }
 // ── the GROSS price VERBATIM (Annex F p79 "3 X 1.5068" @ 18 % is unreachable from a net ten-thousandth): the product form keeps the gross
 // side as typed (gross_t), lists / drawer / catalog print it, a stale gross (after a tax change) falls back to the derived one
-c.openForm('product'); c.setF({ name: 'Coca Cola 0.5', sku: 'CC-05', cat: 'Ndërtim', catQ: 'Ndërtim', unit: 'copë', tax: 'E', opening: '0', minStock: '0' }); typeF('cost', '1.00'); typeF('priceG', '1.5068');
+c.openForm('product'); c.setF({ name: 'Coca Cola 0.5', cat: 'Ndërtim', catQ: 'Ndërtim', unit: 'copë', tax: 'E', opening: '0', minStock: '0' }); typeF('cost', '1.00'); typeF('priceG', '1.5068');
 eq([c.state.frm.price, c.state.frm.priceG, c.grossOfT(c.toT(c.state.frm.price), 18)], ['1.2769', '1.5068', 15067], 'product form: gross 1.5068 typed → net 1.2769 (derived gross would print 1.5067 — one ten-thousandth off)');
 c.formVals().actions[0].go();
-{ const p = db().products.find(x => x.sku === 'CC-05'); eq([p.price_t, p.gross_t, c.grossT(p), c.fmtT(c.grossT(p))], [12769, 15068, 15068, '€1.5068'], 'product saved: price_t 12769 (net) + gross_t 15068 VERBATIM; grossT() prints 1.5068, not the derived 1.5067');
-  c.state.section = 'produkte'; c.state.page = 'Produktet'; eq(c.renderVals().products.find(x => x.sku === 'CC-05').priceGross, '€1.5068', 'product list: the gross column shows the verbatim 1.5068');
-  c.openProduct('CC-05'); const d = c.drawerVals(); eq(d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v, '€1.5068', 'product drawer: gross 1.5068 verbatim');
+{ const p = db().products.find(x => x.sku === 'COC-001'); eq([p.price_t, p.gross_t, c.grossT(p), c.fmtT(c.grossT(p))], [12769, 15068, 15068, '€1.5068'], 'product saved: price_t 12769 (net) + gross_t 15068 VERBATIM; grossT() prints 1.5068, not the derived 1.5067');
+  c.state.section = 'produkte'; c.state.page = 'Produktet'; eq(c.renderVals().products.find(x => x.sku === 'COC-001').priceGross, '€1.5068', 'product list: the gross column shows the verbatim 1.5068');
+  c.openProduct('COC-001'); const d = c.drawerVals(); eq(d.meta.find(m => m.k.startsWith('Çmimi me TVSH')).v, '€1.5068', 'product drawer: gross 1.5068 verbatim');
   d.actions[0].go(); eq([c.state.frm.price, c.state.frm.priceG], ['1.2769', '1.5068'], 'product edit form: pre-filled with the verbatim gross'); c.state.frm = null; c.state.dr = null;
-  const cp = c.posCatalogPayload().products.find(x => x.sku === 'CC-05'); eq([cp.price_t, cp.gross_t, cp.rate], [12769, 15068, 18], 'catalog payload: gross_t 15068 next to price_t — the till prints and computes 3 × 1.5068 = 4.52 from it');
+  const cp = c.posCatalogPayload().products.find(x => x.sku === 'COC-001'); eq([cp.price_t, cp.gross_t, cp.rate], [12769, 15068, 18], 'catalog payload: gross_t 15068 next to price_t — the till prints and computes 3 × 1.5068 = 4.52 from it');
   eq(c.posCatalogPayload().products.every(x => Number.isInteger(x.gross_t) && x.gross_t > 0), true, 'catalog payload: every product ships gross_t (derived when none was typed)');
   eq(c.posCatalogPayload().products.find(x => x.sku === 'PS-050').gross_t, c.grossOfT(c.priceT(db().products.find(x => x.sku === 'PS-050')), 18), 'catalog payload: a product without a typed gross ships the derived one (18.50 → 21.83)');
-  c.updateProduct('CC-05', { tax: 'D' }); const p2 = db().products.find(x => x.sku === 'CC-05'); eq([p2.gross_t, c.grossT(p2), c.grossOfT(12769, 8)], [15068, 13791, 13791], 'a gross kept from before a tax change (18 % → 8 %) is more than a cent off → ignored, the gross is derived again');
-  c.updateProduct('CC-05', { tax: 'E' }); }
+  c.updateProduct('COC-001', { tax: 'D' }); const p2 = db().products.find(x => x.sku === 'COC-001'); eq([p2.gross_t, c.grossT(p2), c.grossOfT(12769, 8)], [15068, 13791, 13791], 'a gross kept from before a tax change (18 % → 8 %) is more than a cent off → ignored, the gross is derived again');
+  c.updateProduct('COC-001', { tax: 'E' }); }
 // ── the operator's identification number (Kërkesat SEF neni 25.18): user drawer › "Nr. identifikues për kupon…" → catalog operators[].code
 { c.openDr('user', 'u3'); let d = c.drawerVals(); eq([d.actions.some(a => a.label === 'Nr. identifikues për kupon…'), d.meta.find(m => m.k === 'Nr. identifikues (kupon)').v], [true, '—'], 'user drawer (POS role): the "Nr. identifikues për kupon…" action, meta "—" while none');
   eq(c.posCatalogPayload().operators.find(o => o.name === 'Fjolla Kastrati').code, '', 'catalog operators: code empty while none is set (the coupon prints only the name, Annex F)');
@@ -1147,14 +1187,14 @@ c.updateProduct('KOK2', { recipe: [{ sku: 'SYR', qm: 20 }] });
 eq(c.recipeQm('4 cl', 'l') + ' ' + c.recipeQm('40 ml', 'l') + ' ' + c.recipeQm('0.04', 'l') + ' ' + c.recipeQm('0,5 cl', 'l') + ' ' + c.recipeQm('1.5', 'copë') + ' ' + c.recipeQm('2', 'gotë'), '40 40 40 5 1500 2000', 'recipeQm: 4 cl = 40 ml = 0.04 l → 40; ½ cl → 5; other units in their own unit');
 eq([c.recipeQm('4 cl', 'kg'), c.recipeQm('1.5 ml', 'l'), c.recipeQm('0.0405', 'l'), c.recipeQm('0', 'l'), c.recipeQm('abc', 'l')], [null, null, null, null, null], 'recipeQm: cl/ml only for litres, never below 1 ml, > 0');
 // the product form: Lloji = Recetë → ingredient lines (no cost / opening / minimum), the cost and margin from the ingredients, "Shfaqe në POS"
-c.openForm('product'); c.setF({ name: 'Gotë vere', sku: 'gl-ver', cat: 'Pije', catQ: 'Pije', unit: 'gotë', unitQ: 'gotë', tax: 'E' });
+c.openForm('product'); c.setF({ name: 'Gotë vere', cat: 'Pije', catQ: 'Pije', unit: 'gotë', unitQ: 'gotë', tax: 'E' });
 fld('rec').opts.find(o => o.label.startsWith('Recetë')).go();
 { const v = c.formVals(); eq([v.hasLines, v.noPrice, v.linesTitle, ['cost', 'costG', 'opening', 'minStock', 'packUnit'].some(k => v.fields.some(f => f.key === k)), v.fields.some(f => f.label === 'Kosto nga receta'), v.actions[0].disabled], [true, true, 'Përbërësit e recetës', false, true, true], 'product form (recipe): ingredient lines, no cost/opening/minimum fields, recipe cost shown, blocked until filled');
   eq(v.lines[0].opts.map(o => o.sku).filter(s => ['KOK', 'KOK2', 'VOD'].includes(s)), ['VOD'], 'recipe picker: stock products only (no recipe products)'); }
 c.setFormLine(c.state.frm.lines[0].id, { sku: 'VOD', artQ: 'Vodka', qty: '12 cl' }); typeF('price', '3.00');
 { const v = c.formVals(); eq([v.lines[0].ev.qm, v.lines[0].srcLabel, v.fields.find(f => f.label === 'Kosto nga receta').value.startsWith(c.fmt(144)), v.actions[0].disabled], [120, 'Kosto e përbërësit (kosto mes.)', true, false], 'recipe line: "12 cl" → 120 ml; cost €1.44 per gotë; ready'); }
 fld('pos').opts.find(o => o.label.startsWith('Jo')).go(); c.formVals().actions[0].go();
-{ const g = c.prodOf(db(), 'GL-VER'); eq([!!g, g && g.recipe, g && g.opening, g && g.cost_c, g && g.pos, c.state.frm], [true, [{ sku: 'VOD', qm: 120 }], 0, 0, false, null], 'product form (recipe): saved with its recipe, opening/cost 0, hidden from the tills'); }
+{ const g = c.prodOf(db(), 'GOT-001'); eq([!!g, g && g.recipe, g && g.opening, g && g.cost_c, g && g.pos, c.state.frm], [true, [{ sku: 'VOD', qm: 120 }], 0, 0, false, null], 'product form (recipe): saved with its recipe, opening/cost 0, hidden from the tills'); }
 c.openForm('product', { name: 'Gabim', sku: 'GB-1', cat: 'Pije', catQ: 'Pije', unit: 'gotë', unitQ: 'gotë', tax: 'E', rec: true, lines: [{ ...c.newLine(), fresh: false, sku: 'VOD', artQ: 'Vodka', qty: '4 kg' }] }); typeF('price', '1.00');
 { const v = c.formVals(); eq([v.actions[0].disabled, /Kontrolloni sasinë te rreshti 1/.test(v.msg)], [true, true], 'recipe line: a quantity in the wrong unit blocks the save'); c.state.frm = null; }
 c.openProduct('VOD'); c.drawerVals().actions[0].go(); { const v = c.formVals(); eq([fld('unit'), v.fields.some(f => f.label === 'Njësia' && f.isInfo && /nuk ndryshohet/.test(f.value)), v.fields.some(f => f.label === 'Lloji' && f.isInfo)], [undefined, true, true], 'edit form: a locked unit is an info field; an ingredient with stock cannot switch to a recipe'); c.state.frm = null; }
@@ -1247,7 +1287,7 @@ c.state.db = { ...db(), products: db().products.filter(p => p.sku !== 'OLD') };
   eq([cp.stock_qm, cp.stock_by_wh, Object.keys(cp).some(x => x === 'recipe' || x === 'pack')], [c.makeQm(k(), db()), { W1: c.makeQm(k(), db(), 'W1'), W2: 0 }, false], 'catalogue: a recipe ships its makeable quantity (per warehouse), never the recipe itself');
   c.updateProduct('LIM', { pack: { unit: 'thes', qm: 50000 } }); eq([c.prodOf(db(), 'LIM').pack, 'pack' in c.posCatalogPayload().products.find(p => p.sku === 'LIM')], [{ unit: 'thes', qm: 50000 }, false], 'pack: stored as info only, never sent to the tills');
   c.openProduct('LIM'); eq(c.drawerVals().meta.find(m => m.k === 'Paketimi').v, '1 thes = 50 copë', 'pack: shown in the product drawer'); c.state.dr = null;
-  eq([c.posCatalogPayload().products.some(p => p.sku === 'GL-VER'), c.posCatalogPayload().products.some(p => p.sku === 'VOD'), c.posCatalogPayload().products.length, db().products.filter(p => p.pos !== false).length], [false, true, db().products.filter(p => p.pos !== false).length, db().products.length - 1], 'catalogue: only products shown on the tills (pos !== false)'); }
+  eq([c.posCatalogPayload().products.some(p => p.sku === 'GOT-001'), c.posCatalogPayload().products.some(p => p.sku === 'VOD'), c.posCatalogPayload().products.length, db().products.filter(p => p.pos !== false).length], [false, true, db().products.filter(p => p.pos !== false).length, db().products.length - 1], 'catalogue: only products shown on the tills (pos !== false)'); }
 // zero visible products: never sent — silent on the timer, a toast only by hand
 { const all = db(); c.state.db = { ...all, products: all.products.map(p => ({ ...p, pos: false })) }; c.state.toast = null; c._catRefused = null;
   const h = c.posCatalogHash(); eq([c.posCatalogReady(false), c.state.toast, c._catRefused === h], [null, null, true], 'catalogue with zero visible products: refused silently on the timer, hash remembered');
@@ -1340,7 +1380,7 @@ c.state.db = { ...db(), products: db().products.filter(p => p.sku !== 'OLD') };
     x.state.toast = null; eq([x.updateProduct('RUM', { pack: { unit: '', qm: 700 } }), /Paketimi/.test(x.state.toast || ''), x.updateProduct('RUM', { pack: { unit: 'shishe', qm: 0 } }), x.updateProduct('RUM', { pack: { unit: 'shishe', qm: 1.5 } }), x.addProduct(P('BAD', 'Bad', 'copë', 0, 10, { pack: { unit: 'pako', qm: 2500 } })), x.prodOf(d(), 'RUM').pack, !!x.prodOf(d(), 'BAD')],
       [false, true, false, false, false, { unit: 'shishe', qm: 700 }, false], 'addProduct / updateProduct refuse an invalid pack (empty unit, qm 0 or not whole thousandths, a fraction of a whole-number unit) with a toast'); x.state.toast = null; });
   blk('pack product form', () => {
-    x.openForm('product'); x.setF({ name: 'Xhin', sku: 'xh-1', cat: 'Pije', catQ: 'Pije', unit: 'l', unitQ: 'l', tax: 'E', opening: '0', minStock: '0' }); xt('cost', '10.00'); xt('price', '15.00');
+    x.openForm('product'); x.setF({ name: 'Xhin', cat: 'Pije', catQ: 'Pije', unit: 'l', unitQ: 'l', tax: 'E', opening: '0', minStock: '0' }); xt('cost', '10.00'); xt('price', '15.00');
     const st = () => [x.formVals().actions[0].disabled, xf('packQty').err];
     eq(st(), [false, ''], 'product form: no pack → ready');
     x.setF({ packUnit: 'shishe', packUnitQ: 'shishe', packQty: '' }); const a = st(); x.setF({ packUnit: '', packUnitQ: '', packQty: '0.7' }); const b = st(); x.setF({ packUnit: 'shishe', packUnitQ: 'shishe', packQty: '0' }); const c0 = st(); x.setF({ packQty: 'abc' }); const c1 = st(); x.setF({ packQty: '0.0005' }); const c2 = st();
@@ -1348,8 +1388,8 @@ c.state.db = { ...db(), products: db().products.filter(p => p.sku !== 'OLD') };
     eq([a, b, c0, c1, c2, c3], [[true, '1'], [true, '1'], [true, '1'], [true, '1'], [true, '1'], [true, '1', true]], 'product form: the pack needs both halves; qty 0 / text / 4 decimals / the product\'s own unit are refused (save disabled, the reason as hint)');
     x.setF({ unit: 'copë', unitQ: 'copë', packUnit: 'pako', packUnitQ: 'pako', packQty: '1.5' }); const c4 = [...st(), /numra të plotë/.test(xf('packQty').hint)];
     x.setF({ unit: 'l', unitQ: 'l', packUnit: 'shishe', packUnitQ: 'shishe', packQty: '0.7' }); eq([c4, st(), xf('packQty').hint.startsWith('1 shishe = 0.7 l')], [[true, '1', true], [false, ''], true], 'product form: a whole-number unit needs a whole pack; shishe × 0.7 l is ready (hint 1 shishe = 0.7 l)');
-    x.formVals().actions[0].go(); eq(x.prodOf(d(), 'XH-1').pack, { unit: 'shishe', qm: 700 }, 'product form: saved pack {unit, qm thousandths}');
-    x.openProduct('XH-1'); x.drawerVals().actions[0].go(); eq([x.state.frm.packUnit, x.state.frm.packQty], ['shishe', '0.7'], 'product edit form: the pack pre-filled'); x.state.frm = null; x.state.dr = null; });
+    x.formVals().actions[0].go(); eq(x.prodOf(d(), 'XHI-001').pack, { unit: 'shishe', qm: 700 }, 'product form: saved pack {unit, qm thousandths}');
+    x.openProduct('XHI-001'); x.drawerVals().actions[0].go(); eq([x.state.frm.packUnit, x.state.frm.packQty], ['shishe', '0.7'], 'product edit form: the pack pre-filled'); x.state.frm = null; x.state.dr = null; });
   // ── a purchase typed in packs: 12 shishe × €12.00 → 8.4 l at €17.1429 / l (€17.14), the line = 12 × 12.00 = €144.00 exactly
   let bl1 = '';
   blk('pack purchase', () => {

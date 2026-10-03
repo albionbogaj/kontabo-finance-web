@@ -406,6 +406,78 @@
   src: url("b1f0a7c2-1d53-4f6e-9a21-7c5e0a4d8b11") format('woff2');
   unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
 }
+
+/* ─────────── TELEFONI (≤ 899 px) ───────────
+   Aplikacioni është ndërtuar me stile inline, prandaj këtu elementët kapen sipas përmbajtjes së atributit `style`
+   dhe mbivendosen me !important — një bllok i vetëm rregullon të gjitha faqet pa prekur qindra rreshta markup.
+   KUJDES: shfletuesi e rishkruan atributin me hapësirë pas dy pikave dhe pas presjeve brenda funksioneve
+   (`grid-template-columns: repeat(4, 1fr)`), prandaj selektorët duhet të kenë PIKËRISHT atë formë. Shelli
+   (shiriti i ikonave / menyja / koka) rregullohet nga gjendja `narrow` te komponenti. */
+@media (max-width: 899px) {
+  /* 1. ÇDO rrjetë inline bëhet një kolonë. Enumërimi i modeleve ishte i brishtë: shfletuesi e rishkruan vlerën
+     (`minmax(0,1.5fr)` → `minmax(0px, 1.5fr)`), prandaj një rregull i vetëm e zë gjithë aplikacionin. Përjashtohen
+     vetëm rrjetat që janë tashmë të vogla ose vetë-përshtatëse (çiftet etiketë/vlerë dhe auto-fill). */
+  [style*="grid-template-columns"]:not([style*="auto-fill"]):not([style*="auto auto"]):not([style*="auto 1fr"]):not([style*="auto minmax"]) {
+    grid-template-columns: 1fr !important;
+  }
+
+  /* 2. titujt e mëdhenj dhe hapësirat e gjera zbuten */
+  main h1 { font-size: 24px !important; line-height: 1.15 !important; }
+  main h2 { font-size: 18px !important; }
+  [style*="font-size: 40px"], [style*="font-size: 36px"] { font-size: 24px !important; }
+  [style*="font-size: 32px"], [style*="font-size: 30px"] { font-size: 22px !important; }
+  [style*="font-size: 26px"] { font-size: 20px !important; }
+  [style*="padding: 22px 24px"], [style*="padding: 20px 24px"], [style*="padding: 18px 20px"] { padding: 14px !important; }
+  [style*="gap: 24px"] { gap: 12px !important; }
+  [style*="margin: 12px 28px"] { margin: 10px 14px 0 !important; }
+
+  /* 2b. rreshti i titullit të faqes mbështillet; grupet e çipave (periudha, statuset, tabet) rrëshqasin anash */
+  /* çdo rresht i gjerë me kokë+veprime mbështillet në telefon (titulli, numëruesi, filtrat, butonat) */
+  main [style*="display: flex"][style*="align-items: center"][style*="gap: 8px"],
+  main [style*="display: flex"][style*="align-items: center"][style*="gap: 10px"],
+  main [style*="display: flex"][style*="align-items: center"][style*="gap: 12px"],
+  [style*="justify-content: space-between"][style*="align-items: flex-end"],
+  [style*="justify-content: space-between"][style*="align-items: center"][style*="gap: 16px"] { flex-wrap: wrap !important; }
+  main h1 + * { min-width: 0; }
+  /* rreshtat e tabeve me vijë poshtë (statuset e faturave, tabet e raporteve) rrëshqasin anash */
+  [style*="display: flex"][style*="gap: 2px"][style*="border-bottom"],
+  [style*="display: flex"][style*="gap: 2px"][style*="padding: 3px"],
+  [style*="display: flex"][style*="gap: 4px"][style*="padding: 3px"],
+  [style*="display: flex"][style*="gap: 6px"][style*="overflow-x"] { max-width: 100% !important; overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+
+  /* 3. tabelat rrëshqasin horizontalisht brenda kartelës së vet (kolonat nuk ngjishen) */
+  main :where(div, section):has(> table) { overflow-x: auto !important; -webkit-overflow-scrolling: touch; }
+  main table { min-width: 560px; }
+  main th, main td { white-space: nowrap; }
+  [style*="display: flex"][style*="gap: 2px"][style*="border-bottom"] > button { flex: 0 0 auto; }
+
+  /* 4. sirtarët e detajeve zënë gjithë ekranin */
+  aside[role="dialog"] { inset: 0 !important; width: auto !important; max-width: none !important;
+    border-radius: 0 !important; z-index: 70 !important; }
+
+  /* 5. dritaret modale (parapamja e faturës, format, paleta e komandave) */
+  /* parapamja A4: dokumenti sipër (me rrotullim), veprimet poshtë; faqja shkallëzohet nga e majta që të fillojë në ekran */
+  [style*="width: min(1060px, 100%)"] { width: 100% !important; height: 100% !important; max-height: none !important;
+    grid-template-rows: minmax(0, 1fr) auto !important; gap: 10px !important; }
+  iframe[title="Parapamje e dokumentit A4"] { transform-origin: top left !important; }
+  iframe[title="Parapamje e dokumentit A4"] + *, [style*="width: min(1060px, 100%)"] > div:last-child { align-self: end; }
+  [style*="width: min(420px, 100%)"] { width: 100% !important; }
+  [style*="place-items: center"][style*="padding: 20px"] { padding: 0 !important; }
+
+  /* 5b. ekrani i hyrjes: pa panelin e marketingut (ai është për desktop), vetëm kartela e hyrjes me rrotullim */
+  [style*="position: fixed"][style*="z-index: 95"] { grid-template-rows: 1fr !important; overflow-y: auto !important; }
+  [style*="position: fixed"][style*="z-index: 95"] > div:first-child { display: none !important; }
+  [style*="position: fixed"][style*="z-index: 95"] > div:last-child { padding: 18px 14px !important; align-content: start !important; }
+
+  /* 6. prekja: objektivat nën 36 px janë të vështira për gishtin; nën 16 px iOS-i e zmadhon vetë faqen */
+  button, [role="button"] { min-height: 36px; }
+  input, select, textarea { font-size: 16px !important; }
+}
+
+/* ─────────── TABLETI (900–1200 px) ─────────── */
+@media (min-width: 900px) and (max-width: 1200px) {
+  [style*="grid-template-columns: repeat(4, 1fr)"] { grid-template-columns: repeat(2, 1fr) !important; }
+}
 </style>
 <style>
 html,body{margin:0;padding:0;background:#F5F8FC;color:#10243A;font-family:Manrope,system-ui,sans-serif;-webkit-font-smoothing:antialiased}
@@ -463,10 +535,10 @@ input,select{font-family:inherit}
 </style>
 </helmet>
 <div style="position:fixed;inset:0;background:radial-gradient(900px 500px at 8% -10%,rgba(37,99,235,.10),transparent 60%),radial-gradient(700px 400px at 100% 100%,rgba(37,99,235,.06),transparent 60%),#F5F8FC;z-index:0"></div>
-<div style="position:relative;z-index:1;display:grid;grid-template-columns:72px 224px 1fr;height:100vh;overflow:hidden;visibility:{{ appVis }}">
+<div style="position:relative;z-index:1;display:grid;grid-template-columns:{{ shellCols }};height:100vh;overflow:hidden;visibility:{{ appVis }}">
 
   <!-- icon rail -->
-  <nav aria-label="Modulet" style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 0;border-right:1px solid {{ railBorder }};background:{{ railBg }};backdrop-filter:blur(24px);overflow-y:auto;transition:background .2s">
+  <nav aria-label="Modulet" style="display:flex;flex-direction:column;align-items:center;gap:4px;padding:14px 0;border-right:1px solid {{ railBorder }};background:{{ railBg }};backdrop-filter:blur(24px);overflow-y:auto;transition:background .2s;{{ railFix }}">
     <img src="41c485ee-a83e-4c75-9368-0c6295c697e4" alt="Kontabo ERP" style="width:40px;height:40px;border-radius:12px;margin-bottom:{{ logoMb }};box-shadow:0 6px 16px -6px rgba(16,36,58,.45)">
     <sc-if value="{{ isAdmin }}" hint-placeholder-val="{{ false }}"><span style="font-size:9px;font-weight:800;letter-spacing:.12em;color:#38BDF8;margin-bottom:8px">ADMIN</span></sc-if>
     <sc-for list="{{ rail }}" as="s" hint-placeholder-count="12">
@@ -478,7 +550,7 @@ input,select{font-family:inherit}
   </nav>
 
   <!-- secondary nav -->
-  <aside style="display:flex;flex-direction:column;border-right:1px solid rgba(16,36,58,.06);background:rgba(255,255,255,.4);backdrop-filter:blur(24px);padding:18px 12px;overflow-y:auto">
+  <aside style="display:flex;flex-direction:column;border-right:1px solid rgba(16,36,58,.06);background:rgba(255,255,255,.92);backdrop-filter:blur(24px);padding:18px 12px;overflow-y:auto;{{ menuFix }}">
     <div style="font-family:Manrope,sans-serif;letter-spacing:-.025em;font-weight:800;font-size:24px;letter-spacing:-.01em;padding:0 8px 14px">{{ sectionTitle }}</div>
     <sc-for list="{{ subnav }}" as="it" hint-placeholder-count="6">
       <button sc-camel-on-click="{{ it.go }}" style="display:flex;align-items:center;gap:10px;width:100%;text-align:left;padding:8px 10px;border:0;border-radius:10px;cursor:pointer;font-size:13.5px;background:{{ it.bg }};color:{{ it.fg }};font-weight:{{ it.w }}" style-hover="background:rgba(16,36,58,.05)">
@@ -496,12 +568,21 @@ input,select{font-family:inherit}
     </sc-if>
   </aside>
 
+  <sc-if value="{{ navOpen }}" hint-placeholder-val="{{ false }}">
+    <div sc-camel-on-click="{{ closeNav }}" aria-hidden="true" style="position:fixed;inset:0;z-index:60;background:rgba(16,36,58,.35);backdrop-filter:blur(2px)"></div>
+  </sc-if>
+
   <!-- main -->
   <main style="display:flex;flex-direction:column;min-width:0;overflow:hidden">
-    <header style="position:relative;z-index:30;display:flex;align-items:center;gap:12px;padding:12px 24px;border-bottom:1px solid rgba(16,36,58,.06);background:rgba(255,255,255,.5);backdrop-filter:blur(24px)">
-      <button sc-camel-on-click="{{ openCmd }}" style="display:flex;align-items:center;gap:10px;width:420px;padding:9px 12px;border:1px solid rgba(16,36,58,.08);border-radius:10px;background:rgba(255,255,255,.7);color:#526477;font-size:13.5px;cursor:text;text-align:left">
+    <header style="position:relative;z-index:30;display:flex;align-items:center;gap:12px;padding:{{ padHead }};border-bottom:1px solid rgba(16,36,58,.06);background:rgba(255,255,255,.5);backdrop-filter:blur(24px)">
+      <sc-if value="{{ narrow }}" hint-placeholder-val="{{ false }}">
+        <button sc-camel-on-click="{{ toggleNav }}" aria-label="Menyja" style="width:40px;height:40px;flex:0 0 auto;border:1px solid rgba(16,36,58,.08);border-radius:11px;background:rgba(255,255,255,.8);display:grid;place-items:center;cursor:pointer">
+          <svg width="18" height="18" sc-camel-view-box="0 0 24 24" fill="none" stroke="#10243A" stroke-width="2" stroke-linecap="round"><path d="M4 7h16"></path><path d="M4 12h16"></path><path d="M4 17h16"></path></svg>
+        </button>
+      </sc-if>
+      <button sc-camel-on-click="{{ openCmd }}" style="display:flex;align-items:center;gap:10px;width:{{ searchW }};min-width:0;flex:1 1 auto;padding:9px 12px;border:1px solid rgba(16,36,58,.08);border-radius:10px;background:rgba(255,255,255,.7);color:#526477;font-size:13.5px;cursor:text;text-align:left">
         <svg width="16" height="16" sc-camel-view-box="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.5-3.5"></path></svg>
-        <span style="flex:1">Kërko fatura, klientë, produkte…</span>
+        <span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ searchLabel }}</span>
         <kbd style="font-family:inherit;font-size:11px;padding:2px 6px;border-radius:6px;border:1px solid rgba(16,36,58,.1);background:#fff">⌘K</kbd>
       </button>
       <div style="flex:1"></div>
@@ -540,7 +621,7 @@ input,select{font-family:inherit}
       <div style="margin:12px 28px 0;padding:10px 14px;border-radius:10px;background:rgba(217,119,6,.10);border:1px solid rgba(217,119,6,.25);color:#B45309;font-size:13px;font-weight:600">{{ posLedgerBanner }}</div>
     </sc-if>
 
-    <div style="flex:1;overflow-y:auto;padding:24px 28px 40px">
+    <div style="flex:1;overflow-y:auto;padding:{{ padMain }}">
 
       <!-- DASHBOARD -->
       <sc-if value="{{ isDashboard }}" hint-placeholder-val="{{ true }}">
@@ -1693,6 +1774,8 @@ input,select{font-family:inherit}
 <script type="text/x-dc" data-dc-script="" data-props="{&quot;plan&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;trial&quot;,&quot;baze&quot;,&quot;pro&quot;,&quot;kontabilist&quot;],&quot;default&quot;:&quot;pro&quot;,&quot;tsType&quot;:&quot;'trial'|'baze'|'pro'|'kontabilist'&quot;,&quot;section&quot;:&quot;Abonimi&quot;},&quot;trialDays&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:14,&quot;min&quot;:0,&quot;max&quot;:14,&quot;step&quot;:1,&quot;unit&quot;:&quot;ditë&quot;,&quot;tsType&quot;:&quot;number&quot;,&quot;section&quot;:&quot;Abonimi&quot;}}">
 class Component extends DCLogic {
   state = { section:'dashboard', page:'Paneli', range:'Këtë muaj', statusTab:'Të gjitha', q:'', cq:'', drawer:null, modal:null, cmdk:false, toast:null, confirm:null, fiscalTab:'Arkat', cycle:'m', users:4,
+    // telefoni: nën 900 px shiriti i ikonave dhe menyja bëhen sirtar mbi përmbajtjen (narrow), `nav` = sirtari i hapur
+    narrow:(()=>{ try{ return window.innerWidth<900; }catch(e){ return false; } })(), nav:false,
     modules:{ fin:true, shitje:true, stok:true, pos:true, hr:false, prodhim:false, kontab:false, crm:false },
     // db = every business record (sales, purchases, payments, expenses, stock movements, master data, fiscal queue).
     // Seeded on first run, persisted to localStorage, replaced by the backend API later — see persist()/load().
@@ -2167,11 +2250,24 @@ class Component extends DCLogic {
   // a recipe product is stored with opening 0 and cost 0 (its cost is derived from the ingredients); `pos` (default true) = shown on the tills; `pack` = how the product is bought / counted (packError; never sent to the tills).
   // Both refuse (toast, false) what productError() rejects: recipe rules, a unit change once the unit is locked
   _recipeNorm(p){ const n={...p}; if(!this.isRecipe(n)) delete n.recipe; if(n.pack===null) delete n.pack; return this.isRecipe(n)?{...n,opening:0,openCost_c:0,cost_c:0,cost_t:0}:n; }
+  // the SKU is the system's, never the user's: a caller without one (or with a code that is already taken) gets a fresh one
+  // generated against the state being committed — two products added in the same second can never share a code
   addProduct(p){ const err=this.productError(this.view(),p,null); if(err){ this.toast(err,'#B45309'); return false; } // the rules see the POS ledger's movements too (view)
-    this.commit(d=>({products:[...d.products,this._recipeNorm({...p,cat:this.canonCat(d,p.cat)})],categories:this.withCategory(d,p.cat)}),'Produkti “'+p.name+'” u shtua'); return true; }
+    this.commit(d=>{ const used=new Set(d.products.map(x=>String(x.sku||'').trim().toUpperCase())), want=String(p.sku||'').trim().toUpperCase();
+      const sku=want&&!used.has(want)?want:this.newSku([...d.products,...this.view().products],p.name,p.cat);
+      return {products:[...d.products,this._recipeNorm({...p,sku,cat:this.canonCat(d,p.cat)})],categories:this.withCategory(d,p.cat)}; },'Produkti “'+p.name+'” u shtua'); return true; }
   // edit of the master data (price/cost stay NET cents; sku is the key of every movement, so it is never changed here); recipe:null / [] removes the recipe
   updateProduct(sku,patch){ const V=this.view(), cur=this.prodOf(V,sku); if(cur){ const err=this.productError(V,{...cur,...patch},cur,patch); if(err){ this.toast(err,'#B45309'); return false; } }
     this.commit(d=>{ const q=patch.cat!==undefined?{...patch,cat:this.canonCat(d,patch.cat)}:patch; return {products:d.products.map(p=>p.sku===sku?this._recipeNorm({...p,...q}):p),categories:this.withCategory(d,patch.cat)}; },'Produkti u përditësua'); return true; }
+  /* ───────── SKU: caktohet GJITHMONË vetvetiu (kërkesa e pronarit, 03.10.2026) — kasieri / kontabilisti nuk shkruan kurrë kod ─────────
+     Prefiksi: fjala e parë e emrit që ka shkronjë, 3 shkronja ASCII (ë→e, ç→c si te norm()); pa emër → nga kategoria → 'ART'.
+     Pastaj numri rendor i PREFIKSIT +1, me zero deri në 3 shifra: 'PAN-001', 'PAN-002'. Deterministik dhe unik — kërkohet
+     derisa të gjendet një kod i lirë mbi çdo SKU që ekziston, edhe mbi atë të ardhur nga arkat (view()). */
+  skuPrefix(name,cat){ const first=s=>this.norm(s).split(' ').filter(Boolean), pick=l=>l.find(w=>/^[a-z]/.test(w))||l.find(w=>/[a-z]/.test(w))||l[0]||'';
+    const w=pick(first(name))||pick(first(cat)); return w.slice(0,3).toUpperCase()||'ART'; }
+  newSku(products,name,cat){ const pre=this.skuPrefix(name,cat), used=new Set((products||[]).map(p=>String(p.sku||'').trim().toUpperCase()));
+    let n=0; for(const u of used){ const m=/^([A-Z0-9]+)-0*(\d+)$/.exec(u); if(m&&m[1]===pre&&+m[2]>n) n=+m[2]; }
+    let sku=''; do { sku=pre+'-'+String(++n).padStart(3,'0'); } while(used.has(sku)); return sku; }
   /* ───────── categories: a managed list (db.categories = [{id,name,note}]) seeded from the distinct product categories ───────── */
   get CATEGORIES(){ return (this.state.db&&this.state.db.categories)||[]; }
   catSlug(name){ return this.norm(name).replace(/ /g,'-')||'k'; }
@@ -3539,7 +3635,7 @@ class Component extends DCLogic {
       purchase:{supplier:'',supplierQ:'',supplierOpen:false,due,lines:[{...this.newLine(),fresh:false,artOpen:false}],receive:true},
       payment:{amount:'',account:this.bankAccount()},
       expense:{category:'',categoryQ:'',categoryOpen:false,vendor:'',desc:'',net:'',rate:this.defaultTax(),account:this.bankAccount()},
-      product:{name:'',sku:'',barcode:'',cat:'',catQ:'',catOpen:false,unit:'copë',unitQ:'copë',unitOpen:false,tax:this.defaultTax(),price:'',priceG:'',cost:'',costG:'',opening:'0',minStock:'0',pos:true,rec:false,lines:[{...this.newLine(),fresh:false,artOpen:false}],packUnit:'',packUnitQ:'',packUnitOpen:false,packQty:''},
+      product:{name:'',barcode:'',cat:'',catQ:'',catOpen:false,unit:'copë',unitQ:'copë',unitOpen:false,tax:this.defaultTax(),price:'',priceG:'',cost:'',costG:'',opening:'0',minStock:'0',pos:true,rec:false,lines:[{...this.newLine(),fresh:false,artOpen:false}],packUnit:'',packUnitQ:'',packUnitOpen:false,packQty:''},
       category:{name:'',note:''},
       adjust:{sku:'',artQ:'',artOpen:false,counted:'',pk:false},
       customer:{name:'',type:'Biznes',nui:'',fiscal:'',city:'',contact:'',address:''},
@@ -3726,7 +3822,7 @@ class Component extends DCLogic {
       const edit=f.edit||'', orig=edit?this.PRODUCTS.find(p=>p.sku===edit):null, vatOn=this.vatOn(), rate=vatOn&&this.TAX[f.tax]?this.TAX[f.tax].rate:0;
       const price=this.toT(f.price), cost=this.toT(f.cost), priceG=this.toT(f.priceG), costG=this.toT(f.costG);
       const opening=f.opening===''?0:this.toQ(f.opening)??(f.opening==='0'?0:null), minS=f.minStock===''?0:this.toQ(f.minStock)??(f.minStock==='0'?0:null);
-      const skuDup=!edit&&!!f.sku&&this.PRODUCTS.some(p=>this.norm(p.sku)===this.norm(f.sku));
+      // SKU: e cakton sistemi — te produkti i ri shfaqet kodi i radhës (nga emri / kategoria), te redaktimi kodi i vet (kurrë i ndryshueshëm)
       const cats=this.CATEGORIES.map(c=>({id:c.name,label:c.name,sub:c.note||''}));
       const pair=(net,gross,label)=>[txt(net,label+' pa TVSH (€)',{half:true,decimal:true,err:f[net]!==''&&this.toT(f[net])===null,hint:'deri në 4 numra pas presjes',set:ev=>{const v=ev.target.value,c=this.toT(v);set({[net]:v,[gross]:v===''?'':c===null?'':this.fromT(this.grossOfT(c,rate))});}}),
         txt(gross,label+' me TVSH (€)',{half:true,decimal:true,err:f[gross]!==''&&this.toT(f[gross])===null,hint:(vatOn?'TVSH '+rate+'%':'pa TVSH — kompania nuk është e regjistruar (grupi A)')+' · ruhen të dyja anët: kjo shtypet në kupon siç e shkruani (deri në 4 dhjetore)',set:ev=>{const v=ev.target.value,c=this.toT(v);set({[gross]:v,[net]:v===''?'':c===null?'':this.fromT(this.netOfT(c,rate))});}})];
@@ -3735,7 +3831,7 @@ class Component extends DCLogic {
       // unit: the full list as a combo, LOCKED (info field) once the product has an opening, a movement or is an ingredient of a recipe;
       // "Shfaqe në POS" (pos, default on); Lloji: stock product or RECIPE — the recipe lines are the ingredients (stock products only, qty in
       // the ingredient's unit, `l` also in cl/ml), the cost comes from them (no cost / opening / minimum fields); pack = optional (purchases / transfers / counts may be typed in packs)
-      const sku=(edit||f.sku||'').trim().toUpperCase(), unitLock=!!orig&&this.unitLocked(db,orig), users=orig?this.usedIn(db,orig.sku):[];
+      const sku=(edit||this.newSku(db.products,f.name,f.cat)).trim().toUpperCase(), unitLock=!!orig&&this.unitLocked(db,orig), users=orig?this.usedIn(db,orig.sku):[];
       const recBlock=orig&&!this.isRecipe(orig)?(users.length?'përdoret si përbërës te '+users.map(p=>p.name).join(', '):(orig.opening||this.stockOf(orig.sku)||this.hasMoves(db,orig.sku))?'ka gjendje fillestare ose lëvizje stoku':''):'';
       const isRec=!!f.rec&&!recBlock, unit=unitLock?orig.unit:f.unit;
       const units=this.UNITS.map(u=>({id:u,label:u,sub:this.unitDecimals(u)?'deri në 3 decimale':'numra të plotë'}));
@@ -3745,7 +3841,7 @@ class Component extends DCLogic {
       // pack: both halves or none; qm a whole number of thousandths > 0 (toQ), another unit than the product's, whole for a whole-number unit
       const packQm=f.packQty===''||f.packQty==null?null:this.toQ(f.packQty), pack=!isRec&&f.packUnit&&packQm?{unit:f.packUnit,qm:packQm}:null, packE=pack?this.packError(pack,unit):'';
       const packErr=!isRec&&(!!f.packUnit!==(f.packQty!==''&&f.packQty!=null)||(f.packQty!==''&&f.packQty!=null&&packQm===null)||!!packE);
-      fields=[txt('name','Emri',{half:true,err:false}),txt('sku','SKU',{half:true,err:skuDup,hint:skuDup?'SKU ekziston':(edit?'nuk ndryshohet':''),dis:!!edit}),txt('barcode','Barkodi',{half:true,ph:'opsional'}),combo('cat','Kategoria',cats,{free:true,half:true,ph:'zgjidhni ose shkruani një të re',hint:f.cat&&!this.findCategory(this.CATEGORIES,f.cat)?'e re — krijohet me ruajtjen':''}),
+      fields=[txt('name','Emri',{half:true,err:false}),info('SKU',sku+' · '+(edit?'nuk ndryshohet (është kyçi i çdo lëvizjeje)':'caktohet vetvetiu'),{half:true,color:'#526477'}),txt('barcode','Barkodi',{half:true,ph:'opsional'}),combo('cat','Kategoria',cats,{free:true,half:true,ph:'zgjidhni ose shkruani një të re',hint:f.cat&&!this.findCategory(this.CATEGORIES,f.cat)?'e re — krijohet me ruajtjen':''}),
         unitLock?info('Njësia',orig.unit+' · nuk ndryshohet (ka gjendje fillestare, lëvizje, përdoret në recetë ose është në një dokument draft)',{half:true,color:'#526477'}):combo('unit','Njësia',units,{half:true,max:units.length,ph:'zgjidhni njësinë',hint:f.unit?'':'zgjidhni nga lista'}),taxSeg,
         seg('pos','Shfaqe në POS',[[true,'Po — shitet në arkë'],[false,'Jo — vetëm në ERP']],{half:true}),
         recBlock?info('Lloji','Mall me stok · nuk bëhet recetë ('+recBlock+')',{half:true,color:'#526477'}):seg('rec','Lloji',[[false,'Mall me stok'],[true,'Recetë (nga përbërësit)']],{half:true,pick:v=>set(x=>({rec:v,lines:x.lines&&x.lines.length?x.lines:[{...this.newLine(),fresh:false,artOpen:false}]}))}),
@@ -3757,7 +3853,7 @@ class Component extends DCLogic {
             combo('packUnit','Paketimi (opsional)',units,{half:true,max:units.length,ph:'p.sh. pako, shishe'}),txt('packQty','Sasia në paketim'+(unit?' ('+unit+')':''),{half:true,decimal:true,err:packErr,ph:'p.sh. 24 ose 0.7',hint:packE||(pack?'1 '+pack.unit+' = '+this.fmtQ(pack.qm)+' '+(unit||'')+' · blerjet, transferimet dhe numërimi mund të shkruhen në '+pack.unit:'')})])];
       if(isRec) sub='Receta: kur shitet produkti dalin nga stoku përbërësit e saj (sasia në njësinë e përbërësit për 1 njësi të shitur); produkti nuk ka stok as kosto të vetën — kostoja llogaritet nga përbërësit.'+(vatOn?'':' Kompania nuk është e regjistruar për TVSH: shitet në grupin A (0 %).');
       if(isRec) msg=badLine?(badLine.ev.err==='noprod'?'Zgjidhni përbërësin te rreshti '+badLine.n+' ose hiqeni.':badLine.ev.err==='recipe'?'“'+badLine.ev.prod.name+'” (rreshti '+badLine.n+') ka vetë recetë — përbërësit duhet të jenë mall me stok.':'Kontrolloni sasinë te rreshti '+badLine.n+' (në njësinë e përbërësit, > 0).'):recErr;
-      const ready=!!f.name.trim()&&!!f.sku.trim()&&!skuDup&&price!==null&&priceG!==null&&!!f.cat&&!!unit&&(isRec?(!badLine&&!recErr):(cost!==null&&costG!==null&&opening!==null&&minS!==null&&!packErr));
+      const ready=!!f.name.trim()&&!!sku&&price!==null&&priceG!==null&&!!f.cat&&!!unit&&(isRec?(!badLine&&!recErr):(cost!==null&&costG!==null&&opening!==null&&minS!==null&&!packErr));
       const prices=()=>({price_t:price,price_c:this.cOfT(price),cost_t:isRec?0:cost,cost_c:isRec?0:this.cOfT(cost),gross_t:priceG});   // gross_t: the gross side exactly as it stands in the form (verbatim on the coupon)
       const extra=()=>({pos:f.pos!==false,...(isRec?{recipe}:{})});
       actions=[edit?{label:'Ruaj',primary:true,disabled:!ready,go:()=>{ if(!this.updateProduct(edit,{name:f.name.trim(),barcode:f.barcode||'—',cat:f.cat.trim(),unit,tax:f.tax,...prices(),minStock:isRec?0:minS||0,...extra(),...(isRec?{}:{recipe:null}),pack})) return; close(); this.openProduct(edit); }}
@@ -3984,7 +4080,7 @@ class Component extends DCLogic {
     if(d.kind==='product'){
       const p=this.prodOf(db,d.id); if(!p) return null;
       const rec=this.isRecipe(p), users=this.usedIn(db,p.sku), whs0=db.warehouses||[];
-      const edit={label:'Redakto',kind:'primary',go:()=>this.openForm('product',{edit:p.sku,name:p.name,sku:p.sku,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,catQ:p.cat,unit:p.unit,unitQ:p.unit,tax:p.tax,price:this.fromT(this.priceT(p)),priceG:this.fromT(this.grossT(p)),cost:this.fromT(this.costT(p)),costG:this.fromT(this.grossOfT(this.costT(p),this.effRate(p.tax))),minStock:this.fmtQ(p.minStock).replace(/,/g,''),
+      const edit={label:'Redakto',kind:'primary',go:()=>this.openForm('product',{edit:p.sku,name:p.name,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,catQ:p.cat,unit:p.unit,unitQ:p.unit,tax:p.tax,price:this.fromT(this.priceT(p)),priceG:this.fromT(this.grossT(p)),cost:this.fromT(this.costT(p)),costG:this.fromT(this.grossOfT(this.costT(p),this.effRate(p.tax))),minStock:this.fmtQ(p.minStock).replace(/,/g,''),
         pos:p.pos!==false,rec,lines:rec?p.recipe.map(r=>({...this.newLine(),fresh:false,artOpen:false,sku:r.sku,artQ:(this.prodOf(db,r.sku)||{name:r.sku}).name,qty:this.fmtQ(r.qm).replace(/,/g,'')})):[{...this.newLine(),fresh:false,artOpen:false}],packUnit:p.pack?p.pack.unit:'',packUnitQ:p.pack?p.pack.unit:'',packQty:p.pack?this.fmtQ(p.pack.qm).replace(/,/g,''):''})};
       const posMeta={k:'Shfaqet në POS',v:p.pos===false?'Jo — vetëm në ERP':'Po',color:p.pos===false?'#B45309':'#10243A'}, packMeta=p.pack?[{k:'Paketimi',v:'1 '+p.pack.unit+' = '+this.fmtQ(p.pack.qm)+' '+p.unit}]:[];
       // a RECIPE product: no stock of its own — what the ingredients allow, the cost derived from them, the recipe itself
@@ -5031,8 +5127,11 @@ class Component extends DCLogic {
     this._ledI=setInterval(()=>{ if(this.ledgerOn()) this.ledgerTick(); else if(this._ledProbe==='fail') this.ledgerReprobe(); },15000);
     this._k=(e)=>{ if(!this.state.session) return; if((e.metaKey||e.ctrlKey)&&e.key.toLowerCase()==='k'){e.preventDefault();this.setState(s=>({cmdk:!s.cmdk}));} if(e.key==='Escape')this.setState({cmdk:false,drawer:null,modal:null,confirm:null,dr:null,frm:null}); };
     window.addEventListener('keydown',this._k);
+    // kalimi telefon ↔ desktop: vetëm kur kufiri kapërcehet (pa rirender në çdo piksel), dhe sirtari mbyllet
+    this._rs=()=>{ const nw=window.innerWidth<900; if(nw!==this.state.narrow) this.setState({narrow:nw,nav:false}); };
+    window.addEventListener('resize',this._rs); window.addEventListener('orientationchange',this._rs);
   }
-  componentWillUnmount(){ window.removeEventListener('keydown',this._k); window.removeEventListener('hashchange',this._h); clearTimeout(this._posT); clearInterval(this._posI); clearInterval(this._ledI); clearTimeout(this._plT); clearTimeout(this._plRefT); }
+  componentWillUnmount(){ window.removeEventListener('keydown',this._k); window.removeEventListener('hashchange',this._h); window.removeEventListener('resize',this._rs); window.removeEventListener('orientationchange',this._rs); clearTimeout(this._posT); clearInterval(this._posI); clearInterval(this._ledI); clearTimeout(this._plT); clearTimeout(this._plRefT); }
   routeHash(){
     const h=(location.hash||'').replace('#','');
     const map={fatura:['shitje','Fatura'],'faturim-masiv':['shitje','Faturim masiv'],kliente:['shitje','Klientë'],produkte:['produkte','Produktet'],kategorite:['produkte','Kategoritë'],fiskalizimi:['settings','Fiskalizimi'],abonimi:['settings','Abonimi'],kontabilist:['kompania','Kompanitë e mia'],perdoruesit:['kompania','Përdoruesit'],dashboard:['dashboard','Paneli'],raporte:['raporte','Shitje'],kompania:['kompania','Të dhënat e kompanisë'],cilesime:['settings','Llogaria']};
@@ -5081,7 +5180,7 @@ class Component extends DCLogic {
     const nav=s.admin?this.ADMIN_NAV:this.NAV.filter(n=>(!n.mod||s.modules[n.mod])&&(!modFlag[n.id]||flags[modFlag[n.id]]!==false));
     const sec=nav.find(n=>n.id===s.section)||nav[0];
     const rail=nav.map(n=>({label:n.label,icon:this.I[s.admin?n.icon:n.id],bg:n.id===s.section?(s.admin?'rgba(56,189,248,.18)':'rgba(37,99,235,.10)'):'transparent',fg:n.id===s.section?(s.admin?'#38BDF8':'#2563EB'):(s.admin?'#C7D6E6':'#3C5268'),go:()=>s.admin?this.setState({section:n.id,page:n.items[0],dr:null,frm:null,rTab:''}):this.go(n.id,n.items[0])}));
-    const subnav=(s.admin?sec.items:items(sec)).map(l=>({label:l,go:()=>s.admin?this.setState({section:sec.id,page:l,dr:null,frm:null,rTab:''}):this.go(sec.id,l),bg:l===s.page?'rgba(255,255,255,.9)':'transparent',fg:l===s.page?'#10243A':'#3C5268',w:l===s.page?700:500,dot:l===s.page?'#2563EB':'transparent'}));
+    const subnav=(s.admin?sec.items:items(sec)).map(l=>({label:l,go:()=>{ if(s.narrow) this.setState({nav:false}); return s.admin?this.setState({section:sec.id,page:l,dr:null,frm:null,rTab:''}):this.go(sec.id,l); },bg:l===s.page?'rgba(255,255,255,.9)':'transparent',fg:l===s.page?'#10243A':'#3C5268',w:l===s.page?700:500,dot:l===s.page?'#2563EB':'transparent'}));
     const pageKey=s.admin?'A:'+page:(s.section==='raporte'?'R:'+page:(s.section==='pos'?'P:'+page:(s.section==='blerje'&&page==='Kthime'?'Kthime blerjeje':page)));
     const isDashboard=!s.admin&&page==='Paneli', isFatura=!s.admin&&page==='Fatura', isMasiv=!s.admin&&page==='Faturim masiv'&&flags.faturim_masiv!==false, isKliente=!s.admin&&page==='Klientë', isProdukte=!s.admin&&page==='Produktet', isFiskal=!s.admin&&page==='Fiskalizimi', isAbonimi=!s.admin&&(page==='Abonimi'||page==='Modulet'), isKontabilist=!s.admin&&page==='Kompanitë e mia', isPerdorues=!s.admin&&page==='Përdoruesit';
     const tbl=s.db?this.pageTable(pageKey):null, stg=s.db?this.settingsPage(pageKey):null;
@@ -5363,6 +5462,15 @@ class Component extends DCLogic {
       userInitials:me.name.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase(),userName:me.name,userRole:me.role,
       ...loginVals,apiLine,posLedgerBanner,apiOnline:apiC.status==='online',apiAuthed:this.apiAuthed(),tenantList,hasTenants:tenantList.length>1,
       railBg:s.admin?'#10243A':'rgba(255,255,255,.55)',logoMb:s.admin?'4px':'10px',railBorder:s.admin?'rgba(255,255,255,.08)':'rgba(16,36,58,.06)',
+      // ——— telefoni ———
+      narrow:s.narrow, navOpen:s.narrow&&s.nav,
+      shellCols:s.narrow?'1fr':'72px 224px 1fr',
+      // shiriti i ikonave dhe menyja: sirtar i fiksuar mbi përmbajtjen kur ekrani është i ngushtë
+      railFix:s.narrow?(s.nav?'position:fixed;left:0;top:0;bottom:0;width:72px;z-index:61':'display:none'):'',
+      menuFix:s.narrow?(s.nav?'position:fixed;left:72px;top:0;bottom:0;width:224px;z-index:61;box-shadow:0 20px 60px -20px rgba(16,36,58,.45)':'display:none'):'',
+      toggleNav:()=>this.setState(st=>({nav:!st.nav})), closeNav:()=>this.setState({nav:false}),
+      searchW:s.narrow?'auto':'420px', searchLabel:s.narrow?'Kërko':'Kërko fatura, klientë, produkte…',
+      padMain:s.narrow?'14px 14px 32px':'24px 28px 40px', padHead:s.narrow?'10px 12px':'12px 24px',
       isTrial:plan==='trial'&&!s.admin,trialDays,trialPct:Math.round(trialDays/trial.total*100)+'%',goAbonimi:()=>this.go('settings','Abonimi'),
       isDashboard,isFatura,isKliente,isProdukte,isFiskal,isAbonimi,isKontabilist,isPerdorues,isGeneric,isTable,tbl:tbl||{},isStg,stg:stg||{},
       ranges,kpis:kpis.slice(0,8),chart,chartNote,alerts,alertCount:unread.length,hasUnread:unread.length>0,readAlerts,recentInvoices,debtors,goFatura:()=>this.go('shitje','Fatura'),greeting,dashLine,
