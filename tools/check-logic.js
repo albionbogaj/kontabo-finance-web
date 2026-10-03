@@ -2033,7 +2033,7 @@ apiBlock.then(async () => {
       const rr = Lc.state.db.posReceipts.find(r => r.id === 'lx'), iv = Lc.state.db.invoices.find(i => i.fromPos === 'lx');
       eq([!!iv, iv && iv.posNo, rr.invoiceNo, iv && iv.no === rr.invoiceNo, S.calls.length - k0], [true, 'BAR-1/0500', iv && iv.no, true, 0], 'local mode: the A4 invoice of a booked receipt as before'); clearTimeout(Lc._t); }
     // @@E-L2-END@@
-    return H;
+    return { ...H, rcv, pay, pli, TERM2 }; // (+ the receipt builders, for the blocks after the review block)
   }).catch(e => { console.log('FAIL E-L2 tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
 // @@REVIEW-L@@
 // ══ Faza B · rishikimi (E-L, L1–L11): the review findings reproduced against the same mock server — POST /pos/receipts/known answers `states`
@@ -2169,4 +2169,68 @@ apiBlock.then(async () => {
         X.logout(); done(X); }
     } finally { ctx.fetch = realFetch; }
     eq([S.bad.slice(bad0), S.noHdr], [[], []], 'mock server (review): no commit carried `_srv` rows or posSync runtime fields, every call had X-Kontabo-Client: 2');
-  }).catch(e => { console.log('FAIL review tests (E-L) threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+    return H;
+  }).catch(e => { console.log('FAIL review tests (E-L) threw: ' + (e && e.stack || e)); process.exitCode = 1; })
+// @@AUTO-MONTH@@
+// ══ ERP · (1) rifreskimi automatik i listave të kuponëve nga serveri (P:Shitje / P:Kthime / "Kuponët"): çdo POS_LIST_REFRESH ms, në heshtje, me të
+// njëjtat filtra dhe po aq rreshta sa janë ngarkuar; (2) rreshtat mujorë të librit të POS-it (kind:'month' — serveri bashkon ditët e një muaji) ══
+  .then(async (H) => { if (!H) { console.log('FAIL auto-refresh / month tests skipped: the review block did not finish'); process.exitCode = 1; return; }
+    const { S, mkT, pub, tomb, mk, enter, done, wait, until, book, TERM, line, row, rcv, pay, pli, TERM2 } = H, made = [];
+    const defer = () => { let open; const p = new Promise(r => (open = r)); return { p, open }; };
+    const mkR = () => { const x = mk(), set = x.setState.bind(x); let q = false; x.setState = u => { set(u); if (!q) { q = true; Promise.resolve().then(() => { q = false; x.componentDidUpdate(); }); } }; made.push(x); return x; };
+    const settle = async x => { await wait(); await until(() => !x._plT && !x._plRef && !(x.state.posList && x.state.posList.busy) && !(x.state.posRc && x.state.posRc.busy)); await wait(); };
+    const rcOf = (tid, k0) => S.calls.slice(k0).filter(x => x.tid === tid && /^\/pos\/receipts(\/|$)/.test(x.p) && x.p !== '/pos/receipts/known').map(x => x.m + ' ' + x.path);
+    const Q31 = 'from=2026-08-21&to=2026-09-20', ST = '&status=final%2Creturned%2Cvoid', hhmm = k => String(8 + Math.floor(k / 60)).padStart(2, '0') + ':' + String(k % 60).padStart(2, '0') + ':00';
+    const mkRc = (pfx, k) => rcv(pay(pfx + k, 'BAR-1/' + (3000 + k), 'final', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { time: hhmm(k) }), { seq: k + 1 });
+    try {
+      // ── (1) auto-refresh
+      const Ta = mkT('ta', 'Rifreskimi SH.P.K.', book(), 'on'); Ta.rc = Array.from({ length: 60 }, (_, k) => mkRc('a', k));
+      const X = mkR(); X.POS_LIST_REFRESH = 60000; await enter(X, 'own', 'ta'); await settle(X);
+      eq([!!X._plRefT, X.posListWant()], [false, null], 'auto-refresh: no timer on the dashboard (no receipt list there)');
+      X.go('pos', 'Shitje'); await settle(X);
+      eq([!!X._plRefT, X.state.posList.items.length, X.state.posList.total], [true, 50, 60], 'auto-refresh: armed while P:Shitje is the page shown (50 of 60 loaded)');
+      let k = S.calls.length; eq([await X.posListRefresh(), rcOf('ta', k)], [true, ['GET /pos/receipts?' + Q31 + ST + '&limit=50&offset=0']], 'refresh: the same filters, limit = the rows loaded (50), offset 0');
+      X.pageTable('P:Shitje').more(); await settle(X); X.openPosReceipt('a3'); await settle(X);
+      Ta.rc.push(mkRc('a', 500)); const L0 = X.state.posList, dr0 = X.state.dr, rc0 = X.state.posRc, h = defer(); S.rcHold = (tid, path) => (tid === 'ta' && path.startsWith('/pos/receipts?') ? h.p : null);
+      k = S.calls.length; const pr = X.posListRefresh(); await wait(); const mid = [X.state.posList === L0, X.pageTable('P:Shitje').rows.length, X.state.posList.busy, X.pageTable('P:Shitje').count];
+      S.rcHold = null; h.open(); const ok = await pr; await wait(); const T = X.pageTable('P:Shitje');
+      eq([mid, ok, rcOf('ta', k), X.state.posList.items.length, X.state.posList.items[0].id, T.count, T.hasMore, X.state.posList.pages, X.state.posList.key === L0.key, X.state.dr === dr0, X.state.posRc === rc0, X.drawerVals().no],
+        [[true, 60, false, '60'], true, ['GET /pos/receipts?' + Q31 + ST + '&limit=60&offset=0'], 60, 'a500', '61', true, 2, true, true, true, 'BAR-1/3003'],
+        'refresh after "Shfaq më shumë": silent (no spinner, the 60 rows stay while it reads), limit 60 offset 0 → the new receipt on top, 60 rows kept, 61 in total; the pages, the filters and the open drawer untouched');
+      ctx.document.visibilityState = 'hidden'; k = S.calls.length; const hid = await X.posListRefresh(); ctx.document.visibilityState = 'visible';
+      eq([hid, rcOf('ta', k), await X.posListRefresh()], [false, [], true], 'a hidden browser tab (document.visibilityState) asks nothing; visible again → it reads');
+      const h1 = defer(); S.rcHold = (tid, path) => (tid === 'ta' && path.startsWith('/pos/receipts?') ? h1.p : null); X.posListSync(true); await until(() => X.state.posList.busy);
+      k = S.calls.length; const busy = await X.posListRefresh(); S.rcHold = null; h1.open(); await settle(X);
+      eq([busy, rcOf('ta', k)], [false, []], 'a load on its way ("Rifresko", a filter, "Shfaq më shumë"): the timer asks nothing');
+      let first = true; const h2 = defer(); S.rcHold = (tid, path) => (tid === 'ta' && path.startsWith('/pos/receipts?') && first ? ((first = false), h2.p) : null);
+      const p1 = X.posListRefresh(); await wait(); k = S.calls.length; const again = [await X.posListRefresh(), X._plRef, rcOf('ta', k)];
+      X.posFilter({ terminal: TERM2.key }); await until(() => !X.state.posList.busy && X.state.posList.base.includes(TERM2.key)); S.rcHold = null; h2.open();
+      eq([again, await p1, X.state.posList.items.length, X.state.posList.base.includes(TERM2.key)], [[false, true, []], false, 0, true], 'one refresh at a time; an answer that arrives after the filter changed is dropped (the new filter\'s list stays)');
+      X.posFilter({ terminal: TERM.key }); await settle(X); k = S.calls.length; await X.posListRefresh();
+      eq(rcOf('ta', k), ['GET /pos/receipts?' + Q31 + '&terminal=' + TERM.key + ST + '&limit=50&offset=0'], 'the refresh keeps the terminal filter');
+      X.posFilter({ terminal: '' }); await settle(X);
+      Ta.rcDeny = true; X.posListSync(true); await settle(X); k = S.calls.length; const den = [X.state.posList.code, await X.posListRefresh(), rcOf('ta', k)]; Ta.rcDeny = false; X.posListSync(true); await settle(X);
+      eq(den, [403, false, []], 'a refused list (403) is not re-read by the timer ("Rifresko" asks again)');
+      X.setState({ section: 'settings', page: 'Fiskalizimi', fiscalTab: 'Kuponët' }); await settle(X); k = S.calls.length;
+      eq([!!X._plRefT, await X.posListRefresh(), rcOf('ta', k)], [true, true, ['GET /pos/receipts?fiscal=open&from=2025-09-21&to=2026-09-20&limit=50&offset=0']], 'the fiscal monitor\'s "Kuponët" tab refreshes the same way');
+      X.go('dashboard', 'Paneli'); await settle(X); eq([!!X._plRefT, await X.posListRefresh()], [false, false], 'leaving the list page stops the timer; nothing to refresh');
+      // the real timer (POS_LIST_REFRESH short): re-reads while the page is shown, never faster, never a loop; stops on leaving / company switch / logout
+      X.POS_LIST_REFRESH = 25; X.go('pos', 'Kthime'); await settle(X); X.openPosReceipt('a5'); await settle(X); k = S.calls.length; const t0 = RealDate.now(); await wait(300); await settle(X); const auto = rcOf('ta', k), el = RealDate.now() - t0;
+      eq([auto.length >= 2 && auto.length <= Math.floor(el / 25) + 1, [...new Set(auto)], X.state.dr && X.state.dr.id, X.state.page], [true, ['GET /pos/receipts?' + Q31 + '&status=return%2Ccancel&limit=50&offset=0'], 'a5', 'Kthime'], 'P:Kthime left open: re-read every 25 ms (' + auto.length + '× in ' + el + ' ms — never more often) with the same query, the open drawer stays');
+      X.go('dashboard', 'Paneli'); await settle(X); k = S.calls.length; await wait(120); eq([rcOf('ta', k), !!X._plRefT], [[], false], 'the timer stops when the page is left');
+      X.go('pos', 'Shitje'); await settle(X); const armed = !!X._plRefT; await X.apiSwitchTenant('t1'); await until(() => X._ledger && X._ledger.tenantId === 't1' && X._ledger.loaded); k = S.calls.length; await wait(120);
+      eq([armed, rcOf('ta', k), X.apiCfg().tenantId], [true, [], 't1'], 'company switch: the old company\'s list is never re-read');
+      X.go('pos', 'Shitje'); await settle(X); const armed2 = !!X._plRefT; X.logout(); await wait(); k = S.calls.length; await wait(120);
+      eq([armed2, !!X._plRefT, S.calls.slice(k).filter(c => /^\/pos\/receipts/.test(c.p)).length], [true, false, 0], 'logout stops the timer'); done(X);
+      // more than 200 rows loaded: the first 200 re-read, the rest kept after the overlap (no gap, no duplicate)
+      const Tb = mkT('tb', 'Dyqind SH.P.K.', book(), 'on'); Tb.rc = Array.from({ length: 230 }, (_, i) => mkRc('b', i));
+      const Y = mkR(); Y.POS_LIST_REFRESH = 60000; Y.POS_LIST_PAGE = 200; await enter(Y, 'own', 'tb'); Y.go('pos', 'Shitje'); await settle(Y); Y.pageTable('P:Shitje').more(); await settle(Y);
+      Tb.rc.push(mkRc('b', 400), mkRc('b', 401)); const n0 = Y.state.posList.items.length; k = S.calls.length; await Y.posListRefresh(); const ids = Y.state.posList.items.map(x => x.id);
+      eq([n0, rcOf('tb', k), ids.length, new Set(ids).size, ids.slice(0, 2), [...ids].sort().join() === Tb.rc.map(x => x.id).sort().join(), Y.pageTable('P:Shitje').count], [230, ['GET /pos/receipts?' + Q31 + ST + '&limit=200&offset=0'], 232, 232, ['b401', 'b400'], true, '232'],
+        '230 rows loaded: the refresh reads 200 (the server\'s maximum) and keeps the 32 after them — every receipt once, the new ones on top');
+      Y.logout(); done(Y);
+      // local mode / no server list: never a timer
+      { const Lc = new C({}); Lc._api = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' }; Lc.state.db = Lc.seedDb(); Lc.state.session = { name: 'Arben Berisha', role: 'Pronar', userId: 'u1' };
+        Lc.go('pos', 'Shitje'); Lc.componentDidUpdate(); eq([!!Lc._plRefT, await Lc.posListRefresh()], [false, false], 'local mode: P:Shitje is the book\'s list — no auto-refresh'); clearTimeout(Lc._t); }
+    } finally { for (const x of made) { x.posListAutoStop(); clearTimeout(x._plT); } delete ctx.document.visibilityState; S.rcHold = null; }
+  }).catch(e => { console.log('FAIL auto-refresh / month tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
