@@ -2705,16 +2705,18 @@ class Component extends DCLogic {
     this._ledDer={gen:L.gen,ver:L.ver,acc,wh,out}; return out; }
   // fiscal label of a row from its status counts: the worst one wins (failed → pending → other → SIM → fiscalized)
   ledgerFiscal(f){ const ks=Object.keys(f||{}).filter(k=>Number(f[k])>0); if(!ks.length) return '—'; const rank=k=>k==='failed'?0:k==='pending'?1:k==='fiscalized_sim'?3:k==='fiscalized'?4:2; ks.sort((a,b)=>rank(a)-rank(b)); return this.LEDGER_FS[ks[0]]||ks[0]; }
-  // one ledger row → its document (a day summary or one receipt), its stock movements (docId = row id) and its payments
-  ledgerRowParts(r,b){ const N=v=>Number(v)||0, t=r.terminal||{}, sum=r.kind==='day', T=r.totals||{}, date=this.fmtDate(r.date), posName=t.name||t.posId||'POS', customer=(!sum&&r.customer)||'Klient me shumicë', party=customer+' · '+posName;
+  // one ledger row → its document (a day summary, a MONTH summary or one receipt), its stock movements (docId = row id) and its payments.
+  // A month row (kind 'month', id M:<terminal>:<YYYY-MM>, date = the month's last day, no POS-<posId>-<YYYYMM>-<key6>) is the server's
+  // merge of that terminal's days of a closed month (the day rows arrive as tombstones): read exactly like a day summary
+  ledgerRowParts(r,b){ const N=v=>Number(v)||0, t=r.terminal||{}, mon=r.kind==='month', sum=r.kind==='day'||mon, T=r.totals||{}, date=this.fmtDate(r.date), posName=t.name||t.posId||'POS', customer=(!sum&&r.customer)||'Klient me shumicë', party=customer+' · '+posName;
     const items=(r.items||[]).map(i=>({name:i.name,sku:i.sku,unit:i.unit,qty:N(i.qty_q)/10000,qty_q:N(i.qty_q),unit_t:N(i.unit_t),unit_c:this.cOfT(N(i.unit_t)),rate:N(i.rate),tax:i.tax,disc_c:N(i.disc_c),sub:N(i.sub_c),vatc:N(i.vat_c),tot:N(i.tot_c),cost_c:N(i.cost_c),recipe:!!i.recipe}));
     const doc={id:r.id,kind:'Kupon POS',summary:sum,no:r.no,pos:t.posId||'',posName,branch:t.branch||'',operator:(!sum&&r.operator)||'—',date,time:String(r.lastTs||'').slice(11,16),customer,nui:(!sum&&r.nui)||'—',items,
       sub:N(T.sub_c),vat:N(T.vat_c),total:N(T.total_c),discount:N(T.discount_c),cash_c:N(T.cash_c),card_c:N(T.card_c),change_c:N(T.change_c),status:r.status||'Finalizuar',fiscal:this.ledgerFiscal(r.fiscal),fiscalRef:(!sum&&r.fiscalRef)||'—',
       counts:r.counts||{},n:N(r.n),operators:r.operators||{},fiscalOpen:r.fiscalOpen||[],origId:(!sum&&r.origId)||null,origNo:(!sum&&r.origNo)||null,shift:null,
-      termKey:t.key||'',isoDate:r.date||'',firstTime:String(r.firstTs||'').slice(11,16),fiscalCounts:r.fiscal||{},_srv:1};
-    const note='POS · '+(sum?'përmbledhje ditore':'kupon'), main=this.mainWh(b);
+      termKey:t.key||'',isoDate:r.date||'',firstTime:String(r.firstTs||'').slice(11,16),fiscalCounts:r.fiscal||{},...(mon?{month:true,isoMonth:String(r.date||'').slice(0,7),firstDate:String(r.firstTs||'').slice(0,10),lastDate:String(r.lastTs||'').slice(0,10)}:{}),_srv:1};
+    const note='POS · '+(mon?'përmbledhje mujore':sum?'përmbledhje ditore':'kupon'), main=this.mainWh(b);
     const moves=(r.moves||[]).map(m=>({date,type:m.type||(N(m.qm)<0?'sale':'sale_return'),sku:m.sku,qm:N(m.qm),wh:m.wh||main,ref:r.no,docId:r.id,party,unit_c:N(m.cost_c),via:m.via||null,note,_srv:1}));
-    const A=this.accountsOf(b), base=sum?'POS-'+String(r.date||'').replace(/-/g,'')+'-'+String(t.key||'').slice(0,6):'POS-'+r.no, lbl=sum?'Përmbledhje ditore POS':r.status==='Anulim'?'Anulim POS':r.status==='Kthim'?'Kthim POS':'Kupon POS';
+    const A=this.accountsOf(b), base=sum?'POS-'+String(r.date||'').replace(/-/g,'').slice(0,mon?6:8)+'-'+String(t.key||'').slice(0,6):'POS-'+r.no, lbl=mon?'Përmbledhje mujore POS':sum?'Përmbledhje ditore POS':r.status==='Anulim'?'Anulim POS':r.status==='Kthim'?'Kthim POS':'Kupon POS';
     const pays=(r.payments||[]).filter(p=>N(p.amount_c)).map(p=>{ const card=p.kind==='card'; let a=A.find(x=>x.id===p.account); if(!a){ const id=card?this.bankAccount(b):this.cashAccountFor(t.posId,b); a=A.find(x=>x.id===id)||{id,type:card?'Bankë':'Arkë'}; } // the frozen account no longer exists → the till's / the bank account of today
       const amt=N(p.amount_c); return {no:base+(card?'K':''),date,dir:amt>0?'in':'out',kind:'pos',ref:r.no,docId:r.id,party,amount_c:Math.abs(amt),account:a.id,method:a.type,note:lbl+' · '+(card?'kartë':'para'),user:(!sum&&r.operator)||'POS',_srv:1}; });
     return {doc,moves,pays}; }
@@ -2972,8 +2974,9 @@ class Component extends DCLogic {
     this.setState({dr:{kind:'posApi',id},drawer:null,frm:null,posRc:{id,busy:true,err:'',item:item&&item.id===id?item:null,related:[]}});
     return this.apiFetch('/pos/receipts/'+encodeURIComponent(id),{timeout:30000}).then(j=>{ if(this._rcGen!==gen||this.apiCfg().tenantId!==tid) return null; const {related,...it}=j||{}; this.setState({posRc:{id,busy:false,err:'',item:it,related:Array.isArray(related)?related:[]}}); return it; },
       e=>{ if(this._rcGen!==gen) return null; this.setState(s=>({posRc:{...(s.posRc||{}),id,busy:false,err:e.status===404?'Kuponi nuk u gjet në server':e.status===403?'Nuk keni leje për kuponët e POS-it':'Kuponi nuk u ngarkua: '+(e.message||e)}})); return null; }); }
-  // "Shiko kuponat e ditës" (a day summary): P:Shitje filtered by that terminal and that date
-  posDayReceipts(r){ const day=r.isoDate||this.toIso(r.date); this.go('pos','Shitje'); this.setState({posF:{range:'custom',from:day,to:day,terminal:r.termKey||'',status:'',q:''},posPages:null}); }
+  // "Shiko kuponat e ditës" (a day summary): P:Shitje filtered by that terminal and that date; "Shiko kuponat e muajit" (a month summary):
+  // by that terminal from the 1st to the last day of that month
+  posDayReceipts(r){ const day=r.isoDate||this.toIso(r.date), from=r.month?day.slice(0,8)+'01':day; this.go('pos','Shitje'); this.setState({posF:{range:'custom',from,to:day,terminal:r.termKey||'',status:'',q:''},posPages:null}); }
   /* ── the API-backed receipt lists (ledger mode): P:Shitje / P:Kthime and the fiscal monitor's "Kuponët" tab read GET /pos/receipts into the
      async slice state.posList={key,base,pages,busy,err,items,total}; componentDidUpdate loads it when the page / filters / search / pages change
      (the search debounced 300 ms); "Shfaq më shumë" appends the next page (offset). ── */
@@ -3070,7 +3073,7 @@ class Component extends DCLogic {
     for(const r of (d.posReceipts||[])){ const cashAcc='1000'; const lines=[];
       if(r.cash_c) lines.push(r.cash_c>0?[cashAcc,r.cash_c,0]:[cashAcc,0,-r.cash_c]); if(r.card_c) lines.push(r.card_c>0?['1010',r.card_c,0]:['1010',0,-r.card_c]);
       lines.push(r.sub>=0?['4000',0,r.sub]:['4000',-r.sub,0],r.vat>=0?['2400',0,r.vat]:['2400',-r.vat,0]); // revenue and VAT each by its own sign (a mixed receipt can net them opposite ways)
-      E(r.date,r.no,(r.summary?'Përmbledhje ditore POS · ':r.status==='Kthim'?'Kthim POS · ':r.status==='Anulim'?'Anulim kuponi POS '+(r.origNo||'')+' · ':'Kupon POS · ')+r.customer+' · '+r.posName,lines);
+      E(r.date,r.no,(r.summary?(r.month?'Përmbledhje mujore POS · ':'Përmbledhje ditore POS · '):r.status==='Kthim'?'Kthim POS · ':r.status==='Anulim'?'Anulim kuponi POS '+(r.origNo||'')+' · ':'Kupon POS · ')+r.customer+' · '+r.posName,lines);
       const cogs=this.cogsOf(r._srv?this.mvByDoc(d,r.id):this.mvByRef(d,r.no)); // a POS-ledger document owns its movements by docId
       if(cogs>0) E(r.date,r.no,'Kosto e mallit · kupon POS',[['5000',cogs,0],['1300',0,cogs]]); else if(cogs<0) E(r.date,r.no,(r.status==='Anulim'?'Anulim kuponi · malli kthehet':'Kthim malli · kupon POS'),[['1300',-cogs,0],['5000',0,-cogs]]); }
     for(const p of d.purchases){ if(p.status==='Draft'||p.status==='Anuluar') continue; E(p.date,p.no,'Blerje · '+p.supplier,[['1300',p.sub,0],['2410',p.vat,0],['2200',0,p.total]]); }
@@ -3900,21 +3903,24 @@ class Component extends DCLogic {
     const ops=Object.entries(r.operators||{}).sort((a,b)=>N(b[1].total_c)-N(a[1].total_c)), fc=Object.entries(r.fiscalCounts||{}).filter(([,n])=>N(n)>0), fo=r.fiscalOpen||[];
     const pays=(db.payments||[]).filter(p=>p._srv&&p.docId===r.id), acc=x=>(this.accountsOf(db).find(a=>a.id===x)||{name:x||'—'}).name, failed=fo.some(x=>x.status==='failed');
     const fsColor=/SIM/.test(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':r.fiscal==='Dështoi'?'#B91C1C':'#526477';
-    return {title:'Përmbledhje ditore · '+r.posName,subtitle:r.date+(r.branch?' · '+r.branch:'')+' · '+N(r.n)+(N(r.n)===1?' kupon':' kupona')+(r.firstTime?' · '+r.firstTime+'–'+r.time:''),no:r.no,
+    // a MONTH summary (the server merged the closed month's days): the month instead of the day, its first–last receipt date, "Shiko kuponat e muajit"
+    const mon=!!r.month, mLbl=mon?this.monthLabel(r.isoMonth||this.toIso(r.date).slice(0,7)):'', span=mon?(r.firstDate&&r.lastDate?this.fmtDate(r.firstDate).slice(0,5)+'–'+this.fmtDate(r.lastDate).slice(0,5):''):(r.firstTime?r.firstTime+'–'+r.time:'');
+    return {title:(mon?'Përmbledhje mujore · ':'Përmbledhje ditore · ')+r.posName,subtitle:(mon?mLbl:r.date)+(r.branch?' · '+r.branch:'')+' · '+N(r.n)+(N(r.n)===1?' kupon':' kupona')+(span?' · '+span:''),no:r.no,
       badge:fo.length?{text:fo.length+' pa fiskalizuar',...this.st(failed?'Dështoi':'Në pritje')}:{text:'Përmbledhje',...this.st('Në rregull')},close,
-      actions:[{label:'Shiko kuponat e ditës',kind:'primary',go:()=>this.posDayReceipts(r)}],
-      meta:[{k:'Data',v:r.date},{k:'Arka',v:r.posName+(r.pos?' · '+r.pos:'')},{k:'Kupona gjithsej',v:String(N(r.n))},{k:'Shitje',v:String(N(c.receipts))},{k:'Kthime',v:String(N(c.returns))},{k:'Anulime',v:String(N(c.cancels))},{k:'Të anuluara',v:String(N(c.voided))},
+      actions:[{label:mon?'Shiko kuponat e muajit':'Shiko kuponat e ditës',kind:'primary',go:()=>this.posDayReceipts(r)}],
+      meta:[mon?{k:'Muaji',v:mLbl}:{k:'Data',v:r.date},{k:'Arka',v:r.posName+(r.pos?' · '+r.pos:'')},{k:'Kupona gjithsej',v:String(N(r.n))},{k:'Shitje',v:String(N(c.receipts))},{k:'Kthime',v:String(N(c.returns))},{k:'Anulime',v:String(N(c.cancels))},{k:'Të anuluara',v:String(N(c.voided))},
         {k:'Fiskalizimi',v:r.fiscal,color:fsColor},{k:'Para',v:this.fmt(r.cash_c)},{k:'Kartë',v:this.fmt(r.card_c)},...(r.change_c?[{k:'Kusur i kthyer',v:this.fmt(r.change_c)}]:[]),...(r.discount?[{k:'Zbritje',v:this.fmt(r.discount)}]:[])],
       sections:[{title:'Operatorët',cols:[{label:'Operatori'},{label:'Kupona',align:'right'},{label:'Neto',align:'right'},{label:'Kthime',align:'right'},{label:'Anulime',align:'right'}],
           rows:ops.map(([name,o])=>({cells:[C(name,{b:true}),C(String(N(o.count)),{align:'right'}),M(N(o.total_c),{b:true}),N(o.returns_c)?M(-N(o.returns_c),{color:'#B91C1C'}):dash,N(o.cancels_c)?M(-N(o.cancels_c),{color:'#B91C1C'}):dash]}))},
         {title:'Fiskalizimi',cols:[{label:'Statusi'},{label:'Kupona',align:'right'}],rows:fc.map(([k,n])=>({cells:[this.badgeCell(this.LEDGER_FS[k]||k),C(String(N(n)),{align:'right'})]}))},
         ...(fo.length?[{title:'Kuponët pa u fiskalizuar'+(fo.length>=50?' (50 të parët)':''),cols:[{label:'Kuponi'},{label:'Ora'},{label:'Statusi'},{label:'Gabimi'}],
           rows:fo.map(x=>({link:()=>this.openPosReceipt(x.id),cells:[C(x.no,{mono:true,color:'#2563EB'}),C(String(x.ts||'').slice(11,16),{color:'#526477'}),this.badgeCell(this.LEDGER_FS[x.status]||x.status||'—'),C(x.error||'—',{color:x.error?'#B91C1C':'#8FA3B8'})]}))}]:[]),
-        {title:'Artikujt (neto e ditës)',cols:[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Çmimi mes.',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'}],
+        {title:mon?'Artikujt (neto e muajit)':'Artikujt (neto e ditës)',cols:[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Çmimi mes.',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'}],
           rows:(r.items||[]).map(i=>({cells:[C(i.name,{b:true,sub:i.recipe?'recetë':''}),C(i.sku,{mono:true,color:'#526477'}),C(this.posQtyFmt(i)+' '+i.unit,{align:'right'}),C(this.posUnitFmt(i),{align:'right'}),C((i.tax?i.tax+' · ':'')+i.rate+'%',{align:'right',color:'#526477'}),M(i.tot,{b:true})]}))},
         ...(pays.length?[{title:'Pagesat',cols:[{label:'Numri'},{label:'Llogaria'},{label:'Mënyra'},{label:'Shuma',align:'right'}],rows:pays.map(p=>({cells:[C(p.no,{mono:true}),C(acc(p.account),{b:true}),C(p.method,{color:'#526477'}),M(p.dir==='in'?p.amount_c:-p.amount_c,{b:true,color:p.dir==='in'?'#15803D':'#B91C1C'})]}))}]:[])],
       totals:[{k:'Neto',v:this.fmt(r.sub)},{k:'TVSH',v:this.fmt(r.vat)},{k:'Totali',v:this.fmt(r.total),b:true}],
-      note:'Përmbledhje e një dite të kësaj arke nga libri i POS-it në server — stoku, arka dhe ditari regjistrohen sipas saj. Kuponët veç e veç: “Shiko kuponat e ditës”. Fatura A4 krijohet nga një kupon i vetëm, jo nga përmbledhja.',hasNote:true,history:[]}; }
+      note:mon?'Përmbledhje e një muaji të mbyllur të kësaj arke nga libri i POS-it në server (serveri i bashkoi ditët e muajit) — stoku, arka dhe ditari regjistrohen sipas saj, me të njëjtat totale. Kuponët veç e veç: “Shiko kuponat e muajit”. Fatura A4 krijohet nga një kupon i vetëm, jo nga përmbledhja.'
+        :'Përmbledhje e një dite të kësaj arke nga libri i POS-it në server — stoku, arka dhe ditari regjistrohen sipas saj. Kuponët veç e veç: “Shiko kuponat e ditës”. Fatura A4 krijohet nga një kupon i vetëm, jo nga përmbledhja.',hasNote:true,history:[]}; }
   // Fiscalization is configured ONLY on each till (POS › Cilësimet, manager PIN) — the web has no mode/env
   // switches and performs no fiscal writes; it only renders what the tills report. (Owner's architecture rule.)
   // card-based pages: company data, account, settings, admin overview/flags/platform. Returns null for other pages.
@@ -4230,7 +4236,7 @@ class Component extends DCLogic {
         else T.kpis=srv?[{label:'Terminale',value:String(terms.length),sub:onlineT+' online (heartbeat < 2 min)',c:terms.length&&!onlineT?'#B45309':'#10243A'},{label:'Sinkronizimi nga serveri',value:cfg.lastSyncSrv||'—',sub:'kursor '+(cfg.cursorSrv||0)},{label:'Katalogu në server',value:cfg.lastPush||'—',sub:'dërgohet kur ndryshon'},{label:'Kupona për t’u marrë',value:String(cfg.unsyncedSrv||0),c:cfg.unsyncedSrv?'#B45309':'#10243A',sub:'në server, ende pa u regjistruar këtu'}]
           :[{label:'Lidhja lokale',value:on?'Online':'Offline',c:on?'#15803D':'#B91C1C',sub:on?(h.pos_name+' · v'+h.version):(cfg.lastError||'POS-i nuk është hapur në këtë kompjuter')},{label:'Sinkronizimi i fundit',value:cfg.lastSync||'—',sub:'kursor '+(cfg.cursor||0)},{label:'Kupona për sync',value:on?String(h.pending_sync):'—',c:on&&h.pending_sync?'#B45309':'#10243A',sub:'në POS, të pa-marra'},{label:'Radha fiskale në POS',value:on?String(h.fiscal.pending):'—',sub:on?(h.fiscal.mode+(h.fiscal.simulator?' · SIMULATOR':'')):''}];
         T.cols=[{label:'Terminali'},{label:'Dega'},{label:'POS ID'},{label:'Depoja'},{label:'Lidhja'},{label:'Ndërrimi'},{label:'Operatori'},{label:'Kupona sot',align:'right'},{label:'Shitje sot',align:'right'},{label:'Katalogu / versioni'},{label:''},...(rot?[{label:''}]:[])];
-        const todayS=this.fmtDate(this.today()); const rec=(db.posReceipts||[]).filter(r=>r.date===todayS);
+        const todayS=this.fmtDate(this.today()); const rec=(db.posReceipts||[]).filter(r=>r.date===todayS&&!r.month); // a month summary (dated its month's last day) is never "today"
         // a POS-ledger document belongs to its terminal by the terminal key and stands for `n` receipts (a day summary); a booked receipt is 1
         const ofT=t=>rec.filter(r=>r._srv&&r.termKey?r.termKey===t.id:r.pos===t.posId), nOf=list=>list.reduce((a,r)=>a+(r._srv?(Number(r.n)||0):1),0);
         T.rows=terms.map(t=>{ const mine=ofT(t); const liveLocal=on&&h&&h.pos_id===t.posId; const link=srv?(t.online?'Online':(t.lastSeen?'Parë '+t.lastSeen:'Pa lidhje ende')):(liveLocal?'Online (lokal)':'—'); const sh=srv?(t.shift?'Hapur · '+String(t.shift.openedAt||'').slice(11,16):'—'):(liveLocal&&h.shift?'Hapur · '+h.shift.opened_at.slice(11,16):'—'); const op=srv?((t.shift&&t.shift.operator)||'—'):(liveLocal&&h.shift?h.shift.operator:'—');
@@ -4350,7 +4356,7 @@ class Component extends DCLogic {
     const w=this.posListWant(), L=s.posList&&String(s.posList.base||'').indexOf('list|'+pg+'|')===0?s.posList:null, items=L?L.items||[]:[];
     const A4=new Map(((s.db&&s.db.invoices)||[]).filter(i=>i.fromPos).map(i=>[i.fromPos,i])), docs=items.map(it=>({it,r:this.posDocFromPayload(it,s.db)}));
     T.title=isRet?'Kthimet nga POS-i':'Shitjet nga POS-i';
-    T.sub=(isRet?'Kthimet dhe anulimet (ATK CANCEL)':'Kuponët')+' e arkave veç e veç, nga libri i POS-it në server — stoku, arka dhe ditari regjistrohen nga serveri (përmbledhje ditore për arkë).';
+    T.sub=(isRet?'Kthimet dhe anulimet (ATK CANCEL)':'Kuponët')+' e arkave veç e veç, nga libri i POS-it në server — stoku, arka dhe ditari regjistrohen nga serveri (përmbledhje ditore për arkë; mujore për muajt e mbyllur).';
     T.count=L&&!L.err&&(!L.busy||items.length)?String(L.total||0):'';
     T.period=[...this.POS_LIST_RANGES.map(([id,label])=>({label,on:F.range===id?'1':'',go:()=>this.posFilter({range:id,from:'',to:''})})),...(F.range==='custom'?[{label:(R.from?this.fmtDate(R.from):'…')+(R.to!==R.from?' – '+(R.to?this.fmtDate(R.to):'…'):''),on:'1',go:()=>{}}]:[])];
     const termOpts=new Map(); for(const t of ((s.db&&s.db.terminals)||[])) termOpts.set(t.id,t.name+(t.posId?' ('+t.posId+')':''));
@@ -4363,7 +4369,7 @@ class Component extends DCLogic {
     T.hasSearch=true; T.q=F.q||''; T.setQ=e=>this.posFilter({q:e.target.value});
     T.actions=[{label:'Rifresko',p:'',go:()=>this.posListSync(true)}];
     // today, from the ledger rows in memory (no API call)
-    const today=this.today(), td=this.ledgerRows(r=>r.date===today), sumT=k=>td.reduce((a,r)=>a+N((r.totals||{})[k]),0), sumC=k=>td.reduce((a,r)=>a+N((r.counts||{})[k]),0), sumO=k=>td.reduce((a,r)=>a+Object.values(r.operators||{}).reduce((x,o)=>x+N(o[k]),0),0);
+    const today=this.today(), td=this.ledgerRows(r=>r.date===today&&r.kind!=='month'), sumT=k=>td.reduce((a,r)=>a+N((r.totals||{})[k]),0), sumC=k=>td.reduce((a,r)=>a+N((r.counts||{})[k]),0), sumO=k=>td.reduce((a,r)=>a+Object.values(r.operators||{}).reduce((x,o)=>x+N(o[k]),0),0);
     const openF=td.reduce((a,r)=>a+Object.entries(r.fiscal||{}).filter(([k])=>!['fiscalized','fiscalized_sim','cancelled'].includes(k)).reduce((x,[,n])=>x+N(n),0),0), failF=td.reduce((a,r)=>a+N((r.fiscal||{}).failed),0), simF=td.some(r=>N((r.fiscal||{}).fiscalized_sim)>0);
     const fk={label:'Fiskalizimi sot',value:openF+' pa fiskalizuar',c:failF?'#B91C1C':openF?'#B45309':'#15803D',sub:failF?failF+' dështuan':simF?'SIMULATOR — pa vlerë fiskale':''};
     T.kpis=isRet?[{label:'Kthime sot',value:money(-sumO('returns_c')),c:'#B91C1C',sub:plural(sumC('returns'),'kthim','kthime')},{label:'Anulime sot',value:money(-sumO('cancels_c')),c:'#B91C1C',sub:plural(sumC('cancels'),'anulim','anulime')},{label:'Në listë',value:L&&!L.err?String(L.total||0):'—',sub:L&&L.busy?'po ngarkohet…':'sipas filtrave'},fk]
