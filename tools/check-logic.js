@@ -2179,7 +2179,7 @@ apiBlock.then(async () => {
   }).catch(e => { console.log('FAIL review tests (E-L) threw: ' + (e && e.stack || e)); process.exitCode = 1; })
 // @@AUTO-MONTH@@
 // ══ ERP · (1) rifreskimi automatik i listave të kuponëve nga serveri (P:Shitje / P:Kthime / "Kuponët"): çdo POS_LIST_REFRESH ms, në heshtje, me të
-// njëjtat filtra dhe po aq rreshta sa janë ngarkuar; (2) rreshtat mujorë të librit të POS-it (kind:'month' — serveri bashkon ditët e një muaji) ══
+// njëjtat filtra dhe po aq rreshta sa janë ngarkuar (mbi 200: në faqe nga 200 njëra pas tjetrës, deri në 1000); (2) rreshtat mujorë të librit të POS-it (kind:'month' — serveri bashkon ditët e një muaji) ══
   .then(async (H) => { if (!H) { console.log('FAIL auto-refresh / month tests skipped: the review block did not finish'); process.exitCode = 1; return; }
     const { S, mkT, pub, tomb, mk, enter, done, wait, until, book, TERM, line, row, rcv, pay, pli, TERM2 } = H, made = [];
     const defer = () => { let open; const p = new Promise(r => (open = r)); return { p, open }; };
@@ -2228,13 +2228,81 @@ apiBlock.then(async () => {
       eq([armed, rcOf('ta', k), X.apiCfg().tenantId], [true, [], 't1'], 'company switch: the old company\'s list is never re-read');
       X.go('pos', 'Shitje'); await settle(X); const armed2 = !!X._plRefT; X.logout(); await wait(); k = S.calls.length; await wait(120);
       eq([armed2, !!X._plRefT, S.calls.slice(k).filter(c => /^\/pos\/receipts/.test(c.p)).length], [true, false, 0], 'logout stops the timer'); done(X);
-      // more than 200 rows loaded: the first 200 re-read, the rest kept after the overlap (no gap, no duplicate)
+      // more than 200 rows loaded: EVERY loaded row re-read in sequential pages of 200 (offset 0, 200, 400, …; at most 1000 rows = 5 requests)
       const Tb = mkT('tb', 'Dyqind SH.P.K.', book(), 'on'); Tb.rc = Array.from({ length: 230 }, (_, i) => mkRc('b', i));
       const Y = mkR(); Y.POS_LIST_REFRESH = 60000; Y.POS_LIST_PAGE = 200; await enter(Y, 'own', 'tb'); Y.go('pos', 'Shitje'); await settle(Y); Y.pageTable('P:Shitje').more(); await settle(Y);
       Tb.rc.push(mkRc('b', 400), mkRc('b', 401)); const n0 = Y.state.posList.items.length; k = S.calls.length; await Y.posListRefresh(); const ids = Y.state.posList.items.map(x => x.id);
-      eq([n0, rcOf('tb', k), ids.length, new Set(ids).size, ids.slice(0, 2), [...ids].sort().join() === Tb.rc.map(x => x.id).sort().join(), Y.pageTable('P:Shitje').count], [230, ['GET /pos/receipts?' + Q31 + ST + '&limit=200&offset=0'], 232, 232, ['b401', 'b400'], true, '232'],
-        '230 rows loaded: the refresh reads 200 (the server\'s maximum) and keeps the 32 after them — every receipt once, the new ones on top');
+      eq([n0, rcOf('tb', k), ids.length, new Set(ids).size, ids.slice(0, 2), [...ids].sort().join() === Tb.rc.map(x => x.id).sort().join(), Y.pageTable('P:Shitje').count], [230, [0, 200].map(o => 'GET /pos/receipts?' + Q31 + ST + '&limit=200&offset=' + o), 232, 232, ['b401', 'b400'], true, '232'],
+        '230 rows loaded: the refresh reads them in 2 pages of 200 (offset 0, 200) — every receipt once, the 2 new ones on top (232)');
       Y.logout(); done(Y);
+      // 450 of 600 loaded (3 × "Shfaq më shumë" of 150): the server's row n = c(599 − n)
+      const Tc = mkT('tc', 'Katërqind SH.P.K.', book(), 'on'); Tc.rc = Array.from({ length: 600 }, (_, i) => mkRc('c', i));
+      const pg = (n, lim = 200) => Array.from({ length: n }, (_, i) => 'GET /pos/receipts?' + Q31 + ST + '&limit=' + lim + '&offset=' + i * 200), pg3 = pg(3);
+      const setSt = (T, id, st, lbl) => { const r = T.rc.find(x => x.id === id); r.status = st; r.statusLabel = lbl; r.payload.status = st; };
+      const at = (a, i) => (a && a[i]) || {}, srvIds = T => T.rc.filter(x => ['final', 'returned', 'void'].includes(x.status)).sort((a, b) => b.ts.localeCompare(a.ts) || b.seq - a.seq).map(x => x.id), hold2 = (tid, h) => { S.rcHold = (t, path) => (t === tid && /^\/pos\/receipts\?.*&offset=200$/.test(path) ? h.p : null); };
+      const Z = mkR(); Z.POS_LIST_REFRESH = 60000; Z.POS_LIST_PAGE = 150; await enter(Z, 'own', 'tc'); Z.go('pos', 'Shitje'); await settle(Z); Z.pageTable('P:Shitje').more(); await settle(Z); Z.pageTable('P:Shitje').more(); await settle(Z);
+      Z.openPosReceipt('c590'); await settle(Z); setSt(Tc, 'c249', 'returned', 'Kthyer');
+      const r350 = () => [at(Z.state.posList.items, 350).id, at(Z.state.posList.items, 350).statusLabel, at(at(Z.pageTable('P:Shitje').rows, 350).cells, 9).t];
+      const Lz = Z.state.posList, b350 = r350(), dz = Z.state.dr, rz = Z.state.posRc, fz0 = JSON.stringify(Z.posF()), pz = JSON.stringify(Z.state.posPages);
+      k = S.calls.length; const okz = await Z.posListRefresh(); let Tz = Z.pageTable('P:Shitje');
+      eq([Lz.items.length, Lz.total, b350, okz, rcOf('tc', k), Z.state.posList.items.length, Z.state.posList.items.map(x => x.id).join() === Lz.items.map(x => x.id).join(), r350(), Tz.count, Tz.moreLabel, Z.state.posList.pages, Z.state.dr === dz, Z.state.posRc === rz, JSON.stringify(Z.posF()) === fz0, JSON.stringify(Z.state.posPages) === pz, Z.drawerVals().no],
+        [450, 600, ['c249', 'Finalizuar', 'Në rregull'], true, pg3, 450, true, ['c249', 'Kthyer', 'Kthyer'], '600', 'Shfaq më shumë (150 nga 150 të tjerë)', 3, true, true, true, true, 'BAR-1/3590'],
+        '450 of 600 loaded: the refresh asks 3 pages (offset 0 / 200 / 400, limit 200) — the status change on row 350 shows up; the same 450 rows (the 150 read past them are not added), "Shfaq më shumë" as before; the filters, the pages and the open drawer untouched');
+      // a failure on page 2: nothing applied, page 3 never asked
+      const realF = ctx.fetch; setSt(Tc, 'c400', 'void', 'Anuluar'); let f2, L1;
+      try { ctx.fetch = async (url, o = {}) => { const r = await realF(url, o); return /\/pos\/receipts\?.*&offset=200$/.test(url) ? { ok: false, status: 500, json: async () => ({ error: 'internal', message: 'Gabim i brendshëm' }) } : r; };
+        L1 = Z.state.posList; k = S.calls.length; f2 = await Z.posListRefresh(); } finally { ctx.fetch = realF; }
+      eq([f2, rcOf('tc', k), Z.state.posList === L1, at(Z.state.posList.items, 199).id, at(Z.state.posList.items, 199).statusLabel, Z._plRef, Z.state.posList.err], [false, pg(2), true, 'c400', 'Finalizuar', false, ''], 'a failure on page 2 (HTTP 500): nothing applied — the old rows stay (row 199 not "Anuluar" yet), page 3 never asked, no error shown');
+      // the list changed between two pages (a receipt arrived while page 2 was on its way: the total moved 600 → 601): nothing applied; the next refresh applies it
+      let hz = defer(); hold2('tc', hz); k = S.calls.length; let pr2 = Z.posListRefresh(); await until(() => rcOf('tc', k).length === 2); Tc.rc.push(mkRc('c', 940)); S.rcHold = null; hz.open();
+      const moved = [await pr2, rcOf('tc', k), Z.state.posList === L1]; k = S.calls.length; const ok2 = await Z.posListRefresh(), it2 = Z.state.posList.items;
+      eq([moved, ok2, rcOf('tc', k), it2.length, at(it2, 0).id, at(it2, 200).id, at(it2, 200).statusLabel, Z.pageTable('P:Shitje').count], [[false, pg(2), true], true, pg3, 451, 'c940', 'c400', 'Anuluar', '601'],
+        'a receipt that arrives between two pages (total 600 → 601): that refresh applies nothing and asks no page 3; the next one applies it — the new receipt on top, 451 rows, row 199 (now 200) "Anuluar", 601 in total');
+      // one refresh at a time: a second one while page 2 is on its way asks nothing; a hidden browser tab asks no page
+      hz = defer(); hold2('tc', hz); k = S.calls.length; pr2 = Z.posListRefresh(); await until(() => rcOf('tc', k).length === 2); let k2 = S.calls.length; const two = [await Z.posListRefresh(), Z._plRef, rcOf('tc', k2)]; S.rcHold = null; hz.open();
+      const one = [await pr2, rcOf('tc', k)]; ctx.document.visibilityState = 'hidden'; k = S.calls.length; const hid2 = [await Z.posListRefresh(), rcOf('tc', k)]; ctx.document.visibilityState = 'visible';
+      eq([two, one, hid2], [[false, true, []], [true, pg3], [false, []]], '451 rows: one refresh at a time (a second one while page 2 is on its way asks nothing, the first one asks its 3 pages); a hidden browser tab asks no page');
+      // a receipt on top AND another leaving the list (cancelled) between two pages: the total stays 601, page 2 repeats page 1's last row — no receipt twice
+      hz = defer(); hold2('tc', hz); k = S.calls.length; pr2 = Z.posListRefresh(); await until(() => rcOf('tc', k).length === 2); Tc.rc.push(mkRc('c', 960)); setSt(Tc, 'c10', 'cancel', 'Anulim'); S.rcHold = null; hz.open();
+      const okd = await pr2, cd = rcOf('tc', k), idd = Z.state.posList.items.map(x => x.id); setSt(Tc, 'c10', 'final', 'Finalizuar'); await Z.posListRefresh(); const idd2 = Z.state.posList.items.map(x => x.id);
+      eq([okd, cd, idd.length, new Set(idd).size, idd[0], idd[idd.length - 1], idd2.length, idd2.slice(0, 2), idd2.join() === srvIds(Tc).slice(0, 452).join(), Z.pageTable('P:Shitje').count], [true, pg3, 451, 451, 'c940', 'c150', 452, ['c960', 'c940'], true, '602'],
+        'a receipt on top and another one cancelled between two pages (the total unchanged, page 2 repeats a row): every receipt once, the same 451; the next refresh brings the new one on top (452)');
+      // new receipts on top: the loaded count grows by them; "Shfaq më shumë" goes on from the server's next row — and wins over a refresh on its way
+      Tc.rc.push(mkRc('c', 970), mkRc('c', 971), mkRc('c', 972)); k = S.calls.length; await Z.posListRefresh(); Tz = Z.pageTable('P:Shitje'); const top = Z.state.posList.items.map(x => x.id), nt = [rcOf('tc', k), top.length, top.slice(0, 4), top.join() === srvIds(Tc).slice(0, 455).join(), Tz.count, Tz.moreLabel];
+      hz = defer(); hold2('tc', hz); k = S.calls.length; pr2 = Z.posListRefresh(); await until(() => rcOf('tc', k).length === 2); Tz.more(); await until(() => !Z.state.posList.busy && Z.state.posList.items.length > 455); S.rcHold = null; hz.open();
+      const late = await pr2, allz = Z.state.posList.items.map(x => x.id);
+      eq([nt, late, rcOf('tc', k), allz.length, new Set(allz).size, allz.join() === srvIds(Tc).join(), Z.state.posList.pages, Z.pageTable('P:Shitje').hasMore],
+        [[pg3, 455, ['c972', 'c971', 'c970', 'c960'], true, '605', 'Shfaq më shumë (150 nga 150 të tjerë)'], false, [...pg(2), 'GET /pos/receipts?' + Q31 + ST + '&limit=150&offset=455'], 605, 605, true, 4, false],
+        '3 new receipts: on top, every loaded row kept (452 → 455 = the server\'s first 455), 605 in total; "Shfaq më shumë" while a refresh is on its way goes on from offset 455 and the late refresh is dropped (no page 3) — every receipt of the server once, in its order');
+      // a load on its way ("Rifresko") / a refused list (403): the timer asks nothing
+      hz = defer(); S.rcHold = (t, path) => (t === 'tc' && path.startsWith('/pos/receipts?') ? hz.p : null); Z.posListSync(true); await until(() => Z.state.posList.busy);
+      k = S.calls.length; const bz = [await Z.posListRefresh(), rcOf('tc', k)]; S.rcHold = null; hz.open(); await settle(Z);
+      Tc.rcDeny = true; Z.posListSync(true); await settle(Z); k = S.calls.length; const dz2 = [Z.state.posList.code, await Z.posListRefresh(), rcOf('tc', k)]; Tc.rcDeny = false; Z.posListSync(true); await settle(Z);
+      eq([bz, dz2], [[false, []], [403, false, []]], 'many rows: a load on its way and a refused list (403) are not re-read by the timer');
+      // a company switch while page 2 is on its way: the answer is dropped, no page 3 is asked
+      Z.pageTable('P:Shitje').more(); await settle(Z); Z.pageTable('P:Shitje').more(); await settle(Z); const n500 = Z.state.posList.items.length; setSt(Tc, 'c599', 'void', 'Anuluar');
+      hz = defer(); hold2('tc', hz); k = S.calls.length; pr2 = Z.posListRefresh(); await until(() => rcOf('tc', k).length === 2);
+      await Z.apiSwitchTenant('t1'); await until(() => Z._ledger && Z._ledger.tenantId === 't1' && Z._ledger.loaded); S.rcHold = null; hz.open(); const sw = await pr2; await wait(20);
+      eq([n500, sw, rcOf('tc', k), S.calls.slice(k).filter(c => /^\/pos\/receipts$/.test(c.p) && /&offset=400$/.test(c.path)).length, Z.apiCfg().tenantId, ((Z.state.posList || {}).items || []).some(x => /^c\d+$/.test(x.id))], [500, false, pg(2), 0, 't1', false],
+        'a company switch while page 2 of 3 is on its way: the old company\'s answer is dropped (never shown on the new company), page 3 never asked (of either company)');
+      Z.logout(); done(Z);
+      // the cap: 1200 of 1300 loaded → 5 pages (rows 0–999, 1000 = the cap); the rows loaded past it kept after the last row both lists share
+      const Td = mkT('td', 'Njëmijë SH.P.K.', book(), 'on'); Td.rc = Array.from({ length: 1300 }, (_, i) => mkRc('d', i));
+      const W = mkR(); W.POS_LIST_REFRESH = 60000; W.POS_LIST_PAGE = 200; await enter(W, 'own', 'td'); W.go('pos', 'Shitje'); await settle(W); for (let i = 0; i < 5; i++) { W.pageTable('P:Shitje').more(); await settle(W); }
+      const n1200 = W.state.posList.items.length; setSt(Td, 'd799', 'returned', 'Kthyer'); setSt(Td, 'd199', 'returned', 'Kthyer'); Td.rc.push(mkRc('d', 2000), mkRc('d', 2001)); // rows 500 and 1100 change, 2 new on top
+      k = S.calls.length; const okw = await W.posListRefresh(), iw = W.state.posList.items, iwIds = iw.map(x => x.id), Tw = W.pageTable('P:Shitje');
+      eq([n1200, okw, rcOf('td', k), iw.length, new Set(iwIds).size, iwIds.slice(0, 3), [at(iw, 502).id, at(iw, 502).statusLabel], [at(iw, 1102).id, at(iw, 1102).statusLabel], iwIds.join() === srvIds(Td).slice(0, 1202).join(), Tw.count, Tw.moreLabel],
+        [1200, true, pg(5), 1202, 1202, ['d2001', 'd2000', 'd1299'], ['d799', 'Kthyer'], ['d199', 'Finalizuar'], true, '1302', 'Shfaq më shumë (100 nga 100 të tjerë)'],
+        '1200 rows loaded: at most 5 pages (offset 0 … 800, 1000 rows) — row 500\'s change shows up, the 200 rows past the cap kept as loaded after the overlap (row 1100 unchanged), the 2 new ones on top (1202, the server\'s order), 1302 in total');
+      k = S.calls.length; Tw.more(); await settle(W); const wAll = W.state.posList.items.map(x => x.id);
+      eq([rcOf('td', k), wAll.length, new Set(wAll).size, wAll.join() === srvIds(Td).join()], [['GET /pos/receipts?' + Q31 + ST + '&limit=200&offset=1202'], 1302, 1302, true], 'past the cap "Shfaq më shumë" still goes on from the server\'s next row (offset 1202) — every receipt once');
+      // the real timer with many rows: every cycle asks its 5 pages in order, cycles never overlap
+      W.posListAutoStop(); W.POS_LIST_REFRESH = 25; W.posListAuto(); k = S.calls.length; await wait(300); W.POS_LIST_REFRESH = 60000; W.posListAutoStop(); await until(() => !W._plRef); W.posListAutoStop(); const cyc = rcOf('td', k);
+      eq([cyc.length >= 5, cyc.length % 5, cyc.every((p, i) => p === pg(5)[i % 5])], [true, 0, true], 'the timer with 1302 rows loaded: ' + cyc.length / 5 + ' cycles of 5 pages (offset 0 … 800), in order, never overlapping');
+      // a short page ends the list: no page after it, and the rows loaded past the cap are not kept when the server's list ended before it
+      Td.rc = Td.rc.filter(x => !/^d\d+$/.test(x.id) || +x.id.slice(1) >= 1000); k = S.calls.length; const oke = await W.posListRefresh(), ie = W.state.posList.items.map(x => x.id), Te = W.pageTable('P:Shitje');
+      eq([oke, rcOf('td', k), ie.length, ie.join() === srvIds(Td).join(), Te.count, Te.hasMore], [true, pg(2), 302, true, '302', false], 'the server\'s list shrank to 302 (rows left the filter): page 2 is short → no page 3, the 1000 rows past it dropped — the rows are the server\'s, no "Shfaq më shumë"');
+      W.logout(); done(W);
       // local mode / no server list: never a timer
       { const Lc = new C({}); Lc._api = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' }; Lc.state.db = Lc.seedDb(); Lc.state.session = { name: 'Arben Berisha', role: 'Pronar', userId: 'u1' };
         Lc.go('pos', 'Shitje'); Lc.componentDidUpdate(); eq([!!Lc._plRefT, await Lc.posListRefresh()], [false, false], 'local mode: P:Shitje is the book\'s list — no auto-refresh'); clearTimeout(Lc._t); }
@@ -2308,5 +2376,5 @@ apiBlock.then(async () => {
         Object.assign(M.state, { dr: null, drawer: null, section: 'dashboard', page: 'Paneli' }); eq(errs, [], 'month rows: every page, the month drawer and its payments render'); }
       eq([S.bad, S.noHdr], [[], []], 'mock server (month rows): no commit carried `_srv` rows or posSync runtime fields, every call had X-Kontabo-Client: 2');
       M.logout(); done(M);
-    } finally { for (const x of made) { x.posListAutoStop(); clearTimeout(x._plT); } delete ctx.document.visibilityState; S.rcHold = null; }
+    } finally { for (const x of made) { x.posListAuto = () => {}; x.posListAutoStop(); clearTimeout(x._plT); done(x); } delete ctx.document.visibilityState; S.rcHold = null; } // (a refresh still on its way re-arms nothing; no app timer outlives a test that threw)
   }).catch(e => { console.log('FAIL auto-refresh / month tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });

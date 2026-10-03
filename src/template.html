@@ -3009,24 +3009,32 @@ class Component extends DCLogic {
       this.setState({posList:{key:w.key,base:w.base,pages:w.pages,busy:false,err:'',items,total:Math.max(Number(j.total)||0,items.length)}}); return true; }
     catch(e){ if(this._plGen!==gen) return false; this.setState(s=>({posList:{items:[],total:0,...(s.posList||{}),key:w.key,base:w.base,pages:w.pages,busy:false,code:e.status||0,err:e.status===403?'Nuk keni leje për kuponët e POS-it — kërkojini pronarit qasjen.':'Kuponët nuk u ngarkuan nga serveri: '+(e.message||e)}})); return false; } }
   // auto-refresh: while P:Shitje / P:Kthime / the fiscal "Kuponët" tab is the page shown, the list is read again every POS_LIST_REFRESH ms —
-  // silently (no spinner, the rows stay), with the same filters and as many rows as are loaded (limit = loaded rows ≤ 200, offset 0; rows past
-  // 200 are kept after the overlap), the open drawer untouched. Only when the browser tab is visible (where the page knows visibilityState), the
-  // list is loaded and nothing is on its way (a load, a search waiting for the typing, an earlier refresh); a refused list (401 / 403) is not
-  // asked again. An answer that arrives after the list changed (another filter, "Shfaq më shumë", "Rifresko", another company) is dropped.
+  // silently (no spinner, the rows stay), with the same filters and EVERY loaded row: up to 200 in one request (limit = the loaded rows, at least
+  // a page, offset 0), more in sequential pages of POS_LIST_REFRESH_PAGE (limit 200, offset 0, 200, 400, … up to the loaded count; a short page
+  // ends the list), at most POS_LIST_REFRESH_MAX rows (1000 = 5 requests; rows loaded past it are kept after the last row both lists share, no
+  // gap, no duplicate — unless the list ended before the cap). Applied at once, only when every page answered with the same total (a list that
+  // changed between two pages is read again at the next tick): the server's rows from the top, as many as were loaded + the new receipts that
+  // arrived on top (the rows past the last loaded one are not added), so the rows stay the server's first N and "Shfaq më shumë" (offset = rows)
+  // goes on from there; the open drawer, the filters and the pages untouched. Only when the browser tab is visible (where the page knows visibilityState), the list is loaded and
+  // nothing is on its way (a load, a search waiting for the typing, an earlier refresh); a refused list (401 / 403) is not asked again. An answer
+  // (any page) that arrives after the list changed (another filter, "Shfaq më shumë", "Rifresko", another company) is dropped, no page after it asked.
   // One timer at a time: armed from posListSync (componentDidUpdate), stopped when the page goes, at a company switch / logout (ledgerReset).
-  POS_LIST_REFRESH = 30000;
+  POS_LIST_REFRESH = 30000; POS_LIST_REFRESH_PAGE = 200; POS_LIST_REFRESH_MAX = 1000;
   posListAuto(){ if(this._plRefT||!this.posListWant()) return; this._plRefT=setTimeout(()=>{ this._plRefT=null; if(!this.posListWant()) return; this.posListRefresh().catch(()=>false).then(()=>this.posListAuto()); },this.POS_LIST_REFRESH); }
   posListAutoStop(){ if(this._plRefT){ clearTimeout(this._plRefT); this._plRefT=null; } }
   async posListRefresh(){ const w=this.posListWant(), cur=this.state.posList; if(!w||!cur||cur.key!==w.key||cur.busy||cur.code===401||cur.code===403||this._plT||this._plWant||this._plRef) return false;
     if(typeof document!=='undefined'&&document&&typeof document.visibilityState==='string'&&document.visibilityState!=='visible') return false; // a hidden browser tab asks nothing
-    const tid=this.apiCfg().tenantId, gen=this._plGen, items=Array.isArray(cur.items)?cur.items:[], limit=Math.min(200,Math.max(this.POS_LIST_PAGE,items.length));
+    const tid=this.apiCfg().tenantId, gen=this._plGen, items=Array.isArray(cur.items)?cur.items:[], PG=this.POS_LIST_REFRESH_PAGE, want=Math.min(this.POS_LIST_REFRESH_MAX,Math.max(this.POS_LIST_PAGE,items.length)), pages=Math.ceil(want/PG);
+    const live=()=>{ const now=this.state.posList; return this._plGen===gen&&this.apiCfg().tenantId===tid&&now&&now.key===w.key&&now.items===cur.items&&!now.busy?now:null; }; // still the list being read (same filters, pages, company; no load since)
     this._plRef=true;
-    try{ const j=await this.apiFetch('/pos/receipts'+this.qs({...w.params,limit,offset:0}),{timeout:30000}), now=this.state.posList;
-      if(this._plGen!==gen||this.apiCfg().tenantId!==tid||!now||now.key!==w.key||now.items!==cur.items||now.busy) return false;
-      const got=Array.isArray(j.items)?j.items:[], ids=new Set(got.map(x=>x.id)); let tail=[];
-      if(items.length>limit){ let k=-1; items.forEach((x,i)=>{ if(ids.has(x.id)) k=i; }); if(k>=0) tail=items.slice(k+1).filter(x=>!ids.has(x.id)); } // rows loaded past the 200 re-read: kept after the last row both lists share
-      const all=got.concat(tail); this.setState({posList:{...now,busy:false,err:'',code:0,items:all,total:Math.max(Number(j.total)||0,all.length)}}); return true; }
-    catch(e){ return false; } // a failed silent re-read changes nothing (the rows stay; "Rifresko" shows the error)
+    try{ let got=[], total=0, end=false;
+      for(let i=0;i<pages;i++){ const limit=pages>1?PG:want, j=await this.apiFetch('/pos/receipts'+this.qs({...w.params,limit,offset:i*PG}),{timeout:30000}); if(!live()) return false;
+        const part=Array.isArray(j.items)?j.items:[], t=Number(j.total)||0; if(i&&t!==total) return false; total=t; got=got.concat(part); if(part.length<limit){ end=true; break; } } // the list changed between two pages: nothing applied · a short page: the end of the list
+      const now=live(); if(!now) return false; const seen=new Set(); got=got.filter(x=>!seen.has(x.id)&&seen.add(x.id)); const ids=new Set(got.map(x=>x.id)); let all;
+      if(items.length>want&&!end){ let k=-1; items.forEach((x,i)=>{ if(ids.has(x.id)) k=i; }); all=k>=0?got.concat(items.slice(k+1).filter(x=>!ids.has(x.id))):got; } // rows loaded past the cap: kept after the last row both lists share
+      else { const old=new Set(items.map(x=>x.id)); let last=-1; got.forEach((x,i)=>{ if(old.has(x.id)) last=i; }); all=got.slice(0,Math.max(Math.min(want,got.length),last+1)); } // as many as were loaded + the new receipts on top
+      this.setState({posList:{...now,busy:false,err:'',code:0,items:all,total:Math.max(total,all.length)}}); return true; }
+    catch(e){ return false; } // a failed silent re-read (any page) changes nothing (the rows stay; "Rifresko" shows the error)
     finally{ this._plRef=false; } }
   posListMore(w){ const cur=this.state.posList; if(!w||!cur||cur.busy) return; this.setState({posPages:{base:w.base,n:(w.pages||1)+1}}); }
   componentDidUpdate(){ this.posListSync(); this.apiKeysSync(); }
