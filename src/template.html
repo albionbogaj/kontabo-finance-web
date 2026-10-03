@@ -2921,14 +2921,15 @@ class Component extends DCLogic {
     if(W.products!==P0) patch.products=W.products; if(W.categories!==K0) patch.categories=W.categories; return {patch,res,again}; }
   // the second half of every ledger tick (only the `produkte` permission / the Pronar act): GET /pos/proposals?state=pending, every page
   // (propPending) → apply ALL → ONE commit → wait until it landed → POST /pos/proposals/resolve; again while `more` beyond PROP_PAGES. Single-flight, company-
-  // guarded; never while unsent changes wait (the book must be the server's before anything is resolved) or while the POS migration runs
+  // guarded; never while unsent changes wait (the book must be the server's before anything is resolved) or while the POS migration runs. Every
+  // round first resolves the verdicts not acknowledged yet (propUnacked) — before the pending list is read
   posPropTick(){ if(this._propP) return this._propP; const p=this._propRun().catch(e=>{ this._propErr=String((e&&e.message)||e); return 0; }).then(n=>{ if(this._propP===p) this._propP=null; return n; }); this._propP=p; return p; }
   async _propRun(){ const tid=this.apiCfg().tenantId, gen=this._propGen, ok=()=>this._propGen===gen&&this.apiCfg().tenantId===tid&&this.apiAuthed()&&this.propPerm();
     const go=()=>ok()&&this._propFeat===true&&!!this._ledger&&!this._entering&&!this._migrating&&!!this.state.db&&Date.now()-(this._propFail||0)>=this.PROP_BACKOFF, busy=()=>(this._pending||[]).length>0||!!this._flushing;
     let n=0;
     for(let round=0;round<this.PROP_ROUNDS;round++){
-      if(!go()) return n; const s=await this.propSettle(ok); if(!s) return n;
-      if(s.res){ n+=s.res.length; if(!await this.propResolve(this.propLanded(s.res),ok)) return n; } // a batch of an earlier run (its flush outlived posFlushed) that landed only now: its audit line + resolve now
+      if(!go()) return n; const s=await this.propSettle(ok); if(!s) return n; if(s.res) n+=s.res.length;
+      if((s.res||this.propUnacked().size)&&!await this.propResolve(s.res?this.propLanded(s.res):[],ok)) return n; // a batch of an earlier run (its flush outlived posFlushed) that landed only now: its audit line + resolve now; with it every verdict not acknowledged yet
       if(busy()||!go()) return n;
       const pg=await this.propPending(go); if(!pg) return n; const items=pg.items;
       if(!items.length||busy()) return n;
@@ -2947,16 +2948,23 @@ class Component extends DCLogic {
       const raw=((pg&&pg.items)||[]).filter(x=>x&&x.id); for(const x of raw) if(!seen.has(x.id)){ seen.add(x.id); items.push(x); } more=!!(pg&&pg.more);
       if(!more||!raw.length) break; after=raw[raw.length-1].id; }
     return {items,more}; }
-  // POST /pos/proposals/resolve in chunks of 200 (propWire). A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
+  // the verdicts this page resolves (per company, in this page's memory) until a POST /pos/proposals/resolve that carries them returns 200: each
+  // later resolve sends them again, also once their proposal is no longer pending — the bar superseded it meanwhile: the server keeps that late
+  // verdict and moves the successor's base to what the ERP applied (resolve is idempotent, a late verdict first-wins); _propRun sends them BEFORE
+  // it reads the pending list, so the successor is merged against that base and the bar's next edit is not taken for an ERP change
+  propUnacked(){ const M=this._propU||(this._propU=new Map()), t=this.apiCfg().tenantId||''; if(!M.has(t)) M.set(t,new Map()); return M.get(t); }
+  // POST /pos/proposals/resolve in chunks of 200 (propWire): R (landed in the book) joins propUnacked, then every verdict there is sent and leaves
+  // it once acknowledged. A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
   // time: a verdict it still refuses is left out for the rest of this session (this._propSkip — sent every tick it would block its chunk again),
   // the others are resolved. Any other error stops the run (the next tick sends them again). → false once another company / user is on the page
-  async propResolve(R,ok){ const skip=this._propSkip||(this._propSkip=new Set()), bad=e=>[400,413,422].includes(e&&e.status), post=L=>this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:L},timeout:30000});
-    const no=(r,e)=>{ skip.add(r.id); this._propErr='Serveri e refuzoi vendimin për propozimin '+r.id+' ('+((e&&e.message)||'HTTP '+(e&&e.status))+') — nuk dërgohet më në këtë seancë.'; };
-    const all=R.filter(x=>x&&x.id&&!skip.has(x.id)).map(x=>this.propWire(x));
+  async propResolve(R,ok){ const U=this.propUnacked(), skip=this._propSkip||(this._propSkip=new Set()), bad=e=>[400,413,422].includes(e&&e.status), post=L=>this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:L},timeout:30000});
+    const no=(r,e)=>{ skip.add(r.id); U.delete(r.id); this._propErr='Serveri e refuzoi vendimin për propozimin '+r.id+' ('+((e&&e.message)||'HTTP '+(e&&e.status))+') — nuk dërgohet më në këtë seancë.'; };
+    for(const x of R) if(x&&x.id&&!skip.has(x.id)) U.set(x.id,x);
+    const all=[...U.values()].map(x=>this.propWire(x));
     for(let i=0;i<all.length;i+=200){ const part=all.slice(i,i+200);
-      try{ await post(part); }
+      try{ await post(part); for(const r of part) U.delete(r.id); }
       catch(e){ if(!bad(e)) throw e; if(part.length===1){ no(part[0],e); continue; }
-        for(const r of part){ if(!ok()) return false; try{ await post([r]); }catch(e2){ if(!bad(e2)) throw e2; no(r,e2); } } }
+        for(const r of part){ if(!ok()) return false; try{ await post([r]); U.delete(r.id); }catch(e2){ if(!bad(e2)) throw e2; no(r,e2); } } }
       if(!ok()) return false; }
     return true; }
   // the batch this page committed and has not settled yet (this._propSent = {p: the queued patch, ids, res — kept across runs, so a batch whose

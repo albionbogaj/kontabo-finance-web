@@ -1538,7 +1538,16 @@ apiBlock.then(async () => {
         const long = s => s != null && (typeof s !== 'string' || s.length > 200), badRes = x => !!x && (long(x.reason) || long(x.sku) || [x.applied || [], x.kept || []].some(L => !Array.isArray(L) || L.length > 50 || L.some(long)));
         if (!Array.isArray(R) || R.length > 200 || R.some(r => !r || !r.id || !['applied', 'partial', 'rejected'].includes(r.state) || badRes(r.result))) return json(400, { error: 'validation_error', message: 'results' });
         (T.resolves = T.resolves || []).push(JSON.parse(JSON.stringify(body))); let n = 0;
-        for (const r of R) { const x = (T.props || []).find(y => y.id === r.id); if (x && x.state === 'pending') { x.state = r.state; x.result = r.result; n++; } } return json(200, { resolved: n }); } }
+        const late = []; for (const r of R) { const x = (T.props || []).find(y => y.id === r.id); if (x && x.state === 'pending') { x.state = r.state; x.result = r.result; n++; } else if (x && x.state === 'superseded' && !x.result) late.push([x, r]); }
+        // late_verdicts: a verdict on a proposal superseded meanwhile is stored on it once; applied / partial → the pending head of its chain (same
+        // terminal and key, the next one not superseded) takes P1's `after` as its `before` for each applied field (tax → tax + rate, active → active +
+        // ingredient; a field P1 did not send leaves the base) and P1's sku when it has none
+        for (const [x, r] of late.sort((a, b) => a[0].seq - b[0].seq)) { x.result = r.result; if (!['applied', 'partial'].includes(r.state) || !x.terminal || !x.terminal.id) continue;
+          const h = T.props.filter(y => y.terminal && y.terminal.id === x.terminal.id && y.key === x.key && y.seq > x.seq && y.state !== 'superseded').sort((a, b) => a.seq - b.seq)[0]; if (!h || h.state !== 'pending' || h.kind !== x.kind) continue;
+          const K = x.kind === 'product' ? ['name', 'cat', 'gross_t', 'rate', 'tax', 'unit', 'active', 'ingredient'] : ['name'], CF = { tax: ['tax', 'rate'], active: ['active', 'ingredient'] }, A = x.after || {}; let b = h.before ? { ...h.before } : null;
+          for (const f of (r.result && r.result.applied) || []) for (const g of CF[f] || [f]) { if (!K.includes(g)) continue; b = b || {}; if (g in A) b[g] = A[g]; else delete b[g]; }
+          h.before = b; if (x.kind === 'product' && !h.sku && r.result && r.result.sku) h.sku = r.result.sku; }
+        return json(200, { resolved: n }); } }
     return json(404, { error: 'not_found', message: path });
   };
   const calls = (tid, re) => S.calls.filter(x => x.tid === tid && re.test(x.m + ' ' + x.p));
@@ -2721,6 +2730,18 @@ apiBlock.then(async () => {
         eq([g, [p1.state, p1.result], [p2.state, p2.result], sent.includes(p1.id), TW.state.products.find(x => x.sku === 'KAFE').gross_t, TW.commits.length, Q.state.db.posProposalsDone.some(e => e.id === p1.id), st(TW)],
           [3, ['superseded', null], ['applied', { sku: 'KAFE', applied: ['gross_t'], kept: [], reason: '' }], false, k0.gross_t + 5000, 1, false, ['p:802:applied', 'p:801:applied']],
           'proposals: the bar edits again while the ERP reads the pages (P1 on page 1, its successor P2 on page 3) — only P2 applied and resolved, against the oldest base: the bar\'s newest price is in the ERP; P1 is never applied nor resolved');
+        Q.logout(); done(Q); }
+      // P1's commit landed but its resolve failed (the server restarted); before the ERP's next run the bar edits the same product again: P2 supersedes
+      // P1 with P1's (oldest) base. The ERP keeps P1's verdict until a resolve carrying it returns 200 and sends it FIRST on the next run, though P1
+      // is no longer pending: the server stores it and moves P2's base to P1's price — P2 is merged against it and the bar's second price lands
+      { const TL = mkT('tl', 'Bar Vonë SH.P.K.', book(), 'on'), k0 = seen(TL.state, 'KAFE'), gross = () => TL.state.products.find(x => x.sku === 'KAFE').gross_t;
+        const p1 = propose(TL, { key: 'p:701', sku: 'KAFE', before: k0, after: { ...k0, gross_t: k0.gross_t + 1000 } }); TL.onResolve = () => json(503, { error: 'unavailable', message: 'Serveri po rinis' });
+        const Q = mk(); await enter(Q, 'mag', 'tl'); await tick(Q); TL.onResolve = null; const un = () => (Q.propUnacked ? Q.propUnacked().size : -1), a0 = [p1.state, gross(), un()];
+        const p2 = propose(TL, { key: 'p:701', sku: 'KAFE', before: k0, after: { ...k0, gross_t: k0.gross_t + 2000 } }), r0 = (TL.resolves || []).length; await tick(Q);
+        eq([a0, (TL.resolves || []).slice(r0).map(r => r.results.map(x => x.id)), [p1.state, p1.result && p1.result.applied], p2.before.gross_t, [p2.state, p2.result], gross(), un(), TL.commits.length],
+          [['pending', k0.gross_t + 1000, 1], [[p1.id], [p2.id]], ['superseded', ['gross_t']], k0.gross_t + 1000, ['applied', { sku: 'KAFE', applied: ['gross_t'], kept: [], reason: '' }], k0.gross_t + 2000, 0, 2],
+          'proposals: a verdict whose resolve failed is sent again on the next run BEFORE the pending list is read, though the bar superseded its proposal meanwhile — the server moves the successor\'s base, the bar\'s second price lands (not taken for an ERP change)');
+        const r1 = TL.resolves.length; await tick(Q); eq(TL.resolves.length - r1, 0, 'proposals: a verdict acknowledged by a resolve (200) is not sent again');
         Q.logout(); done(Q); }
       // a long reason never blocks the tenant's resolves (the mock refuses a result string > 200 like the first schema): Kafe — the ERP changed its
       // name and price, its unit is locked — gives a 200-character reason; a verdict an older build stored with a 300-character reason is cut when
