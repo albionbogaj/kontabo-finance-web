@@ -1111,7 +1111,7 @@ apiBlock.then(async () => {
     if (p === '/users') return json(200, { users: Object.entries(users).map(([k, x], i) => ({ id: 'm' + (i + 1), userId: 'g-' + k, name: x.name, email: x.email, role: x.role, branch: 'Qendra', dept: '—', status: 'Aktiv', pinSalt: 'a1b2c3d4', pinHash: 'h-' + k })) });
     if (p === '/roles') return json(200, { roles: { Pronar: { fatura_shiko: true }, Kasier: { fatura_shiko: true, pos: true }, Magazinier: { stok: true, produkte: true } } });
     if (p === '/audit') { if (m === 'POST') { T.audit.push(body.action); return json(200, { item: { id: T.audit.length, t: 'now', u: u.name, a: body.action } }); } return json(200, { items: [] }); }
-    if (p === '/terminals') return json(200, { terminals: [] });
+    if (p === '/terminals') return json(200, { terminals: T.terms || [] });
     if (p === '/auth/logout') return json(200, { ok: true });
     if (p === '/auth/switch-tenant') return json(200, jOf(u.key, body.tenantId));
     if (p === '/pos/status') return posOk(u) ? json(200, { terminals: [], catalogVersion: T.catVersion, unsyncedReceipts: 0 }) : json(403, { error: 'forbidden', message: 'Nuk keni leje' });
@@ -1125,6 +1125,22 @@ apiBlock.then(async () => {
     if (p === '/pos/receipts/known') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.knownCalls.push(body); if (T.onKnown) T.onKnown(body); const seen = new Set(); return json(200, { known: (body.ids || []).filter(x => T.known.has(x) && !seen.has(x) && seen.add(x)), knownShifts: (body.shiftIds || []).filter(x => T.knownShifts.has(x)) }); }
     if (p === '/pos/ledger/activate') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.activates.push(body); if (T.onActivate) T.onActivate(body); if (body.done) { T.led.mode = 'on'; T.led.notReady = T.notReadyAfterDone; } return json(200, { updated: (body.receipts || []).filter(r => T.known.has(r.id)).length, mode: T.led.mode }); }
     if (p === '/pos/ledger/reset') { if (u.role !== 'Pronar') return json(403, { error: 'forbidden', message: 'Vetëm pronari' }); T.resets++; T.led.epoch += '-r' + T.resets; for (const [id, r] of [...T.led.rows]) if (!r.removed) tomb(T, id); for (const s of [...T.led.shifts.values()]) if (!s.removed) pubShift(T, { ...s, removed: true }); return json(200, { epoch: T.led.epoch, resetSeq: 99 }); }
+    // receipts one by one (kontabo-backend GET /pos/receipts, /pos/receipts/{id}): any member; filters, newest first, limit/offset, total
+    if (p === '/pos/receipts' && m === 'GET') { if (T.rcDeny) return json(403, { error: 'forbidden', message: 'Nuk keni leje' });
+      if (+q.limit > 200) return json(400, { error: 'validation_error', message: 'limit' }); const to = q.to || '2026-09-20', from = q.from || c.addDays(to, -30), sts = (q.status || '').split(',').filter(Boolean), qq = (q.q || '').toLowerCase();
+      const L = (T.rc || []).filter(r => r.day >= from && r.day <= to && (!q.terminal || r.terminalKey === q.terminal) && (!sts.length || sts.includes(r.status)) && (q.fiscal !== 'open' || !['fiscalized', 'fiscalized_sim', 'cancelled'].includes(r.fiscalStatus)) && (!qq || (r.no + ' ' + r.operator).toLowerCase().includes(qq)))
+        .sort((a, b) => b.day.localeCompare(a.day) || b.ts.localeCompare(a.ts) || b.seq - a.seq), lim = +q.limit || 50, off = +q.offset || 0;
+      return json(200, { items: L.slice(off, off + lim), total: L.length }); }
+    if (p.startsWith('/pos/receipts/') && m === 'GET') { if (T.rcDeny) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); const id = decodeURIComponent(p.slice('/pos/receipts/'.length)), it = (T.rc || []).find(r => r.id === id);
+      if (!it) return json(404, { error: 'not_found', message: 'Kuponi nuk u gjet' }); return json(200, { ...it, related: (T.rc || []).filter(r => r.id !== id && (r.id === it.origId || r.origId === id)) }); }
+    // read-only API keys (permission `kompania`; the Pronar always) and terminal token rotation (permission `pos`)
+    if (p === '/api-keys' || p.startsWith('/api-keys/')) { if (u.role !== 'Pronar' && !u.perms.kompania) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.keys = T.keys || [];
+      if (m === 'GET') return json(200, { apiKeys: T.keys.slice().reverse() });
+      if (m === 'POST') { const nm = String(body.name || '').trim(), sc = body.scopes || []; if (!nm || nm.length > 80 || !sc.length || sc.some(x => !['pos:read', 'state:read'].includes(x))) return json(400, { error: 'validation_error', message: 'Të dhënat e kërkesës janë të pavlefshme' });
+        const raw = 'kk_' + T.id + 'SECRET' + (T.keys.length + 1) + 'x'.repeat(32), k = { id: 'key-' + (T.keys.length + 1), name: nm, prefix: raw.slice(0, 12), scopes: ['pos:read', 'state:read'].filter(x => sc.includes(x)), createdBy: u.name, createdAt: '2026-09-20T10:00:00Z', lastUsedAt: null, revokedAt: null };
+        T.keys.push(k); T.rawKeys = [...(T.rawKeys || []), raw]; return json(200, { key: raw, apiKey: k }); }
+      if (m === 'DELETE') { const k = T.keys.find(x => x.id === decodeURIComponent(p.slice('/api-keys/'.length))); if (!k) return json(404, { error: 'not_found', message: 'Çelësi nuk u gjet' }); if (!k.revokedAt) k.revokedAt = '2026-09-20T11:00:00Z'; return json(200, { apiKey: k }); } }
+    { const rot = /^\/terminals\/([^/]+)\/rotate$/.exec(p); if (rot && m === 'POST') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); if (!(T.terms || []).some(x => x.id === rot[1])) return json(404, { error: 'not_found', message: 'Terminali nuk u gjet' }); T.rotations = (T.rotations || 0) + 1; return json(200, { token: 'kt_new' + T.rotations }); } }
     return json(404, { error: 'not_found', message: path });
   };
   const calls = (tid, re) => S.calls.filter(x => x.tid === tid && re.test(x.m + ' ' + x.p));
