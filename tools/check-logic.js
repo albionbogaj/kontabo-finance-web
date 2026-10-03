@@ -1492,7 +1492,13 @@ apiBlock.then(async () => {
       R.setState({ x: 3 }); await settle(R); R.renderVals(); R.setState({ x: 4 }); await settle(R);
       eq(rcOf('t9', k1).length, 1, 'a refused list is not asked again on every update');
       T9.rcDeny = false; Td.actions.find(a => a.label === 'Rifresko').go(); await settle(R); Td = R.pageTable('P:Shitje');
-      eq([rcOf('t9', k1).length, Td.count, Td.rows.length], [2, '62', 50], '"Rifresko" asks again'); }
+      eq([rcOf('t9', k1).length, Td.count, Td.rows.length], [2, '62', 50], '"Rifresko" asks again');
+      // back on the page after another one: the list kept from the last visit is read again (a receipt made meanwhile shows), its rows stay while it loads
+      const s8 = rcv(pay('s8', 'BAR-1/0018', 'final', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { time: '19:00:00' })); T9.rc.push(s8);
+      R.go('dashboard', 'Paneli'); await settle(R); const h = defer(), k2 = S.calls.length; S.rcHold = (tid, path) => (path.startsWith('/pos/receipts?') ? h.p : null);
+      R.go('pos', 'Shitje'); await until(() => R.state.posList.busy); const Tb = R.pageTable('P:Shitje'); S.rcHold = null; h.open(); await settle(R); const Ta = R.pageTable('P:Shitje');
+      eq([rcOf('t9', k2), Tb.rows.length, Tb.rows[0].cells[0].t, Ta.count, Ta.rows[0].cells[0].t], [['GET /pos/receipts?' + Q31 + ST + '&limit=50&offset=0'], 50, 'BAR-2/0001', '63', 'BAR-1/0018'], 'back on P:Shitje: the list is read again (the rows of the last visit stay while it loads)');
+      T9.rc.pop(); Ta.actions.find(a => a.label === 'Rifresko').go(); await settle(R); eq(R.pageTable('P:Shitje').count, '62', 'P:Shitje: refreshed'); }
     // ── the receipt drawer: GET /pos/receipts/{id} (+ related), a full loading object, related receipts clickable, late answers dropped
     const metaOf = D => D.meta.map(m => [m.k, m.v]), secOf = D => D.sections.map(s => [s.title, s.rows.map(cellsT)]);
     { const hold = defer(); S.rcHold = (tid, path) => (path === '/pos/receipts/s2' ? hold.p : null);
@@ -1569,6 +1575,8 @@ apiBlock.then(async () => {
       eq([v.fiscalReceipts.length, v.fiscalReceiptsCount, v.fiscalHasMore, v.fiscalMoreLabel], [2, '3', true, 'Shfaq më shumë (1 nga 1 të tjerë)'], 'fiscal monitor: paged ("Shfaq më shumë")');
       const k2 = S.calls.length; v.fiscalMore(); await settle(R); v = R.renderVals(); R.POS_LIST_PAGE = 50;
       eq([rcOf('t9', k2), v.fiscalReceipts.map(x => x.no), v.fiscalHasMore], [['GET /pos/receipts?fiscal=open&from=2025-09-21&to=2026-09-20&limit=2&offset=2'], ['BAR-2/0001', 'BAR-1/0015', 'BAR-1/0012'], false], 'fiscal monitor: the next page appended (offset)');
+      R.setState({ fiscalTab: 'Arkat' }); await settle(R); T9.rcDeny = true; const k3 = S.calls.length; R.setState({ fiscalTab: 'Kuponët' }); await settle(R); v = R.renderVals(); T9.rcDeny = false;
+      eq([rcOf('t9', k3).length, v.fiscalHasReceipts, v.fiscalReceipts.length, v.fiscalReceiptsNote.endsWith(' · Nuk keni leje për kuponët e POS-it — kërkojini pronarit qasjen.'), v.fiscalHasMore], [1, true, 3, true, false], 'fiscal monitor: back on the tab the list is read again; a refusal keeps the rows shown and says so');
       T9.rcDeny = true; R.setState({ posList: null }); await settle(R); v = R.renderVals(); T9.rcDeny = false;
       eq([v.fiscalHasReceipts, v.fiscalReceiptsEmpty, R.state.posList.busy], [false, 'Nuk keni leje për kuponët e POS-it — kërkojini pronarit qasjen.', false], 'fiscal monitor: a refusal is shown in place of the list');
       R.go('dashboard', 'Paneli'); await settle(R); }

@@ -2879,8 +2879,9 @@ class Component extends DCLogic {
       return P(['list',s.page,r.from,r.to,F.terminal,st[2],tid].join('|')+'|q='+q,{from:r.from,to:r.to,terminal:F.terminal,status:st[2],q}); }
     if(s.page==='Fiskalizimi'&&s.fiscalTab==='Kuponët'){ const t=this.today(), from=this.addDays(t,-364); return P(['fiscal',from,t,tid].join('|'),{fiscal:'open',from,to:t}); }
     return null; }
-  posListSync(force){ const w=this.posListWant(); if(!w){ if(this._plT){ clearTimeout(this._plT); this._plT=null; } this._plWant=null; return null; }
-    const cur=this.state.posList; if(!force&&cur&&cur.key===w.key) return null; if(!force&&this._plWant===w.key) return null;
+  posListSync(force){ const w=this.posListWant(); if(!w){ if(this._plT){ clearTimeout(this._plT); this._plT=null; } this._plWant=null; this._plAway=true; return null; }
+    const cur=this.state.posList; if(this._plAway){ this._plAway=false; if(cur&&cur.key===w.key&&!cur.busy) force=true; } // back on a list page after another page: the list kept from the last visit is read again (its rows stay while it loads)
+    if(!force&&cur&&cur.key===w.key) return null; if(!force&&this._plWant===w.key) return null;
     clearTimeout(this._plT); this._plT=null; this._plWant=w.key;
     if(!force&&cur&&cur.base!==w.base&&String(cur.base).split('|q=')[0]===w.base.split('|q=')[0]){ // only the search text changed: wait for the typing to stop
       this._plT=setTimeout(()=>{ this._plT=null; const w2=this.posListWant(); this._plWant=null; if(w2&&w2.key===w.key) this.posListLoad(w2); else this.posListSync(); },300); return null; }
@@ -4836,7 +4837,7 @@ class Component extends DCLogic {
       hasDr:!!dr,dr:dr||{},closeDr:()=>this.setState({dr:null}),
       hasFrm:!!frm,frm:frm||{},closeFrm:()=>this.setState({frm:null}),
       fiscalTabs,fiscalMonitor:s.fiscalTab==='Arkat',fiscalQueue:s.fiscalTab==='Radha',fiscalReceiptsTab:s.fiscalTab==='Kuponët',fiscalTerms,fiscalHasTerms,fiscalGuide,fiscalUrls,taxGroups,queue,queueStats,fiscalReceipts,fiscalHasReceipts,fiscalReceiptsCount:fiscalLed?(FL&&!FL.err&&(!FL.busy||FL.items.length)?String(FL.total||0):'…'):String((db.posReceipts||[]).length),
-      fiscalReceiptsNote:fiscalLed?'kuponë pa u fiskalizuar (365 ditët e fundit, nga serveri) · vetëm lexim':'kuponë të sinkronizuar · vetëm lexim',
+      fiscalReceiptsNote:fiscalLed?'kuponë pa u fiskalizuar (365 ditët e fundit, nga serveri) · vetëm lexim'+(FL&&FL.err&&FL.items.length?' · '+FL.err:''):'kuponë të sinkronizuar · vetëm lexim', // a failed reload / next page keeps the rows shown — the error is said next to them
       fiscalReceiptsEmpty:fiscalLed?(!FL||FL.busy?'Duke ngarkuar kuponët nga serveri…':FL.err?FL.err:'Asnjë kupon pa u fiskalizuar — të gjithë kuponët e 365 ditëve të fundit janë fiskalizuar.'):'Asnjë kupon i sinkronizuar ende — statuset shfaqen sapo arkat të dërgojnë shitjet.',
       fiscalHasMore:!!(FL&&FLw&&FL.base===FLw.base&&!FL.busy&&!FL.err&&FL.items.length<(FL.total||0)),fiscalMore:()=>this.posListMore(FLw),fiscalMoreLabel:FL?'Shfaq më shumë ('+Math.min(this.POS_LIST_PAGE,Math.max(0,(FL.total||0)-FL.items.length))+' nga '+Math.max(0,(FL.total||0)-FL.items.length)+' të tjerë)':'',
       users:sub.users,activeUsers,extraUsers,totalPrice,planName:planDef.name.toUpperCase(),planPrice:this.fmt(base),planIncluded:planDef.includedUsers,planExtra:this.fmt(extra),planModules:planDef.modules,nextBilling:sub.nextBilling,subCard:sub.card,subCardExp:sub.cardExp,
