@@ -3147,7 +3147,11 @@ class Component extends DCLogic {
     // Vetëm një rresht i vjetër pa këto fusha rillogaritet me calcLine.
     const lines=items.map(i=>{
       if(typeof i.sub==='number'&&typeof i.vatc==='number'){
-        const disc=typeof i.disc_c==='number'?Math.abs(i.disc_c):(i.disc?Math.round(Math.abs(i.sub)*i.disc/Math.max(1,100-i.disc)):0);
+        // disc_c (kuponat e POS-it) është zbritja BRUTO e rreshtit (API.md i serverit: TVSH-ja brenda), kurse shkalla këtu është NETO
+        // (Nëntotali = Σ sub + Σ zbritje): i hiqet TVSH-ja me ndarjen e vetë rreshtit (vatc = round(tot·r/(100+r))) — 0.50 me 8% → 0.46,
+        // sa jep edhe % e derivuar më poshtë; pa TVSH (r 0) mbetet siç është
+        const r=vatOn?(Number(i.rate)||0):0, dg=typeof i.disc_c==='number'?Math.abs(i.disc_c):0;
+        const disc=typeof i.disc_c==='number'?dg-Math.round(dg*r/(100+r)):(i.disc?Math.round(Math.abs(i.sub)*i.disc/Math.max(1,100-i.disc)):0);
         return {it:i,l:{sub:i.sub,vatc:i.vatc,disc:i.sub<0?-disc:disc}};
       }
       return {it:i,l:this.calcLine({unit_c:i.unit_c||0,qm:Math.round((i.qty||0)*1000),rate:vatOn?(i.rate||0):0,bp:Math.round((i.disc||0)*100)})};

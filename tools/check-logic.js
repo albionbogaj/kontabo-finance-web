@@ -451,6 +451,19 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
              { name: 'Normë 8', sku: 'B', unit: 'copë', qty: 3, unit_c: 3333, rate: 8, tax: 'D', disc: 0, sub: 9999, vatc: 800, tot: 10799 }]), 'dy norma TVSH-je');
   eq(/<td class="di r">− /.test(c.docPrintHtml(mk([{ name: 'Z', sku: 'X1', unit: 'copë', qty: 1, unit_c: 10000, rate: 18, tax: 'E', disc: 0, disc_c: 2000, sub: 8000, vatc: 1440, tot: 9440 }]))), true,
      'A4: zbritja e dhënë si vlerë (disc_c) shfaqet te kolona e zbritjes, jo “—”');
+  // disc_c i kuponit të POS-it është BRUTO (zbritja e vetë rreshtit, TVSH brenda): shkalla neto e A4 e merr pa TVSH-në e vet.
+  // Kontabo POS: 2 × 2.50 (neto 2.3148 me 8%) −10% → frozen disc_c 50, sub 417 → Nëntotali 4.63 (= 2 × 2.3148), zbritja 0.46, baza 4.17;
+  // KONTABO BAR: 2 × 1.50 me 18% −0.30 → sub 229 → zbritja 0.25, Nëntotali 2.54 (= 3.00 / 1.18); pa TVSH: siç është
+  {
+    const hp = ladder(mk([{ name: 'QUMËSHT', sku: 'NS-003', unit: 'copë', qty: 2, unit_c: 231, unit_t: 23148, rate: 8, tax: 'D', disc: 10, disc_c: 50, sub: 417, vatc: 33, tot: 450 }]), 'kupon i Kontabo POS-it me % (disc_c bruto)');
+    eq([lineOf(hp, 'Nëntotali'), lineOf(hp, 'Zbritja e rreshtave'), lineOf(hp, 'Baza e tatueshme')], [463, 46, 417],
+       'A4 nga kuponi: disc_c bruto 0.50 me 8% → zbritja neto 0.46, Nëntotali 4.63 = vlera neto para zbritjes (jo 4.67)');
+    const hb = ladder(mk([{ name: 'Kafe', sku: 'KAFE', unit: 'copë', qty: 2, unit_c: 127, rate: 18, tax: 'E', disc: 0, disc_c: 30, sub: 229, vatc: 41, tot: 270 }]), 'kupon i barit me zbritje në vlerë');
+    eq([lineOf(hb, 'Nëntotali'), lineOf(hb, 'Zbritja e rreshtave'), /<td class="di r">− [^<]*0,25/.test(hb)], [254, 25, true],
+       'A4 nga kuponi i barit: zbritja 0.30 bruto me 18% → 0.25 neto, edhe te kolona e rreshtit');
+    const hn = ladder(mk([{ name: 'Pa TVSH', sku: 'X3', unit: 'copë', qty: 2, unit_c: 150, rate: 0, tax: 'A', disc: 0, disc_c: 30, sub: 270, vatc: 0, tot: 270 }]), 'kupon pa TVSH me zbritje');
+    eq([lineOf(hn, 'Nëntotali'), lineOf(hn, 'Zbritja e rreshtave')], [300, 30], 'A4 nga kuponi pa TVSH: zbritja mbetet siç është');
+  }
   // çdo klasë që shkruan faqezuesi ose HTML-ja duhet të ketë rregull në PRINT_CSS (shiriti i theksit u zhduk pikërisht kështu)
   const made = [...c.PRINT_PAGER.matchAll(/className=['"]([a-z]+)['"]/g)].map(m => m[1]);
   const used = [...new Set([...c.docPrintHtml(inv0).matchAll(/class="([^"]+)"/g)].flatMap(m => m[1].split(' ')))].filter(x => x !== 'doc');
