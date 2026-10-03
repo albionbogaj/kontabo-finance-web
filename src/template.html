@@ -2855,14 +2855,16 @@ class Component extends DCLogic {
   // a product proposal against the working book W (W.products / W.categories are replaced, never mutated; V = W's book + the POS ledger, for the
   // unit lock). Located by sku, else by barKey === key of the SAME terminal (barTerm — the bar's keys are its own product ids, unique per terminal
   // only: two bars of one company both send 'p:1'; a deleted terminal (id null) matches no barKey), else (only a proposal with no `before`) by the
-  // case-insensitive name; not found → created (barKey + barTerm; the bar's SKU when PROP_SKU and free, else BAR-<n>) when `before` is null, else
-  // rejected. → {state, result:{sku (the SKU used / found), applied, kept, reason}, created}
+  // case-insensitive name (then bound to the bar: barKey + barTerm, when it has no barKey yet — the bar's later proposals of that key find it); not
+  // found → created (barKey + barTerm; the bar's SKU when PROP_SKU and free, else BAR-<n>) when `before` is null, else rejected.
+  // → {state, result:{sku (the SKU used / found), applied, kept, reason}, created}
   // A category this batch renamed (W.renamed: its old name → the new one) is read under its new name on both sides (a proposal queued before the
   // rename still carries the old name — it is the same category, not a new one)
   propProduct(W,V,it){ const key=String(it.key||''), A=it.after&&typeof it.after==='object'?it.after:null, B=it.before&&typeof it.before==='object'?it.before:null, sku=typeof it.sku==='string'?it.sku.trim():'', P=W.products, L=this.PROP_LBL, tid=it.terminal&&typeof it.terminal==='object'&&typeof it.terminal.id==='string'?it.terminal.id:'';
     const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason:this.propCut(reason)}}), rn=x=>{ const t=x.cat!==undefined&&W.renamed&&W.renamed.get(this.norm(x.cat)); if(t) x.cat=t; return x; };
     if(!A) return no('Propozimi nuk ka të dhënat e produktit.');
-    const a=rn(this.propSide(A)), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&tid&&P.find(x=>x.barKey===key&&x.barTerm===tid))||(!B&&lo&&P.find(x=>this.propLow(x.name)===lo))||null;
+    const a=rn(this.propSide(A)), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&tid&&P.find(x=>x.barKey===key&&x.barTerm===tid))||null, byName=false;
+    if(!p&&!B&&lo){ p=P.find(x=>this.propLow(x.name)===lo)||null; byName=!!p; }
     if(!p){ if(B) return no('Produkti nuk gjendet në ERP'+(sku?' (SKU '+sku+')':'')+' — nuk krijohet sërish nga arka.');
       const miss=['name','cat','gross_t','tax','unit'].filter(f=>a[f]===undefined||(f==='unit'&&!this.UNITS.includes(a.unit))); if(miss.length) return no('Produkti i ri nuk u krijua: mungon ose është e pavlefshme '+miss.map(f=>L[f]).join(', ')+'.');
       const nsku=this.PROP_SKU.test(sku)&&!P.some(x=>this.norm(x.sku)===this.norm(sku))?sku:this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
@@ -2876,7 +2878,8 @@ class Component extends DCLogic {
       if(bv===undefined||!this.propEq(f,ev,bv)){ kept.push(f); erp.push(f); continue; } // changed in the ERP since the bar saw it (or no base): the ERP wins
       if(f==='unit'){ const e=this.productError(V,{...p,unit:av},p,{unit:av}); if(e){ kept.push(f); why.push(e); continue; } } // the unit lock (opening / movements incl. the POS ledger / recipe / draft) and the pack rule
       set[f]=av; applied.push(f); }
-    if(Object.keys(set).length){ const q={};
+    const q=byName&&key&&tid&&!p.barKey?{barKey:key,barTerm:tid}:{}; // found by the name: bound to the bar's key (and terminal) from now on
+    if(Object.keys(set).length||q.barKey){
       if('name' in set) q.name=set.name; if('unit' in set) q.unit=set.unit; if('active' in set) q.pos=set.active;
       if('cat' in set){ q.cat=this.canonCat(W,set.cat); W.categories=this.withCategory(W,set.cat); }
       // the gross the till prints stays verbatim; the net (price_t / price_c, the books' base) is derived from it at the (new) letter's effective rate
