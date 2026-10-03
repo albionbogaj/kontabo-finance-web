@@ -2303,6 +2303,28 @@ apiBlock.then(async () => {
       Td.rc = Td.rc.filter(x => !/^d\d+$/.test(x.id) || +x.id.slice(1) >= 1000); k = S.calls.length; const oke = await W.posListRefresh(), ie = W.state.posList.items.map(x => x.id), Te = W.pageTable('P:Shitje');
       eq([oke, rcOf('td', k), ie.length, ie.join() === srvIds(Td).join(), Te.count, Te.hasMore], [true, pg(2), 302, true, '302', false], 'the server\'s list shrank to 302 (rows left the filter): page 2 is short → no page 3, the 1000 rows past it dropped — the rows are the server\'s, no "Shfaq më shumë"');
       W.logout(); done(W);
+      // exactly 400 / 1000 rows loaded (a multiple of 200: the pages read hold no row past the loaded ones): new receipts on top push the last loaded rows
+      // out of the pages read — they stay, after the last row both lists share (the loaded count grows by the new receipts); a last row that left the list is not kept
+      const Tg = mkT('te', 'Gjashtëqind SH.P.K.', book(), 'on'); Tg.rc = Array.from({ length: 600 }, (_, i) => mkRc('e', i));
+      const V = mkR(); V.POS_LIST_REFRESH = 60000; V.POS_LIST_PAGE = 200; await enter(V, 'own', 'te'); V.go('pos', 'Shitje'); await settle(V); V.pageTable('P:Shitje').more(); await settle(V);
+      const n400 = V.state.posList.items.length; setSt(Tg, 'e200', 'cancel', 'Anulim'); k = S.calls.length; const okc = await V.posListRefresh(), ic = V.state.posList.items.map(x => x.id), cc = [okc, rcOf('te', k), ic.length, ic.includes('e200'), ic[ic.length - 1], ic.join() === srvIds(Tg).slice(0, 400).join(), V.pageTable('P:Shitje').count];
+      setSt(Tg, 'e200', 'final', 'Finalizuar'); await V.posListRefresh(); const ib = V.state.posList.items.map(x => x.id), cb = [ib.length, ib[ib.length - 1], ib.join() === srvIds(Tg).slice(0, 400).join()];
+      Tg.rc.push(mkRc('e', 900), mkRc('e', 901)); k = S.calls.length; const okv = await V.posListRefresh(), iv = V.state.posList.items.map(x => x.id), Tv = V.pageTable('P:Shitje');
+      eq([n400, cc, cb, okv, rcOf('te', k), iv.length, new Set(iv).size, iv.slice(0, 2), iv.slice(-3), iv.join() === srvIds(Tg).slice(0, 402).join(), Tv.count, Tv.moreLabel],
+        [400, [true, pg(2), 400, false, 'e199', true, '599'], [400, 'e200', true], true, pg(2), 402, 402, ['e901', 'e900'], ['e202', 'e201', 'e200'], true, '602', 'Shfaq më shumë (200 nga 200 të tjerë)'],
+        '400 of 600 loaded (2 pages read, no spare row): the last loaded row cancelled → not kept (the server\'s first 400); 2 new receipts on top → the 2 rows they push out of the pages read stay at the bottom (402, every receipt once, the server\'s order), 602 in total');
+      k = S.calls.length; Tv.more(); await settle(V); const vAll = V.state.posList.items.map(x => x.id);
+      eq([rcOf('te', k), vAll.length, new Set(vAll).size, vAll.join() === srvIds(Tg).join()], [['GET /pos/receipts?' + Q31 + ST + '&limit=200&offset=402'], 602, 602, true], '402 rows: "Shfaq më shumë" goes on from offset 402 — every receipt of the server once, no gap');
+      V.logout(); done(V);
+      const Tf = mkT('tf', 'Njëmijë e treqind SH.P.K.', book(), 'on'); Tf.rc = Array.from({ length: 1300 }, (_, i) => mkRc('f', i));
+      const U = mkR(); U.POS_LIST_REFRESH = 60000; U.POS_LIST_PAGE = 200; await enter(U, 'own', 'tf'); U.go('pos', 'Shitje'); await settle(U); for (let i = 0; i < 4; i++) { U.pageTable('P:Shitje').more(); await settle(U); }
+      const n1000 = U.state.posList.items.length; Tf.rc.push(mkRc('f', 2000), mkRc('f', 2001)); k = S.calls.length; const oku = await U.posListRefresh(), iu = U.state.posList.items.map(x => x.id), Tu = U.pageTable('P:Shitje');
+      const cu = [oku, rcOf('tf', k), iu.length, new Set(iu).size, iu.slice(0, 2), iu.slice(-2), iu.join() === srvIds(Tf).slice(0, 1002).join(), Tu.count, Tu.moreLabel];
+      k = S.calls.length; await U.posListRefresh(); const iu2 = U.state.posList.items.map(x => x.id);
+      eq([n1000, cu, rcOf('tf', k), iu2.length, iu2.join() === srvIds(Tf).slice(0, 1002).join()],
+        [1000, [true, pg(5), 1002, 1002, ['f2001', 'f2000'], ['f301', 'f300'], true, '1302', 'Shfaq më shumë (200 nga 300 të tjerë)'], pg(5), 1002, true],
+        '1000 of 1300 loaded (the cap, 5 pages, no spare row): 2 new receipts on top → 1002 rows, the 2 pushed past the cap stay at the bottom (the server\'s first 1002), 1302 in total; the next refresh keeps them (5 pages)');
+      U.logout(); done(U);
       // local mode / no server list: never a timer
       { const Lc = new C({}); Lc._api = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' }; Lc.state.db = Lc.seedDb(); Lc.state.session = { name: 'Arben Berisha', role: 'Pronar', userId: 'u1' };
         Lc.go('pos', 'Shitje'); Lc.componentDidUpdate(); eq([!!Lc._plRefT, await Lc.posListRefresh()], [false, false], 'local mode: P:Shitje is the book\'s list — no auto-refresh'); clearTimeout(Lc._t); }

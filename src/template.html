@@ -3014,7 +3014,8 @@ class Component extends DCLogic {
   // ends the list), at most POS_LIST_REFRESH_MAX rows (1000 = 5 requests; rows loaded past it are kept after the last row both lists share, no
   // gap, no duplicate — unless the list ended before the cap). Applied at once, only when every page answered with the same total (a list that
   // changed between two pages is read again at the next tick): the server's rows from the top, as many as were loaded + the new receipts that
-  // arrived on top (the rows past the last loaded one are not added), so the rows stay the server's first N and "Shfaq më shumë" (offset = rows)
+  // arrived on top (the rows past the last loaded one are not added; over 200 loaded, rows the new ones pushed past the pages read — no spare row at
+  // 400 / 1000 loaded — are kept after the last row both lists share, as at the cap; up to 200 the list keeps its size), so the rows stay the server's first N and "Shfaq më shumë" (offset = rows)
   // goes on from there; the open drawer, the filters and the pages untouched. Only when the browser tab is visible (where the page knows visibilityState), the list is loaded and
   // nothing is on its way (a load, a search waiting for the typing, an earlier refresh); a refused list (401 / 403) is not asked again. An answer
   // (any page) that arrives after the list changed (another filter, "Shfaq më shumë", "Rifresko", another company) is dropped, no page after it asked.
@@ -3032,7 +3033,8 @@ class Component extends DCLogic {
         const part=Array.isArray(j.items)?j.items:[], t=Number(j.total)||0; if(i&&t!==total) return false; total=t; got=got.concat(part); if(part.length<limit){ end=true; break; } } // the list changed between two pages: nothing applied · a short page: the end of the list
       const now=live(); if(!now) return false; const seen=new Set(); got=got.filter(x=>!seen.has(x.id)&&seen.add(x.id)); const ids=new Set(got.map(x=>x.id)); let all;
       if(items.length>want&&!end){ let k=-1; items.forEach((x,i)=>{ if(ids.has(x.id)) k=i; }); all=k>=0?got.concat(items.slice(k+1).filter(x=>!ids.has(x.id))):got; } // rows loaded past the cap: kept after the last row both lists share
-      else { const old=new Set(items.map(x=>x.id)); let last=-1; got.forEach((x,i)=>{ if(old.has(x.id)) last=i; }); all=got.slice(0,Math.max(Math.min(want,got.length),last+1)); } // as many as were loaded + the new receipts on top
+      else { const old=new Set(items.map(x=>x.id)); let last=-1; got.forEach((x,i)=>{ if(old.has(x.id)) last=i; }); all=got.slice(0,Math.max(Math.min(want,got.length),last+1)); // as many as were loaded + the new receipts on top
+        if(pages>1&&!end&&last>=0&&last===got.length-1){ let k=-1; items.forEach((x,i)=>{ if(ids.has(x.id)) k=i; }); if(k>=0&&k<items.length-1) all=all.concat(items.slice(k+1).filter(x=>!ids.has(x.id))); } } // over 200 loaded, the pages read end on a loaded row and loaded rows lie past it (new receipts on top pushed them out — 400 / 1000 loaded: no spare row): kept after it, as at the cap (up to 200 = one request: the list keeps its size, as before)
       this.setState({posList:{...now,busy:false,err:'',code:0,items:all,total:Math.max(total,all.length)}}); return true; }
     catch(e){ return false; } // a failed silent re-read (any page) changes nothing (the rows stay; "Rifresko" shows the error)
     finally{ this._plRef=false; } }
