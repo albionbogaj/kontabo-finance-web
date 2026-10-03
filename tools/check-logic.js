@@ -1800,3 +1800,128 @@ apiBlock.then(async () => {
     return H;
   }).catch(e => { console.log('FAIL E-L2 tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
 // @@REVIEW-L@@
+// ══ Faza B · rishikimi (E-L, L1–L11): the review findings reproduced against the same mock server — POST /pos/receipts/known answers `states`
+// for every receipt the server has (known = ok/new/dirty/unprocessed), POST /pos/ledger/activate takes `legacy` (those receipts are excluded for good) ══
+  .then(async (H) => { if (!H) { console.log('FAIL review tests (E-L) skipped: the E-L2 block did not finish'); process.exitCode = 1; return; }
+    const { S, users, mkT, pub, calls, jOf, mk, enter, done, wait, until, store, book, line, row, mig, day17, day20 } = H;
+    const realFetch = ctx.fetch, bad0 = S.bad.length, hold = () => { let open; const p = new Promise(r => (open = r)); return { p, open }; };
+    const shown = x => ({ KAFE: x.stockOf('KAFE'), UJE: x.stockOf('UJE'), cash1: x.accountBalance('cash1'), bank1: x.accountBalance('bank1') });
+    const acts = T => T.activates.map(a => a.done ? 'done' : a.legacy ? 'legacy:' + a.legacy.join() : 'receipts:' + (a.receipts || []).map(r => r.id).join());
+    const day10 = T => { T.led.rows.clear(); T.led.shifts.clear(); T.led.top = 0; // the 09-10 day as the server books it without rB (rA + rC only)
+      pub(T, row('D:k1a2b3:2026-09-10', 'day', '2026-09-10', { n: 2, counts: { receipts: 1, returns: 1, cancels: 0, voided: 0 }, items: [line('KAFE', 'Kafe', 'copë', 10000, 150, 30)], moves: [['KAFE', -1000, 30, 'sale']], pays: [['cash1', 'cash', 150]] })); };
+    try {
+      // ── L1: the server HAS rB but did not book it (error) and rL waits for its original (wait_orig) — no ledger row holds them: both stay in the
+      // book as legacy and go to activate as `legacy` (excluded on the server for good); only the booked ones (rA, rC) leave the book
+      { const T = mig('rv1'); T.rstate.rB = 'error'; T.rstate.rL = 'wait_orig'; day10(T);
+        const M = mk(); await enter(M, 'mag', 'rv1'); const before = shown(M); M.logout(); done(M);
+        const X = mk(); await enter(X, 'own', 'rv1'); await until(() => T.state.posLedgerV === 1 && !X._migrating);
+        eq([before, acts(T), T.rstate.rB, T.rstate.rL], [{ KAFE: 98000, UJE: 4000, cash1: 300, bank1: 100 }, ['receipts:rC,rA', 'legacy:rL,rB', 'done'], 'excluded', 'excluded'], 'L1: `states` — the receipts the server has but did not book (error, wait_orig) are sent as `legacy` before {done:true}; the server excludes them for good');
+        eq([T.state.posLegacyNos, T.state.posReceipts.map(r => r.id), T.state.movements.filter(m => m.ref === 'BAR-1/0002').length, T.state.payments.filter(p => p.ref === 'BAR-1/0002').map(p => p.account)], [['BAR-1/0004', 'BAR-1/0002'], ['rL', 'rB'], 1, ['bank1']], 'L1: rB (error) and rL (wait_orig) stay in the book as legacy, with their stock rows and payments');
+        eq(shown(X), before, 'L1: no receipt lost, none counted twice — the same stock and money as the old book');
+        X.logout(); done(X); }
+      // ── L1: a receipt still `new` when asked, that ends in `error` after the server processed it, is asked again → it stays legacy
+      { const T = mig('rv1b'); T.rstate.rB = 'new'; day10(T); T.onActivate = b => { if (b.done && T.rstate.rB === 'new') T.rstate.rB = 'error'; };
+        const X = mk(); await enter(X, 'own', 'rv1b'); await until(() => T.state.posLedgerV === 1 && !X._migrating);
+        eq([T.knownCalls.map(k => k.ids.join()), acts(T), T.rstate.rB, T.state.posLegacyNos, shown(X)], [['rL,rC,rB,rA', 'rB', 'rL,rC,rB,rA'], ['receipts:rC,rB,rA', 'done', 'receipts:rC,rA', 'legacy:rB', 'done'], 'excluded', ['BAR-1/0004', 'BAR-1/0002'], { KAFE: 98000, UJE: 4000, cash1: 300, bank1: 100 }], 'L1: a receipt not booked yet at the question is asked again after the processing — it ended in error → kept in the book as legacy, excluded on the server');
+        X.logout(); done(X); }
+      // ── L2: a receipt reaches the book between the question and the commit (an old build imports rN on the server, a 409 reloads this page's book)
+      { const T = mig('rv2'); T.notReadyAfterDone = 40; let X;
+        T.onActivate = body => { if (!body.done || T.injected) return; T.injected = true; const st = T.state, no = 'BAR-1/0009', dt = '11.09.2026';
+          st.posReceipts = [{ id: 'rN', no, kind: 'Kupon POS', status: 'Finalizuar', date: dt, time: '10:00', pos: 'BAR-1', posName: 'Arka Bar', branch: 'Qendra', operator: 'Ana', customer: 'Klient me shumicë', nui: '—', items: [{ name: 'Kafe', sku: 'KAFE', unit: 'copë', qty: 1, unit_c: 127, rate: 18, tax: 'E', sub: 127, vatc: 23, tot: 150 }], sub: 127, vat: 23, total: 150, discount: 0, cash_c: 150, card_c: 0, change_c: 0, fiscal: 'Fiskalizuar', fiscalRef: 'TX', shift: 'SH-1' }, ...st.posReceipts];
+          st.movements = [...st.movements, { date: dt, type: 'sale', sku: 'KAFE', qm: -1000, wh: 'W2', ref: no, party: 'Klient me shumicë · Arka Bar', unit_c: 30, note: 'Kupon POS' }];
+          st.payments = [{ no: 'POS-10009', date: dt, dir: 'in', kind: 'pos', ref: no, party: 'Klient me shumicë · Arka Bar', amount_c: 150, account: 'cash1', method: 'Arkë', note: 'Kupon POS · para', user: 'Ana' }, ...st.payments];
+          T.version++; T.known.add('rN'); pub(T, row('D:k1a2b3:2026-09-11', 'day', '2026-09-11', { n: 2, items: [line('KAFE', 'Kafe', 'copë', 20000, 300, 30)], moves: [['KAFE', -2000, 30, 'sale']], pays: [['cash1', 'cash', 300]] }));
+          X.addParty('customer', { name: 'Klient gjatë kalimit', type: 'Biznes', nui: '—', fiscal: '—', city: '—', contact: '—', address: '—' }); }; // → 409 → the server book (with rN) is reloaded
+        X = mk(); await enter(X, 'own', 'rv2'); await until(() => T.state.posLedgerV === 1 && !X._migrating, 3000); await wait(30);
+        eq([T.knownCalls.length, (T.knownCalls[1] || { ids: [] }).ids.includes('rN'), T.state.posLegacyNos, T.state.posReceipts.map(r => r.id), T.commits.filter(p => 'posLedgerV' in p).length], [2, true, ['BAR-1/0004'], ['rL'], 1], 'L2: the commit finds rN it never asked about → abandoned, the question asked again (rN is booked → it leaves the book), one migration commit');
+        eq([X.stockOf('KAFE'), X.accountBalance('cash1')], [96000, 600], 'L2: rN counted once (in the ledger), not kept as legacy next to it');
+        const Q = mk(), n0 = T.commits.length; await enter(Q, 'mag', 'rv2'); await wait(30);
+        eq([T.commits.length - n0, Q.stockOf('KAFE'), Q.accountBalance('cash1')], [0, 96000, 600], 'L2: the next load reconciles nothing — the same totals');
+        X.logout(); Q.logout(); done(X); done(Q); }
+      // ── L3: /health did not answer at the load
+      const flaky = n => { let left = n; ctx.fetch = async (url, o = {}) => { if (/\/health$/.test(url) && left > 0) { left--; return { ok: false, status: 503, json: async () => ({ error: 'unavailable', message: 'Serveri po rinis' }) }; } return realFetch(url, o); }; };
+      { const T = mkT('rv3', 'Hc SH.P.K.', book(), 'on'); pub(T, JSON.parse(JSON.stringify(day20))); flaky(1);
+        const X = mk(); X.HEALTH_RETRY = [10, 10]; await enter(X, 'own', 'rv3'); ctx.fetch = realFetch; await X.posSync(false); await until(() => !(X._pending || []).length && !X._flushing);
+        const kafe = ((T.catalogs[T.catalogs.length - 1] || { products: [] }).products.find(p => p.sku === 'KAFE') || {}).stock_qm;
+        eq([!!(X._ledger && X._ledger.loaded), X.view().posReceipts.filter(r => r._srv).length, calls('rv3', /^(GET \/pos\/sales|POST \/pos\/ack|POST \/state\/commit)$/).length, T.catalogs.length, kafe], [true, 1, 0, 1, 97000], 'L3: a /health that did not answer is asked again (backoff) — the POS ledger is on: no old relay, no commit, the catalogue carries book + ledger stock');
+        X.logout(); done(X); }
+      { const T = mkT('rv3b', 'Hb SH.P.K.', book(), 'on'); pub(T, JSON.parse(JSON.stringify(day17))); flaky(99);
+        const X = mk(); X.HEALTH_RETRY = [5, 5]; await enter(X, 'own', 'rv3b'); await X.posSync(false); ctx.fetch = realFetch;
+        eq([!!(X._ledger && X._ledger.loaded), X.stockOf('KAFE'), calls('rv3b', /^(GET \/pos\/sales|POST \/pos\/ack|POST \/state\/commit)$/).length], [true, 99000, 0], 'L3: /health never answered, but the book is on the ledger (posLedgerV 1) — proof enough: the ledger is read, never the old relay');
+        X.logout(); done(X); }
+      { const T = mig('rv3c'); flaky(99); const X = mk(); X.HEALTH_RETRY = [5, 5]; await enter(X, 'own', 'rv3c'); await X.posSync(false); await X.posSync(true); const toast = X.state.toast || '';
+        eq([X._ledger, X._ledProbe, calls('rv3c', /^(GET \/pos\/sales|POST \/pos\/ack|PUT \/pos\/catalog|GET \/pos\/status)$/).length, T.tries, T.knownCalls.length, /nuk u përgjigj/.test(toast)], [null, 'fail', 0, 0, 0, true], 'L3: /health never answered and the book is not on the ledger yet — the old relay does not run (no /pos/sales, no catalogue, no commit) while it is unknown');
+        ctx.fetch = realFetch; await X.posSync(false); await until(() => T.state.posLedgerV === 1 && !X._migrating);
+        eq([!!(X._ledger && X._ledger.loaded), X._ledProbe, T.state.posLegacyNos, calls('rv3c', /^GET \/pos\/sales$/).length], [true, '', ['BAR-1/0004'], 0], 'L3: the next tick asks /health again — the POS ledger is switched on and the migration runs');
+        X.logout(); done(X); }
+      // ── L4: the reconcile removes only the rows importPosSales writes — an adjustment / a transfer whose note starts like a POS note stays
+      { const T = mkT('rv4', 'Rak SH.P.K.', book(), 'on'); const A = mk(); await enter(A, 'own', 'rv4');
+        A.adjustStock({ sku: 'KAFE', counted_qm: 95000, note: 'Kthim POS i refuzuar — kafe e prishur, hedhur', date: '20.09.2026' }); await until(() => !(A._pending || []).length && !A._flushing);
+        A.transferStock({ from: 'W1', to: 'W2', items: [{ name: 'Kafe', sku: 'KAFE', unit: 'copë', qty: 2 }], date: '2026-09-20', note: 'Kupon POS i vjetër — malli te bari' }); await until(() => !(A._pending || []).length && !A._flushing); A.logout(); done(A);
+        const B = mk(), n0 = T.commits.length; await enter(B, 'mag', 'rv4'); await wait(30);
+        eq([T.commits.length - n0, T.state.movements.map(m => [m.type, m.qm]), B.stockOf('KAFE'), B.stockOfWh('KAFE', 'W2')], [0, [['adjust', -5000], ['transfer', -2000], ['transfer', 2000]], 95000, 2000], 'L4: the next load keeps an adjustment and a transfer whose notes start with "Kthim POS" / "Kupon POS" — only sale / return / cancel rows with the exact POS note are POS rows');
+        B.logout(); done(B); }
+      // ── L5: "Zbraz librat", then another company before PUT /state answered
+      { const TA = mkT('rv5a', 'IA SH.P.K.', book(), 'on'); pub(TA, JSON.parse(JSON.stringify(day17)));
+        const TB = mkT('rv5b', 'IB SH.P.K.', book({ company: { ...book().company, name: 'IB SH.P.K.' } }), 'on'); pub(TB, JSON.parse(JSON.stringify(day20)));
+        const X = mk(); await enter(X, 'own', 'rv5a'); const h = hold();
+        ctx.fetch = async (url, o = {}) => { if (/\/state$/.test(url) && o.method === 'PUT' && /-rv5a$/.test((o.headers || {}).Authorization || '')) { const r = await realFetch(url, o); await h.p; return r; } return realFetch(url, o); };
+        X.resetDemo(); await wait(5); await X.apiSwitchTenant('rv5b'); await until(() => X.state.db.company.name === 'IB SH.P.K.' && X._ledger && X._ledger.loaded);
+        h.open(); await wait(40); ctx.fetch = realFetch;
+        eq([TA.resets, TB.resets, [...TB.led.rows.values()].filter(r => !r.removed).length, X.state.db.company.name, X.state.db.products.length, X.apiCfg().version, X._ledger.rows.size, TA.state.products.length], [0, 0, 1, 'IB SH.P.K.', 5, TB.version, 1, 0], 'L5: the late answer of the first company\'s PUT /state is dropped — no ledger reset sent with the second company\'s token, its book, version and ledger untouched');
+        X.logout(); done(X); }
+      // ── L6: the catalogue waits for the migration (until then the page shows the old book alone — its stock misses the ledger)
+      { const T = mig('rv6'); T.led.notReady = 100000; const P = mk(); P.LEDGER_POLL = 50; await enter(P, 'own', 'rv6'); await until(() => P._migrating && P._ledger && P._ledger.loaded);
+        await P.posSync(false); P.state.toast = null; const man = await P.posPushCatalogSrv(true);
+        eq([T.catalogs.length, man, /po kalon në server/.test(P.state.toast || ''), P.ledgerLive(P.state.db)], [0, null, true, false], 'L6: the ledger is loaded but the book is not migrated yet — no catalogue PUT (timer or "Dërgo katalogun")');
+        T.led.notReady = 0; await until(() => T.state.posLedgerV === 1 && !P._migrating, 3000); await P.posSync(false);
+        eq([T.catalogs.length, ((T.catalogs[0] || { products: [] }).products.find(p => p.sku === 'KAFE') || {}).stock_qm], [1, 97000], 'L6: once migrated the catalogue is PUT with book + ledger stock');
+        P.logout(); done(P); }
+      // ── L7: a POS sync on its way when the company changes
+      { const TA = mkT('rv7a', 'HA SH.P.K.', book(), 'on'); pub(TA, JSON.parse(JSON.stringify(day17)));
+        const TB = mkT('rv7b', 'HB SH.P.K.', book({ company: { ...book().company, name: 'HB SH.P.K.' } }), 'on'); pub(TB, JSON.parse(JSON.stringify(day20)));
+        const X = mk(); await enter(X, 'own', 'rv7a'); const h = hold();
+        ctx.fetch = async (url, o = {}) => { if (/\/pos\/status$/.test(url) && /-rv7a$/.test((o.headers || {}).Authorization || '')) await h.p; return realFetch(url, o); };
+        S.gate = { tid: 'rv7b', p: new Promise(r => (S.open = r)) }; // the second company's ledger is slow
+        const sync = X.posSync(false); await wait(5); await X.apiSwitchTenant('rv7b'); await until(() => X.state.db.company.name === 'HB SH.P.K.' && X._ledger && X._ledger.tenantId === 'rv7b');
+        h.open(); await sync; await wait(10); ctx.fetch = realFetch;
+        eq([X._ledger.loaded, TB.catalogs.length, TA.catalogs.length, JSON.parse(store.getItem('kontabo.finance.posrt.rv7b') || '{}').catalogHashSrv || ''], [false, 0, 0, ''], 'L7: the first company\'s sync that was on its way PUTs nothing (to neither company) and writes nothing into the second company\'s runtime fields');
+        S.gate = null; S.open(); await until(() => X._ledger.loaded); await X.posSync(false);
+        eq([TB.catalogs.length, ((TB.catalogs[0] || { products: [] }).products.find(p => p.sku === 'KAFE') || {}).stock_qm], [1, 97000], 'L7: once the second company\'s ledger loaded its catalogue goes out with book + ledger stock');
+        X.logout(); done(X); }
+      // ── L8: an older backend (no posLedger:1): Cilësime › API keeps its keys in the book, as before
+      { S.features = []; try { const T = mkT('rv8', 'Old SH.P.K.', (() => { const { posLedgerV, ...b } = book(); return { ...b, apiKeys: [] }; })(), 'off');
+          const X = mk(); await enter(X, 'own', 'rv8'); X.go('settings', 'API'); const n0 = T.commits.length; X.settingsPage('API').cards[0].actions[0].go(); X.setF({ name: 'Web', scope: 'lexo', env: 'test' }); X.formVals().actions[0].go();
+          await until(() => !(X._pending || []).length && !X._flushing); await wait(10);
+          eq([X.apiKeysOn(), T.commits.slice(n0).some(p => 'apiKeys' in p), (T.state.apiKeys || []).map(k => k.name)], [false, true, ['Web']], 'L8: without the POS-ledger backend a new API key is committed to the book (apiKeys is server data only where /api-keys exists)');
+          X.logout(); done(X); const Y = mk(); await enter(Y, 'own', 'rv8'); eq((Y.state.db.apiKeys || []).map(k => k.name), ['Web'], 'L8: … and is still there after a reload'); Y.logout(); done(Y); }
+        finally { S.features = ['posLedger:1']; } }
+      // ── L9: an unsent A4 invoice of a LEGACY receipt survives the next load (its patch carries that legacy receipt, marked with the invoice)
+      { const st = book({ posLegacyNos: ['L-1'], posReceipts: [{ id: 'l1', no: 'L-1', kind: 'Kupon POS', status: 'Finalizuar', date: '01.08.2026', total: 118, sub: 100, vat: 18, discount: 0, customer: 'Drini Market SH.P.K.', nui: '811234500', posName: 'Arka Bar', operator: 'Ana', fiscal: 'Fiskalizuar', fiscalRef: 'TX', items: [{ name: 'Kafe', sku: 'KAFE', unit: 'copë', qty: 1, unit_c: 100, rate: 18, tax: 'E', sub: 100, vatc: 18, tot: 118 }] }] });
+        const T = mkT('rv9', 'Leg SH.P.K.', st, 'on'); const A = mk(); await enter(A, 'own', 'rv9');
+        ctx.fetch = async (url, o = {}) => { if (/\/state\/commit$/.test(url)) throw new TypeError('Failed to fetch'); return realFetch(url, o); };
+        A.invoiceFromReceipt('l1'); await wait(30); const pend = JSON.parse(store.getItem('kontabo.finance.pending') || '[]'); clearTimeout(A._retryT); ctx.fetch = realFetch;
+        const B = mk(); await B.apiEnter(jOf('own', 'rv9'), true, false); await until(() => B._ledger && B._ledger.loaded && !(B._pending || []).length && !B._flushing); await wait(30);
+        const inv = (T.state.invoices || []).filter(i => i.fromPos === 'l1');
+        eq([pend.map(p => Object.keys(p).sort().join()), inv.length, T.state.posReceipts.map(r => [r.no, !!inv[0] && r.invoiceNo === inv[0].no]), /u hodh/.test(B.state.toast || ''), JSON.parse(store.getItem('kontabo.finance.pending') || '[]').length], [['invoices,posReceipts'], 1, [['L-1', true]], false, 0], 'L9: the replayed A4 patch of a legacy receipt is sent (the invoice + the legacy receipt marked with it) — not dropped as a POS patch');
+        A._pending = []; A.logout(); B.logout(); done(A); done(B); }
+      // ── L10: two tabs migrate; the one whose commit lost (409 — the other tab's migration landed) writes no audit line and shows no dialog
+      { const T = mig('rv10'); const Q = mk(); await enter(Q, 'mag', 'rv10');
+        const P = mk(); await enter(P, 'own', 'rv10'); await until(() => T.state.posLedgerV === 1 && !P._migrating);
+        users.mag.perms = { ...users.mag.perms, pos: true }; Q.state.session = { ...Q.state.session, perms: { ...Q.state.session.perms, pos: true } };
+        try { Q.state.confirm = null; const r = await Q.posLedgerMigrate();
+          eq([r, T.commits.filter(p => 'posLedgerV' in p).length, T.audit.filter(a => /^Libri i POS-it kaloi në server/.test(a)).length, Q.state.confirm, Q.state.db.posLedgerV], [true, 1, 1, null, 1], 'L10: the tab whose migration commit lost the race reloads the migrated book — no second audit line, no dialog'); }
+        finally { users.mag.perms = { stok: true, produkte: true }; }
+        P.logout(); Q.logout(); done(P); done(Q); }
+      // ── L11: a key created / a token rotated for one company, answered after the switch to another
+      { const TA = mkT('rv11a', 'KA SH.P.K.', book(), 'on'), TB = mkT('rv11b', 'KB SH.P.K.', book({ company: { ...book().company, name: 'KB SH.P.K.' } }), 'on'); TA.terms = [{ id: 'tA1', name: 'Arka A', branch: 'Qendra', posId: 'A-1', warehouse: 'W1', status: 'Aktiv', lastSeen: '' }];
+        const X = mk(); await enter(X, 'own', 'rv11a'); X.go('settings', 'API'); await X.apiKeysLoad(); const h = hold();
+        ctx.fetch = async (url, o = {}) => { if ((/\/api-keys$/.test(url) || /\/rotate$/.test(url)) && o.method === 'POST') { const r = await realFetch(url, o); await h.p; return r; } return realFetch(url, o); };
+        const pk = X.apiKeyCreate('Web A', ['pos:read']), pr = X.terminalRotate({ id: 'tA1', name: 'Arka A' }); await wait(5);
+        await X.apiSwitchTenant('rv11b'); await until(() => X.state.db.company.name === 'KB SH.P.K.'); X.go('settings', 'API'); await X.apiKeysLoad(); X.state.toast = null; X.state.confirm = null;
+        h.open(); const [k, t] = await Promise.all([pk, pr]); ctx.fetch = realFetch;
+        eq([k, t, (X.state.apiKeysSrv.items || []).map(x => x.name), X.state.apiSecret, X.state.confirm, X.state.toast, (TA.keys || []).length, TA.rotations, (TB.keys || []).length, X.apiCfg().tenantId], [null, null, [], null, null, null, 1, 1, 0, 'rv11b'], 'L11: the first company\'s new key and rotated token answered after the switch are dropped — never listed or shown on the second company');
+        X.logout(); done(X); }
+    } finally { ctx.fetch = realFetch; }
+    eq([S.bad.slice(bad0), S.noHdr], [[], []], 'mock server (review): no commit carried `_srv` rows or posSync runtime fields, every call had X-Kontabo-Client: 2');
+  }).catch(e => { console.log('FAIL review tests (E-L) threw: ' + (e && e.stack || e)); process.exitCode = 1; });
