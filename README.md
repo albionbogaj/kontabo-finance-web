@@ -24,7 +24,7 @@ kontabo-finance/
 │  ├─ unpack.js            ← zbërthen një bundle .html në src/
 │  ├─ pack.js              ← ribën dist/Kontabo finance.html nga src/
 │  ├─ dev.js               ← gjeneron dev/index.html për preview pa pack (asset-e me path relativ)
-│  ├─ check-logic.js       ← kontroll sintakse + 921 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, render sweep)
+│  ├─ check-logic.js       ← kontroll sintakse + 1068 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, render sweep)
 │  └─ verify-roundtrip.js  ← verifikon që pack(unpack(x)) == x
 ├─ dev/index.html          ← preview i shpejtë (gjenerohet)
 └─ dist/
@@ -176,6 +176,42 @@ zëvendësohet me API; operacionet e mësipërme mbeten të njëjtat.
   çmimeve, etiketat dhe katalogu (`gross_t`) shtypin të njëjtin numër që arka shtyp në kupon (3 × 1.5068 = 4.52).
   Rreshtat e kuponëve POS të importuar mbajnë `gross_t` kur arka e dërgon.
 
+## Njësitë, recetat dhe “Shfaqe në POS” (Produkte)
+
+- **Njësitë** (`UNITS`): copë, m, m², m³, kg, **l**, pako, **shishe**, **gotë**, thes, kovë — kombo te formulari i produktit.
+  Copë, pako, shishe, gotë, thes dhe kovë numërohen me numra të plotë (`INT_UNITS`), të tjerat me deri në 3 decimale; çmimi
+  është për njësi. Produkte › Njësitë tregon për çdo njësi produktet, gjendjen, vlerën, shitjet e muajit dhe decimalet.
+  Njësia **kyçet** (`unitLocked`) sapo produkti ka gjendje fillestare, lëvizje stoku (edhe shitje të arkave nga libri i
+  serverit), përdoret në një recetë ose është në një dokument draft.
+- **Receta** (formulari › **Lloji**: *Mall me stok* / *Recetë (nga përbërësit)*; `p.recipe = [{sku, qm}]`): përbërësit janë
+  vetëm mall me stok, sasia në njësinë e përbërësit për 1 njësi të shitur — për litrin pranohen edhe `cl`/`ml` (`recipeQm`:
+  4 cl = 0.04 l). Një nivel i vetëm (përbërësi s'ka recetë, produkti që është përbërës s'bëhet recetë); produkti me gjendje,
+  lëvizje ose dokumente draft nuk bëhet recetë (`recipeError`). Receta **nuk ka stok as kosto të vetën**: kostoja = kostoja
+  mesatare e përbërësve (`recipeCost`, me marzhin te formulari), gjendja = sa mund të bëhen nga përbërësit (`makeQm`, edhe për
+  depo). Kur shitet (faturë, importi lokal i kuponëve) dalin nga stoku **përbërësit** (lëvizje me `via` = SKU e recetës,
+  rrumbullakim gjysma larg zeros), kurrë vetë receta; nota e kreditit i kthen përbërësit pro rata me koston e daljes; në
+  importin lokal të kuponëve kthimi i një artikulli recetë kthen paratë pa rikthyer përbërës (i shërbyer = humbje). Receta
+  nuk blihet, nuk porositet te furnitori, nuk transferohet, nuk numërohet dhe nuk i kthehet furnitorit. Me librin e POS-it në
+  server konsumin e recetës e regjistron serveri (i ngrirë me kuponin).
+- **“Shfaqe në POS”** (`p.pos`, parazgjedhje *Po — shitet në arkë*; *Jo — vetëm në ERP*): katalogu i arkave
+  (`posCatalogPayload`) mban vetëm produktet e shfaqura; një recete i dërgohet si stok sasia që lejojnë përbërësit (`stock_qm`,
+  `stock_by_wh`), vetë receta dhe paketimi nuk dalin kurrë nga ERP-ja. Një katalog me zero produkte të shfaqura nuk dërgohet
+  kurrë (arka do ta zbrazte listën); me “Dërgo katalogun” shfaqet njoftimi `CAT_EMPTY`.
+
+## Paketimi — blerjet, transferimet dhe numërimi në paketime
+
+Produkti (jo receta) mund të ketë një **paketim** opsional (`p.pack = {unit, qm}`: 1 paketim = `qm` të mijëta të njësisë së
+produktit — p.sh. Rum në `l` me *1 shishe = 0.7 l*; njësia e paketimit ndryshe nga ajo e produktit, sasia e plotë për
+njësitë me numra të plotë — `packError`). Blerjet, porositë e blerjes dhe transferimet kanë te rreshti
+çelësin **“Sasia në”** (njësia e produktit ⇄ paketimi): në paketime shkruhen sasia dhe **çmimi për paketim**, ndërsa ruhen
+gjithmonë në njësinë e produktit — `qm = paketime × pack.qm`, `unit_t = çmimi i paketimit × 1000 / pack.qm` (4 decimale) dhe
+shuma e rreshtit = paketime × çmimi i paketimit (fatura e furnitorit deri në cent). Lëvizjet, dokumentet dhe stoku nuk e
+ndërrojnë kurrë njësinë; paketimet mbeten vetëm si shënim (`12 shishe × 0.7 l`) te sirtari, printimi A4 dhe lëvizja. Porosia →
+Blerje vjen e parapërgatitur në paketime për sa kohë produkti ka të njëjtin paketim; kthimi te furnitori çmohet me çmimin për
+njësi dhe pjesa e fundit kthen mbetjen e saktë. **Numërimi** (Inventar) ka “Numërimi në”: *12.5 shishe → 8.75 l*, diferenca
+regjistrohet në njësinë e produktit dhe numërimi në paketime shënohet te shënimi. Gjendja, Produktet dhe sirtari i produktit
+tregojnë ekuivalentin `≈ 12 shishe` (`packEq`). Rreshtat e shitjes nuk janë kurrë në paketime.
+
 ## Kompania pa TVSH · blloku tatimor · kuponët me 4 decimale (agjenda e testit ATK, aplikimi 70754265)
 
 - **E regjistruar në TVSH** (Kompania › Të dhënat e kompanisë — i njëjti çelës `taxSettings.vatRegistered` si te
@@ -283,7 +319,8 @@ dhe nuk hyn dot në ERP-në e një kompanie pa llogari kompanie.
 
 **Terminalet POS** (POS › Arkat): **+ Terminal** krijon rekordin (`POST /terminals`) dhe tregon token-in `kt_…` **vetëm një herë**;
 POS-i (v0.6.0, Cilësimet › Serveri Kontabo) sinkronizon vetë me serverin, kjo faqe i tërheq kuponët/ndërrimet nga `/pos/sales`
-(`posSyncServer`, çdo 15 s ose **Sinkronizo nga serveri**) dhe dërgon katalogun me `PUT /pos/catalog` sa herë ndryshon.
+(`posSyncServer`, çdo 15 s ose **Sinkronizo nga serveri**) dhe dërgon katalogun me `PUT /pos/catalog` sa herë ndryshon. Një server
+me librin e POS-it (`posLedger:1`) e zëvendëson këtë rele — shih “Libri i POS-it në server” më poshtë.
 
 ## Raportet · Kompania · Cilësimet · Admin paneli
 
@@ -354,6 +391,51 @@ dhe e tregon si rreshtat “Totali para zbritjes” / “Zbritje totale” (sirt
 `docPrintHtml`), ndërsa Nëntotali/TVSH/Totali mbeten neto — totali i A4-ës është gjithmonë i barabartë me shumën e paguar.
 **PIN-et e operatorëve** (POS › Operatorët → “Cakto/Ndrysho PIN”, 4–6 shifra, parazgjedhje 0000) ruhen si
 `sha256(salt:pin)` te `db.users[].pinHash/pinSalt` (`sha256()` sinkron në JS) dhe udhëtojnë te POS-i vetëm si hash.
+
+## Libri i POS-it në server (`posLedger:1`)
+
+Kur `GET /health` i serverit liston `posLedger:1` (kontabo-backend), kuponët e arkave **nuk ruhen më në librin e kompanisë**
+(`tenant_state`): serveri e regjistron vetë çdo kupon (kostot, llogaritë, depoja dhe konsumi i recetave ngrihen një herë) në
+**rreshta libri** — një për arkë-ditë (*Përmbledhje ditore*), një për çdo kupon me NUI të blerësit dhe, për muajt e mbyllur, një
+për arkë-muaj (më poshtë). ERP-ja i lexon me `GET /pos/ledger?since=&limit=200` (në çdo ngarkim nga e para, pastaj çdo 15 s), i
+mban në memorie (`_ledger`) dhe **nxjerr** prej tyre dokumentet, lëvizjet e stokut, pagesat dhe ndërrimet: `view()` = libri +
+rreshtat e nxjerrë (`_srv`). Stoku, arka/banka, ditari, raportet, TVSH-ja, paneli, P:Arkat dhe P:Operatorët lexojnë kështu
+librin bashkë me rreshtat e serverit; asgjë e nxjerrë nuk dërgohet me `/state/commit` dhe tik-u i POS-it nuk bën commit. Releja e
+vjetër (`/pos/sales`, `/pos/ack`) nuk punon; katalogu shkon me `PUT /pos/catalog` (stoku = libri + rreshtat e serverit) vetëm
+pasi rreshtat të jenë ngarkuar dhe libri të ketë kaluar. Çdo thirrje mban `X-Kontabo-Client: 2`.
+
+- **P:Shitje / P:Kthime** dhe skeda **“Kuponët”** e monitorit fiskal (kuponët e pafiskalizuar të 365 ditëve të fundit) i lexojnë
+  kuponët veç e veç nga `GET /pos/receipts` (periudha Sot / 7 ditë / Ky muaj / 31 ditë ose me data, arka, statusi, kërkimi; 50
+  për faqe + “Shfaq më shumë”). Lista **rifreskohet vetë çdo 30 s** sa kohë faqja është e hapur dhe skeda e shfletuesit e
+  dukshme — në heshtje, me të njëjtat filtra dhe të gjithë rreshtat e ngarkuar (mbi 200 në faqe nga 200, deri në 1000), pa
+  prekur filtrat, faqet dhe sirtarin; kuponët e rinj dalin lart.
+- Sirtari i kuponit (`GET /pos/receipts/{id}`) tregon kuponët e lidhur (origjinali, kthimet, anulimi); **Fatura A4** krijohet
+  vetëm nga një kupon i finalizuar, një herë, si faturë `fromPos` pa shitje, stok apo fiskalizim të dytë. Sirtari i përmbledhjes
+  ditore tregon operatorët, fiskalizimin, kuponët e pafiskalizuar, artikujt neto dhe pagesat; “Shiko kuponat e ditës” hap
+  P:Shitje me atë arkë dhe datë.
+- Me të njëjtin server çelësat te Cilësime › API mbahen në server (`/api-keys`) dhe P:Arkat ka “Rigjenero tokenin” për
+  terminalin (`POST /terminals/{id}/rotate`).
+
+**Kalimi në ngarkimin e parë** (`posLedgerMigrate`): një libër i vjetër me kuponë të importuar kalon automatikisht kur e hap
+pronari ose një përdorues me leje POS, pasi të jenë dërguar ndryshimet e padërguara: `POST /pos/receipts/known` → `POST
+/pos/ledger/activate` (vlerat e ngrira nga libri, kuponët legacy, pastaj `done`) → pritet që serveri të jetë gati → **një
+commit** që heq nga libri kuponët që serveri i ka, bashkë me lëvizjet, pagesat, rreshtat e radhës fiskale dhe ndërrimet e tyre,
+dhe e shënon librin (`posLedgerV: 1`, `posLegacyNos`). Kuponët që serveri nuk i ka, ose i ka me gabim / në pritje të origjinalit /
+të përjashtuar, mbeten në libër si *legacy* dhe serveri i përjashton përgjithmonë — asnjë kupon nuk numërohet dy herë. Kalimi
+shkruan një rresht audit-i dhe, kur totalet e POS-it të një muaji ndryshojnë, një dialog të vetëm me diferencat (libri i vjetër →
+serveri). Është idempotent (409 → përsëritet); derisa të kryhet faqja tregon vetëm librin, me banerin “Libri i POS-it po kalon në
+server”. Në çdo ngarkim të mëvonshëm `posLedgerReconcile` heq rreshtat POS jo-legacy që mund t'i ketë rikthyer një ndërtim i
+vjetër. Një kompani e re në këtë server lind me `posLedgerV: 1` (pa kalim); “Zbraz librat e kompanisë” zbraz edhe librin e
+POS-it (`POST /pos/ledger/reset`).
+
+### Rreshtat mujorë
+
+Për një muaj të mbyllur serveri mund t'i bashkojë ditët e një arke në **një rresht** `kind:'month'` (`M:<arka>:<YYYY-MM>`, data =
+dita e fundit e muajit, nr. `POS-<posId>-<YYYYMM>-<key6>`); rreshtat ditorë vijnë si tombstones dhe zhduken. ERP-ja e lexon si
+përmbledhjen ditore: dokumenti *Përmbledhje mujore · <arka>*, pagesat `POS-<YYYYMM>-<key6>` (+`K` për kartën), regjistrimi
+“Përmbledhje mujore POS” në ditar dhe lëvizjet me kostot e ngrira — me totale identike me ditët që zëvendëson (stoku, arka,
+raportet, TVSH-ja, paneli). Sirtari tregon muajin, numrin e kuponëve, ditën e parë–të fundit dhe operatorët e mbledhur; “Shiko
+kuponat e muajit” hap P:Shitje me atë arkë nga data 1 deri në fund të muajit. Një rresht mujor nuk numërohet kurrë si “sot”.
 
 ## Çfarë NUK bën ky prototip (me qëllim)
 - Nuk fiskalizon realisht: faturat vetëm hyjnë në radhë me status *Në pritje*; Fiscal Agent,
