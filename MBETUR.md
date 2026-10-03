@@ -1,4 +1,60 @@
-# Kontabo — çfarë ka mbetur (auditim i verifikuar, 13.09.2026)
+# Kontabo — çfarë ka mbetur
+
+> **Auditim i ri: 03.10.2026.** Ky krye e zëvendëson auditimin e 13.09.2026, i cili ruhet më poshtë si histori
+> dhe **nuk duhet lexuar si gjendje e sotme**: pjesa dërrmuese e „mungon"-ave të tij është ndërtuar ndërkohë.
+> Çdo rresht më poshtë është verifikuar sot kundrejt kodit, serverit dhe testeve.
+
+## Çfarë është bërë që nga 13.09.2026 (verifikuar sot)
+
+| Dikur „mungon" | Sot |
+|---|---|
+| Backend + databazë qendrore | `kontabo-backend` (FastAPI + PostgreSQL), 237 teste; xhiron si shërbimi `kontabo-finance` te albco-server |
+| Autentikim, multi-tenant, ftesa, lejet | Te backend-i: JWT + refresh, tenantë, role, ftesa, kyçja e llogarisë, audit log |
+| Fiskalizimi real ATK | `pos/atk.py` + `pos/ledger.py`: onboarding në arkë, nënshkrim ECDSA, PosCoupon/CitizenCoupon, QR e qytetarit, zinxhir hash-esh, OFFLINE sipas nenit 26.12 |
+| Kuponi sipas Shtojcës F | `pos/receipt.py` + `pos/escpos.py` me 8 etalonë (`golden/`), tekst · HTML · ESC/POS nga i njëjti burim |
+| Printimi | Printer termik 80 mm, ESC/POS RAW, letra del vetë pas shitjes (0.13.0) |
+| Instaluesi i POS-it + përditësimi | Inno Setup për përdorues (pa UAC) + përditësim automatik me manifest të nënshkruar (0.11.0) |
+| Depo git + CI lokal | Katër depo git; `node tools/check-logic.js` (1166), `python kontabo_pos.py --check` (980), `pytest` (237) |
+| Storno pagese | Sirtari i faturës/blerjes → „Storno pagesën" (03.10.2026) |
+| SKU i produktit | Caktohet gjithmonë vetvetiu (03.10.2026) |
+| ERP në telefon | Shtresa `narrow` + `@media` (03.10.2026) |
+| Kopje rezervë, kufizim hyrjesh, CSP | Timer i përditshëm `pg_dump` te disku i kopjeve, fail2ban mbi log-un e Caddy-t, CSP në zbatim (03.10.2026) |
+
+## Çfarë mbetet vërtet (03.10.2026)
+
+**Kërkon pronarin / palë të treta**
+
+1. **Testi teknik i ATK-së** (aplikimi 70754265): konfirmimi i njësisë së çmimit të artikullit dhe i
+   rrumbullakimit bruto-së-pari para PROD-it; tri pyetjet e dokumentuara për ekzaminuesin
+   (`kontabo-pos/README.md` › „Pyetje për ATK-në në test").
+2. **Onboarding-u ATK arkë-për-arkë** (NUI, nr. fiskalizimi, Branch ID, POS ID, Application ID, certifikata).
+3. **Dokumentacioni i F-Link-ut** (lista e komandave `.inp`, modeli i printerit) — shih
+   `kontabo-pos/docs/ANALIZA-PRINTERET-FISKALE.md`; materiali i Tremol-it është i plotë.
+4. **Certifikatë code-signing** për instaluesin (SmartScreen).
+5. **Rrjeti**: një rekord DNS lokal `app.kontabo-ks.com → 192.168.1.106` te ruteri, që arkat dhe kompjuterët
+   brenda ndërtesës ta arrijnë serverin me emrin publik.
+6. **Arkat që ende tregojnë te kontabo.online**: publikimi i release-it edhe atje + token i ri për secilën
+   (`deploy/README.md` §5.1).
+7. **SMTP** — shtyrë me vendim të pronarit (03.10.2026): ftesat dhe rikuperimi i fjalëkalimit bëhen manualisht
+   nga administratori (`POST /admin/tenants/{id}/owner-password`).
+
+**Punë ndërtimi që mbetet**
+
+8. **Adapterët e printerave fiskalë** (`TremolProvider`, pastaj `FlinkProvider`) — plani dhe vlerësimi i kohës
+   te `kontabo-pos/docs/ANALIZA-PRINTERET-FISKALE.md`.
+9. **Ekzekutimi i radhës fiskale te serveri** (hapi 4): `fiscal_queue` listohet dhe riprovohet, por asnjë proces
+   s'i dërgon transaksionet — faturat e ERP-së mbeten „Në pritje". Varet nga vendimi se cila rrugë fiskalizon
+   faturat e ERP-së (arka, agjenti i Windows-it, apo serveri me çelësat e tenantit).
+10. **Numërimi i dokumenteve te serveri** (tabela `sequences` është e rezervuar; numrat i jep ende klienti) —
+    kërkohet para se dy shfletues të lëshojnë fatura njëkohësisht.
+11. **Verifikimi i PIN-eve te serveri ose KDF me pepper** — sot katalogu i terminalit mbart hash-et e PIN-eve;
+    ndryshimi prek edhe arkën, sepse PIN-i duhet të vlerësohet edhe pa internet.
+12. **Monitorimi** (alarm kur shërbimi bie ose radha fiskale mbushet).
+13. **HR / Prodhim / CRM** — faqe „modul i pandërtuar"; hyjnë në punë vetëm me vendim të pronarit.
+
+---
+
+# Auditimi i 13.09.2026 (histori — jo gjendje e sotme)
 
 Metoda: spec-i (`Kontabo-Finance-Prompt.md`) u nda në **206 kërkesa** në 22 fusha; secila u kontrollua kundrejt kodit (ERP `src/template.html`, POS `kontabo-pos/`, testet, README). **73 kërkesa** janë të implementuara lokalisht. Çdo pretendim “mungon/pjesërisht” (262 gjithsej) kaloi nga një agjent skeptik që kërkoi implementimin real — asnjë s'u refuzua.
 
