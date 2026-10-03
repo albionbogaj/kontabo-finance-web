@@ -24,7 +24,7 @@ kontabo-finance/
 │  ├─ unpack.js            ← zbërthen një bundle .html në src/
 │  ├─ pack.js              ← ribën dist/Kontabo finance.html nga src/
 │  ├─ dev.js               ← gjeneron dev/index.html për preview pa pack (asset-e me path relativ)
-│  ├─ check-logic.js       ← kontroll sintakse + 1142 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU BAR-n, kategoritë, idempotenca, lejet), render sweep)
+│  ├─ check-logic.js       ← kontroll sintakse + 1151 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU-ja e barit / BAR-n, kategoritë, idempotenca, vendimet e vonuara, katalogu para mbylljes, lejet), render sweep)
 │  └─ verify-roundtrip.js  ← verifikon që pack(unpack(x)) == x
 ├─ dev/index.html          ← preview i shpejtë (gjenerohet)
 └─ dist/
@@ -451,19 +451,29 @@ kept, reason}`); kur serveri thotë `more`, vazhdon me grumbullin tjetër. Pa ve
   tashmë vlerën e barit. Njësia ndjek kyçjen (`unitLocked`, edhe me lëvizjet e librit të POS-it) dhe rregullin e paketimit. Çmimi
   bruto ruhet siç vjen, neto (`price_t` / `price_c`) llogaritet prej tij si te formulari i produktit, me normën e shkronjës (së re).
   Stoku dhe kostoja nuk preken kurrë.
-- Produkti gjendet me `sku`, pastaj me `barKey` (çelësi i barit), pastaj — vetëm pa `before` — me emrin pa dallim shkronjash të
-  mëdha/vogla. **Produkt i ri** (pa `before`, i pa gjetur): SKU `BAR-<numri i lirë i radhës>`, kategoria krijohet po mungoi, kosto
-  dhe gjendje fillestare 0, `barKey`; një produkt vetëm për receta del i fshehur nga POS-i. Me `before` një produkt që ERP-ja nuk
-  e ka nuk krijohet sërish (refuzohet). Receta nuk krijohen kurrë nga bari.
+- Produkti gjendet me `sku`, pastaj me `barKey` + `barTerm` (çelësi i barit dhe terminali), pastaj — vetëm pa `before` — me emrin pa
+  dallim shkronjash të mëdha/vogla (atëherë merr `barKey` + `barTerm`, po s'kishte; propozimet e mëvonshme të barit e gjejnë).
+  **Produkt i ri** (pa `before`, i pa gjetur): SKU-ja që propozon bari (`BAR-<shenja 4-shkronjëshe e lokalit>-<id e produktit>`, me
+  të cilën arkat e shesin që nga shitja e parë) kur ka formën e saktë dhe asnjë produkt nuk e ka; përndryshe `BAR-<numri i lirë i
+  radhës>`. Vendimi kthen SKU-në e përdorur (produkti i gjetur: të vetën). Kategoria krijohet po mungoi, kosto dhe gjendje
+  fillestare 0; një produkt vetëm për receta del i fshehur nga POS-i. Me `before` një produkt që ERP-ja nuk e ka nuk krijohet
+  sërish (refuzohet). Receta nuk krijohen kurrë nga bari.
 - **Kategoritë** zbatohen të parat: riemërim kur ERP-ja ka ende emrin `before` (kategoria dhe `cat` i çdo produkti të saj — një
   produkt i propozuar me emrin e vjetër bie te kategoria e riemëruar), krijim kur asnjë kategori nuk e ka emrin `after`, përndryshe
-  refuzim (ERP-ja fiton).
+  refuzim (ERP-ja fiton). Ndryshimi i një produkti nuk krijon kurrë kategori: një emër që ERP-ja s'e ka pas propozimeve të
+  kategorive është emër i vjetër nga arka (riemërim i ndërmjetëm / i kthyer mbrapsht) — produkti mbetet në kategorinë e vet; po ashtu
+  kur zhvendosja është vetëm një riemërim që ky grumbull e refuzoi.
 - **Idempotent**: çdo propozim i trajtuar mbetet në libër te `posProposalsDone` (1000 të fundit, me rezultatin) dhe nuk zbatohet
   dy herë; një që serveri e ka ende në pritje mbyllet sërish me rezultatin e ruajtur. Pas një 409 libri i serverit fiton (edhe
   `posProposalsDone` e ndjek serverin) dhe grumbulli zbatohet sërish mbi të; kur serveri e refuzon commit-in (4xx) libri ringarkohet
-  dhe provohet pas 5 minutash. Nuk punon ndërsa ka ndryshime të padërguara ose ndërsa libri i POS-it po kalon.
+  dhe provohet pas 5 minutash. Nuk punon ndërsa ka ndryshime të padërguara ose ndërsa libri i POS-it po kalon. Dy propozime të një
+  çelësi të një terminali në një grumbull (bari dërgoi sërish mes dy faqeve): vetëm i fundit (`seq`) zbatohet dhe mbyllet.
+- **Vendimet e pa pranuara**: çdo vendim që zbriti në libër mbahet në kujtesë (për kompani) derisa një `resolve` që e mban të kthejë
+  200, dhe dërgohet sërish në çdo xhirim **para** leximit të listës — edhe kur bari e ka zëvendësuar propozimin ndërkohë: serveri e
+  ruan vendimin e vonuar dhe ia zhvendos bazën pasardhësit, që ndryshimi i dytë i barit të mos merret për ndryshim të ERP-së.
 - Një rresht audit-i për grumbull (“N produkte / M kategori nga KONTABO BAR (arkat): … të zbatuara · … pjesërisht · … të refuzuara
-  · të reja: BAR-…”); katalogu shkon sërish te arkat vetë (hash-i ndryshoi) nga një përdorues me leje POS.
+  · të reja: BAR-…”). Pasi grumbulli zbret, një përdorues me leje POS e dërgon katalogun (`PUT /pos/catalog`, kur hash-i ndryshoi)
+  **para** `resolve`-it: arka që lexon vendimin s'zbaton dot më një katalog më të vjetër (çmimi i vjetër, produkti i ri i fshehur).
 
 ## Çfarë NUK bën ky prototip (me qëllim)
 - Nuk fiskalizon realisht: faturat vetëm hyjnë në radhë me status *Në pritje*; Fiscal Agent,
