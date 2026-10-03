@@ -1533,7 +1533,9 @@ apiBlock.then(async () => {
         const lim = Math.min(+q.limit || 200, T.propCap || 200), L = (T.props || []).filter(x => !q.state || x.state === q.state).sort((a, b) => a.seq - b.seq);
         return json(200, { items: L.slice(0, lim).map(x => ({ id: x.id, kind: x.kind, key: x.key, terminal: x.terminal, before: x.before, after: x.after, sku: x.sku, createdAt: x.createdAt })), more: L.length > lim }); }
       if (p === '/pos/proposals/resolve' && m === 'POST') { if (T.onResolve) { const r = T.onResolve(body); if (r) return r; } const R = body.results || [];
-        if (!Array.isArray(R) || R.length > 200 || R.some(r => !r || !r.id || !['applied', 'partial', 'rejected'].includes(r.state))) return json(400, { error: 'validation_error', message: 'results' });
+        // strict like the first schema (MAX_PROPOSAL_TEXT = 200 on every string of a result, ≤ 50 fields — the backend cuts them now): the ERP never sends more
+        const long = s => s != null && (typeof s !== 'string' || s.length > 200), badRes = x => !!x && (long(x.reason) || long(x.sku) || [x.applied || [], x.kept || []].some(L => !Array.isArray(L) || L.length > 50 || L.some(long)));
+        if (!Array.isArray(R) || R.length > 200 || R.some(r => !r || !r.id || !['applied', 'partial', 'rejected'].includes(r.state) || badRes(r.result))) return json(400, { error: 'validation_error', message: 'results' });
         (T.resolves = T.resolves || []).push(JSON.parse(JSON.stringify(body))); let n = 0;
         for (const r of R) { const x = (T.props || []).find(y => y.id === r.id); if (x && x.state === 'pending') { x.state = r.state; x.result = r.result; n++; } } return json(200, { resolved: n }); } }
     return json(404, { error: 'not_found', message: path });
@@ -2509,6 +2511,12 @@ apiBlock.then(async () => {
       { const x = apply(db0, [pr('u1', { sku: 'LP', before: seen(db0, 'LP'), after: seen(db0, 'LP', { unit: 'litra' }) }), pr('u2', { sku: 'MV', before: seen(db0, 'MV'), after: seen(db0, 'MV', { unit: 'kg' }) }), pr('u3', { sku: 'PK', before: seen(db0, 'PK'), after: seen(db0, 'PK', { unit: 'shishe' }) }), pr('u4', { sku: 'BAR-7', before: seen(db0, 'BAR-7'), after: seen(db0, 'BAR-7', { unit: 'l' }) })]);
         eq([x.r.u1, x.r.u2[0], x.r.u2[1].kept, /^Njësia nuk ndryshohet/.test(x.r.u2[1].reason), x.r.u3[0], /^Paketimi: njësia e paketimit/.test(x.r.u3[1].reason), x.r.u4[0], ['LP', 'MV', 'PK', 'BAR-7'].map(s => prod(x.d, s).unit)],
           [['rejected', { sku: 'LP', applied: [], kept: ['unit'], reason: 'vlerë e pavlefshme: njësia' }], 'rejected', ['unit'], true, 'rejected', true, 'applied', ['copë', 'copë', 'l', 'l']], 'proposals, unit: an unknown unit is refused, a product with a movement keeps its unit (unitLocked), the pack rule holds; a free product changes unit'); }
+      // a reason never passes the server's 200 characters (MAX_PROPOSAL_TEXT — one longer reason refused the whole resolve): cut at a word, with "…"
+      { const LONG = 'Pije të ftohta dhe freskuese '.repeat(6).trim(), d1 = { ...db0, products: db0.products.map(p => p.sku === 'MV' ? { ...p, name: 'Me lëvizje 1L', price_t: 22034, price_c: 220, gross_t: 26000 } : p), categories: [...db0.categories, { id: 'K-long', name: LONG, note: '' }] };
+        const x = apply(d1, [pr('w1', { sku: 'MV', before: seen(db0, 'MV'), after: seen(db0, 'MV', { name: 'Me lëvizje e freskët', gross_t: 28000, unit: 'kg' }) }), kr('w2', 'Ushqim', LONG.toUpperCase()), pr('w3', { sku: 'X'.repeat(200), before: seen(db0, 'LP'), after: seen(db0, 'LP') })]), rs = ['w1', 'w2', 'w3'].map(id => x.r[id][1].reason);
+        eq([x.r.w1[0], x.r.w1[1].kept, x.r.w2[0], x.r.w3[0], rs.map(r => r.length), rs[0], rs[1].slice(-12), rs[2].slice(-4)],
+          ['rejected', ['name', 'gross_t', 'unit'], 'rejected', 'rejected', [198, 195, 200], 'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: emri, çmimi me TVSH · Njësia nuk ndryshohet: produkti ka gjendje fillestare, lëvizje stoku, përdoret në një recetë ose është në një dokument…', 'e” ekziston…', 'XXX…'],
+          'proposals: a reason is cut to the server\'s 200 characters at a word ("…") — the ERP\'s fields plus the unit lock, a long category name, a long SKU'); }
       const nu = { name: 'Çaj mali', cat: 'Pije', gross_t: 12345, rate: 18, tax: 'E', unit: 'gotë', active: true, ingredient: false };
       { const x = apply(db0, [pr('c1', { key: 'p:41', after: nu }), pr('c2', { key: 'p:42', after: { ...nu, name: 'Sheqer', cat: 'Përbërës', gross_t: 0, rate: -1, tax: 'A', unit: 'kg', active: true, ingredient: true } }), pr('c3', { key: 'p:43', after: { ...nu, name: 'Tjetër', gross_t: undefined, unit: 'filxhan' } }), { ...pr('c4', { after: nu }), kind: 'recete' }]), p2 = prod(x.d, 'BAR-10');
         eq([x.r.c1, x.r.c2[1].sku, x.r.c3, x.r.c4, prod(x.d, 'BAR-9'), [p2.name, p2.cat, p2.tax, p2.unit, p2.gross_t, p2.price_t, p2.pos, p2.barKey], x.d.categories.map(c => c.name), x.d.products.length],
@@ -2626,6 +2634,22 @@ apiBlock.then(async () => {
         const c0 = TP.commits.length, r0 = TP.resolves.length, g0 = calls('tp', /^GET \/pos\/proposals$/).length; await tick(Y);
         eq([TP.commits.length - c0, TP.resolves.length - r0, calls('tp', /^GET \/pos\/proposals$/).length - g0, st(TP).slice(-3), ['Koktej 111', 'Koktej 112', 'Koktej 113'].map(n => (TP.state.products.find(x => x.name === n) || {}).sku)], [2, 2, 2, ['p:111:applied', 'p:112:applied', 'p:113:applied'], ['BAR-11', 'BAR-12', 'BAR-13']],
           'proposals while `more`: two pages in one tick — two commits, two resolves'); TP.propCap = 0; }
+      // a long reason never blocks the tenant's resolves (the mock refuses a result string > 200 like the first schema): Kafe — the ERP changed its
+      // name and price, its unit is locked — gives a 200-character reason; a verdict an older build stored with a 300-character reason is cut when
+      // it is sent again; a verdict the server still refuses is sent alone and left out — the others of its chunk are resolved
+      { const TR = mkT('tr', 'Bar Gjate SH.P.K.', book(), 'on'), k0 = seen(TR.state, 'KAFE');
+        TR.state.products = TR.state.products.map(p => p.sku === 'KAFE' ? { ...p, name: 'Kafe e madhe', price_t: 33898, price_c: 339, gross_t: 40000 } : p);
+        const a = propose(TR, { key: 'p:301', sku: 'KAFE', before: k0, after: { ...k0, name: 'Kafe espresso', gross_t: 38000, unit: 'kg' } }), b = propose(TR, { key: 'p:302', after: { ...N, name: 'Koktej 302' } }), c = propose(TR, { key: 'p:303', after: { ...N, name: 'Koktej 303' } });
+        TR.state.posProposalsDone = [{ id: c.id, state: 'rejected', result: { sku: null, applied: [], kept: ['name'], reason: 'arsye e gjatë '.repeat(22).trim() } }];
+        const Q = mk(); await enter(Q, 'own', 'tr'); await tick(Q); const sent = (TR.resolves || []).flatMap(r => r.results), rOf = x => ({ reason: '', ...(sent.find(r => r.id === x.id) || {}).result });
+        eq([st(TR), TR.commits.length, rOf(a).reason.length, rOf(c).reason.length, rOf(c).reason.slice(-15), Q._propErr || ''], [['p:301:rejected', 'p:302:applied', 'p:303:rejected'], 1, 198, 196, ' arsye e gjatë…', ''],
+          'proposals: a reason over 200 characters never reaches the server — the batch is resolved (also a stored 300-character verdict, cut when sent again)');
+        const d = propose(TR, { key: 'p:304', after: { ...N, name: 'Koktej 304' } }), e = propose(TR, { key: 'p:305', after: { ...N, name: 'Koktej 305' } });
+        TR.onResolve = body => ((body.results || []).some(r => r.id === d.id) ? json(400, { error: 'validation_error', message: 'results' }) : null);
+        const n0 = calls('tr', /^POST \/pos\/proposals\/resolve$/).length; await tick(Q); const n1 = calls('tr', /^POST \/pos\/proposals\/resolve$/).length; await tick(Q);
+        eq([st(TR).slice(-2), n1 - n0, calls('tr', /^POST \/pos\/proposals\/resolve$/).length - n1, /^Serveri e refuzoi vendimin/.test(Q._propErr || '')], [['p:304:pending', 'p:305:applied'], 3, 0, true],
+          'proposals: a chunk the server refuses (400) is sent one by one — the refused verdict is left out (this session), the others are resolved; the next tick does not send it again');
+        TR.onResolve = null; Q.logout(); done(Q); }
       Y.logout(); M.logout(); done(Y); done(M);
       eq([S.bad.slice(bad0), S.noHdr, TP.commits.every(c => Object.keys(c).every(k => ['products', 'categories', 'posProposalsDone'].includes(k)))], [[], [], true], 'mock server (proposals): no commit carried `_srv` rows or posSync runtime fields — only products / categories / posProposalsDone; every call had X-Kontabo-Client: 2');
     } finally { S.features = feat0; }

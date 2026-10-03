@@ -2666,7 +2666,7 @@ class Component extends DCLogic {
   // the old relay (/pos/sales, the catalogue in db.posSync) must not run: /health still unknown, or the book is on the ledger
   ledgerUnsure(){ return this.apiAuthed()&&!this.ledgerOn()&&(this._ledProbe==='fail'||!!(this.state.db&&this.state.db.posLedgerV===1)); }
   ledgerReset(){ this._ledger=null; this._ledFeat=false; this._ledProbe=''; this._posRt=null; this._ledActivated=''; this._migFail=0; this._plGen=(this._plGen||0)+1; this._rcGen=(this._rcGen||0)+1; this._plWant=null; clearTimeout(this._plT); this._plT=null; this.posListAutoStop();
-    this._propFeat=false; this._propGen=(this._propGen||0)+1; this._propSent=null; this._propFail=0; } // + any receipt list / receipt still on its way is dropped, the list's auto-refresh stops; a KONTABO BAR proposals run still on its way stops
+    this._propFeat=false; this._propGen=(this._propGen||0)+1; this._propSent=null; this._propFail=0; this._propSkip=null; } // + any receipt list / receipt still on its way is dropped, the list's auto-refresh stops; a KONTABO BAR proposals run still on its way stops
   ledgerOn(){ return !!this._ledger&&this.apiAuthed(); }
   // the book is shown with the ledger only once it is on the ledger (posLedgerV 1) AND the ledger was loaded this session — never both halves twice
   ledgerLive(b){ const L=this._ledger; return !!(L&&L.loaded&&b&&b.posLedgerV===1&&this.apiAuthed()); }
@@ -2828,6 +2828,14 @@ class Component extends DCLogic {
   PROP_LBL = {name:'emri',cat:'kategoria',gross_t:'çmimi me TVSH',tax:'TVSH',unit:'njësia',active:'shfaqja në POS'};
   PROP_RATE = {'-1':'A','0':'C','8':'D','18':'E'}; // the bar's VAT rate (norma; -1 = exempt) → ATK letter, when the letter itself is missing / unknown
   PROP_KEEP = 1000; PROP_ROUNDS = 5; PROP_BACKOFF = 300000; // ids kept in the book · batches per tick (while `more`) · ms of rest after the server refused a batch
+  PROP_TEXT = 200; // the server's limit on every text of a verdict (MAX_PROPOSAL_TEXT): a longer reason refused the WHOLE resolve on the first schema
+  // a text of a verdict within PROP_TEXT: cut at the last word when that keeps at least half of it, with "…" (UTF-16 units — never fewer than the
+  // server's code points; never half of a surrogate pair)
+  propCut(s){ s=s==null?'':String(s); const M=this.PROP_TEXT; if(s.length<=M) return s; let t=s.slice(0,M-1); const i=t.lastIndexOf(' '); if(i>=M/2) t=t.slice(0,i);
+    return t.replace(/[\uD800-\uDBFF]$/,'').replace(/[\s·,;:—–-]+$/,'')+'…'; }
+  // a verdict as POST /pos/proposals/resolve takes it: {id, state, result} with every text cut (propCut) and applied / kept ≤ 50 — a verdict stored
+  // by an older build (a reason up to 300) is cut when it is sent again; otherwise exactly what posProposalsDone keeps
+  propWire(x){ const r=x.result&&typeof x.result==='object'?x.result:{}, out={}; for(const k in r){ const v=r[k]; out[k]=k==='applied'||k==='kept'?(Array.isArray(v)?v.slice(0,50).map(s=>this.propCut(s)):[]):typeof v==='string'?this.propCut(v):v; } return {id:x.id,state:x.state,result:out}; }
   propPerm(){ const s=this.state.session; return !!s&&(s.role==='Pronar'||!!(s.perms||{}).produkte); } // who applies (the server lets `pos` read too)
   propTax(x){ const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k); if(!x) return undefined; if(typeof x.tax==='string'&&own(this.TAX,x.tax)) return x.tax; const r=x.rate==null?'':String(x.rate); return own(this.PROP_RATE,r)?this.PROP_RATE[r]:undefined; }
   // one side of a proposal (before / after) in the ERP's terms; undefined = missing or not valid (strings 1–200 chars, gross_t an integer ≥ 0)
@@ -2844,7 +2852,7 @@ class Component extends DCLogic {
   // A category this batch renamed (W.renamed: its old name → the new one) is read under its new name on both sides (a proposal queued before the
   // rename still carries the old name — it is the same category, not a new one)
   propProduct(W,V,it){ const key=String(it.key||''), A=it.after&&typeof it.after==='object'?it.after:null, B=it.before&&typeof it.before==='object'?it.before:null, sku=typeof it.sku==='string'?it.sku.trim():'', P=W.products, L=this.PROP_LBL;
-    const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason}}), rn=x=>{ const t=x.cat!==undefined&&W.renamed&&W.renamed.get(this.norm(x.cat)); if(t) x.cat=t; return x; };
+    const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason:this.propCut(reason)}}), rn=x=>{ const t=x.cat!==undefined&&W.renamed&&W.renamed.get(this.norm(x.cat)); if(t) x.cat=t; return x; };
     if(!A) return no('Propozimi nuk ka të dhënat e produktit.');
     const a=rn(this.propSide(A)), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&P.find(x=>x.barKey===key))||(!B&&lo&&P.find(x=>this.propLow(x.name)===lo))||null;
     if(!p){ if(B) return no('Produkti nuk gjendet në ERP'+(sku?' (SKU '+sku+')':'')+' — nuk krijohet sërish nga arka.');
@@ -2866,12 +2874,12 @@ class Component extends DCLogic {
       // the gross the till prints stays verbatim; the net (price_t / price_c, the books' base) is derived from it at the (new) letter's effective rate
       if('gross_t' in set||'tax' in set){ const tax=set.tax||p.tax, G='gross_t' in set?set.gross_t:cur.gross_t, pt=this.netOfT(G,this.effRate(tax,W)); Object.assign(q,{tax,gross_t:G,price_t:pt,price_c:this.cOfT(pt)}); }
       const np={...p,...q}; W.products=W.products.map(x=>x===p?np:x); }
-    const reason=[erp.length?(B?'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: ':'produkti ekziston në ERP — mbeten vlerat e ERP-së: ')+erp.map(f=>L[f]).join(', '):'',...why].filter(Boolean).join(' · ').slice(0,300);
-    return {state:!kept.length?'applied':applied.length?'partial':'rejected',result:{sku:p.sku,applied,kept,reason}}; }
+    const reason=[erp.length?(B?'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: ':'produkti ekziston në ERP — mbeten vlerat e ERP-së: ')+erp.map(f=>L[f]).join(', '):'',...why].filter(Boolean).join(' · ');
+    return {state:!kept.length?'applied':applied.length?'partial':'rejected',result:{sku:p.sku,applied,kept,reason:this.propCut(reason)}}; }
   // a category proposal: rename when the ERP still has the `before` name unchanged (the category and every product's `cat`), create when no
   // category has the `after` name, else the ERP wins (rejected; nothing to do when the ERP has exactly that name already)
   propCategory(W,it){ const A=it.after&&typeof it.after==='object'?it.after:{}, nm=typeof A.name==='string'?A.name.trim():'', bn=it.before&&typeof it.before==='object'&&typeof it.before.name==='string'?it.before.name.trim():'', K=W.categories;
-    const R=(state,reason,on)=>({state,result:{applied:state==='applied'&&on?['name']:[],kept:state==='rejected'?['name']:[],reason}});
+    const R=(state,reason,on)=>({state,result:{applied:state==='applied'&&on?['name']:[],kept:state==='rejected'?['name']:[],reason:this.propCut(reason)}});
     if(!nm||nm.length>200) return R('rejected','Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.');
     const cur=bn?K.find(c=>String(c.name||'').trim()===bn)||null:null, ex=this.findCategory(K,nm);
     if(cur){ if(cur.name===nm) return R('applied','',false); if(ex&&ex.id!==cur.id) return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.');
@@ -2904,10 +2912,21 @@ class Component extends DCLogic {
       if(items.some(x=>!doneIds.has(x.id))){ this.commit(d=>(out=this.propBatch(d,items)).patch);
         if(out.res.length){ this._propSent={p:this._sent,ids:out.res.map(x=>x.id)}; const st=await this.propSettle(ok); if(!st) return n; if(st==='lost') continue; this.propAudit(out.res); } }
       else out=this.propBatch(this.state.db,items);
-      const R=[...out.res.map(x=>({id:x.id,state:x.state,result:x.result})),...out.again];
-      for(let i=0;i<R.length;i+=200){ await this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:R.slice(i,i+200)},timeout:30000}); if(!ok()) return n; }
+      if(!await this.propResolve([...out.res,...out.again],ok)) return n;
       n+=out.res.length; if(!pg.more||!out.res.length) return n; }
     return n; }
+  // POST /pos/proposals/resolve in chunks of 200 (propWire). A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
+  // time: a verdict it still refuses is left out for the rest of this session (this._propSkip — sent every tick it would block its chunk again),
+  // the others are resolved. Any other error stops the run (the next tick sends them again). → false once another company / user is on the page
+  async propResolve(R,ok){ const skip=this._propSkip||(this._propSkip=new Set()), bad=e=>[400,413,422].includes(e&&e.status), post=L=>this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:L},timeout:30000});
+    const no=(r,e)=>{ skip.add(r.id); this._propErr='Serveri e refuzoi vendimin për propozimin '+r.id+' ('+((e&&e.message)||'HTTP '+(e&&e.status))+') — nuk dërgohet më në këtë seancë.'; };
+    const all=R.filter(x=>x&&x.id&&!skip.has(x.id)).map(x=>this.propWire(x));
+    for(let i=0;i<all.length;i+=200){ const part=all.slice(i,i+200);
+      try{ await post(part); }
+      catch(e){ if(!bad(e)) throw e; if(part.length===1){ no(part[0],e); continue; }
+        for(const r of part){ if(!ok()) return false; try{ await post([r]); }catch(e2){ if(!bad(e2)) throw e2; no(r,e2); } } }
+      if(!ok()) return false; }
+    return true; }
   // the batch this page committed and has not confirmed yet: 'acked' (it landed) · 'lost' (a 409 — the server's book was reloaded — or the server
   // refused it: its marks stayed in the local book only → the server's book is loaded again and the next try waits PROP_BACKOFF) · false (still
   // unsent, or another company by now) · 'none'
