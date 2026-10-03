@@ -2743,6 +2743,20 @@ apiBlock.then(async () => {
           'proposals: a verdict whose resolve failed is sent again on the next run BEFORE the pending list is read, though the bar superseded its proposal meanwhile — the server moves the successor\'s base, the bar\'s second price lands (not taken for an ERP change)');
         const r1 = TL.resolves.length; await tick(Q); eq(TL.resolves.length - r1, 0, 'proposals: a verdict acknowledged by a resolve (200) is not sent again');
         Q.logout(); done(Q); }
+      // the tills must never apply an older catalogue right after a verdict (the bar stops protecting those fields when it reads it): once the batch
+      // landed, a user with the POS permission PUTs the catalogue (its hash changed) BEFORE POST /pos/proposals/resolve — the new price and the new
+      // product (under the bar's own SKU) are in it, the next posSync has nothing to send; a user without the POS permission never PUTs it
+      { const TK = mkT('tk', 'Bar Katalog SH.P.K.', book(), 'on'), k0 = seen(TK.state, 'KAFE'), seq = () => calls('tk', /^(GET \/pos\/proposals|\w+ \/state\/commit|PUT \/pos\/catalog|POST \/pos\/proposals\/resolve)$/).map(x => x.m + ' ' + x.p);
+        propose(TK, { key: 'p:901', sku: 'KAFE', before: k0, after: { ...k0, gross_t: k0.gross_t + 3000 } }); propose(TK, { key: 'p:902', sku: 'BAR-K7Q2-902', after: { ...N, name: 'Limonadë' } });
+        const Q = mk(), s0 = seq().length; await enter(Q, 'own', 'tk'); await tick(Q); const cat = TK.catalogs[TK.catalogs.length - 1] || { products: [] }, cp = sku => cat.products.find(x => x.sku === sku) || {};
+        const v0 = TK.catalogs.length; await Q.posSync(false);
+        eq([Q.ledgerLive(Q.state.db), seq().slice(s0), cp('KAFE').gross_t, cp('BAR-K7Q2-902').name, st(TK), (TK.props[1].result || {}).sku, TK.catalogs.length - v0],
+          [true, ['GET /pos/proposals', 'POST /state/commit', 'PUT /pos/catalog', 'POST /pos/proposals/resolve'], k0.gross_t + 3000, 'Limonadë', ['p:901:applied', 'p:902:applied'], 'BAR-K7Q2-902', 0],
+          'proposals: the batch landed → the catalogue (POS permission, its hash changed) is PUT BEFORE the resolve — the tills never apply an older one right after the verdict: the new price and the new product under the bar\'s SKU are in it; the next posSync sends nothing');
+        Q.logout(); done(Q); const k1 = seen(TK.state, 'KAFE'); propose(TK, { key: 'p:901', sku: 'KAFE', before: k1, after: { ...k1, gross_t: k1.gross_t + 1000 } });
+        const M2 = mk(), s1 = seq().length; await enter(M2, 'mag', 'tk'); await tick(M2);
+        eq([seq().slice(s1), st(TK)], [['GET /pos/proposals', 'POST /state/commit', 'POST /pos/proposals/resolve'], ['p:901:applied', 'p:902:applied', 'p:901:applied']], 'proposals: a user without the POS permission (produkte only) resolves without PUTting the catalogue');
+        M2.logout(); done(M2); }
       // a long reason never blocks the tenant's resolves (the mock refuses a result string > 200 like the first schema): Kafe — the ERP changed its
       // name and price, its unit is locked — gives a 200-character reason; a verdict an older build stored with a 300-character reason is cut when
       // it is sent again; a verdict the server still refuses is sent alone and left out — the others of its chunk are resolved

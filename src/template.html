@@ -2953,14 +2953,19 @@ class Component extends DCLogic {
   // verdict and moves the successor's base to what the ERP applied (resolve is idempotent, a late verdict first-wins); _propRun sends them BEFORE
   // it reads the pending list, so the successor is merged against that base and the bar's next edit is not taken for an ERP change
   propUnacked(){ const M=this._propU||(this._propU=new Map()), t=this.apiCfg().tenantId||''; if(!M.has(t)) M.set(t,new Map()); return M.get(t); }
-  // POST /pos/proposals/resolve in chunks of 200 (propWire): R (landed in the book) joins propUnacked, then every verdict there is sent and leaves
-  // it once acknowledged. A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
+  // before a resolve the catalogue with what was applied goes to the tills FIRST (the POS permission and the ledger live, as posSyncLedger; only
+  // when its hash changed): a bar that reads a verdict stops protecting those fields at once and would otherwise apply an older catalogue right
+  // after it (the old price, a product it just created hidden) until the next posSync. A PUT that fails stops the run (nothing resolved; next tick)
+  async propCatalog(ok){ if(!this.posPerm()||!this.ledgerLive(this.state.db)) return true; const cat=this.posCatalogReady(false); if(!cat||cat.hash===this.posCfg().catalogHashSrv) return true;
+    const c=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); if(!ok()) return false; this.posRt({catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:(c&&c.version)||0}); return true; }
+  // POST /pos/proposals/resolve in chunks of 200 (propWire), after the catalogue (propCatalog): R (landed in the book) joins propUnacked, then every
+  // verdict there is sent and leaves it once acknowledged. A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
   // time: a verdict it still refuses is left out for the rest of this session (this._propSkip — sent every tick it would block its chunk again),
   // the others are resolved. Any other error stops the run (the next tick sends them again). → false once another company / user is on the page
   async propResolve(R,ok){ const U=this.propUnacked(), skip=this._propSkip||(this._propSkip=new Set()), bad=e=>[400,413,422].includes(e&&e.status), post=L=>this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:L},timeout:30000});
     const no=(r,e)=>{ skip.add(r.id); U.delete(r.id); this._propErr='Serveri e refuzoi vendimin për propozimin '+r.id+' ('+((e&&e.message)||'HTTP '+(e&&e.status))+') — nuk dërgohet më në këtë seancë.'; };
     for(const x of R) if(x&&x.id&&!skip.has(x.id)) U.set(x.id,x);
-    const all=[...U.values()].map(x=>this.propWire(x));
+    const all=[...U.values()].map(x=>this.propWire(x)); if(all.length&&!await this.propCatalog(ok)) return false;
     for(let i=0;i<all.length;i+=200){ const part=all.slice(i,i+200);
       try{ await post(part); for(const r of part) U.delete(r.id); }
       catch(e){ if(!bad(e)) throw e; if(part.length===1){ no(part[0],e); continue; }
