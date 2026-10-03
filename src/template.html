@@ -2726,9 +2726,10 @@ class Component extends DCLogic {
         if(!await this.ledgerWaitReady(ok)) return false;
         b=this.state.db; if(b.posLedgerV===1) return true;
         const recs=b.posReceipts||[], shs=b.posShifts||[], ids=recs.map(r=>r.id), sids=shs.map(s=>s.id), known=new Set(), knownSh=new Set(), states={}, own=Object.prototype.hasOwnProperty;
+        let withStates=false; // a backend that answers `states` also remembers legacy ids it does not have yet (a till may push them later)
         for(let i=0;i<Math.max(ids.length,sids.length);i+=2000){ const j=await this.apiFetch('/pos/receipts/known',{method:'POST',body:{ids:ids.slice(i,i+2000),shiftIds:sids.slice(i,i+2000)},timeout:30000}); if(!ok()) return false;
-          for(const x of j.known||[]) known.add(x); for(const x of j.knownShifts||[]) knownSh.add(x); const st=j.states&&typeof j.states==='object'?j.states:{}; for(const x of ids.slice(i,i+2000)) if(own.call(st,x)) states[x]=st[x]; }
-        const legacy=ids.filter(x=>!known.has(x)&&own.call(states,x)), unsure=ids.filter(x=>known.has(x)&&own.call(states,x)&&states[x]!=='ok'); // the server has it but will not book it / has not booked it yet
+          for(const x of j.known||[]) known.add(x); for(const x of j.knownShifts||[]) knownSh.add(x); if(j.states&&typeof j.states==='object') withStates=true; const st=j.states&&typeof j.states==='object'?j.states:{}; for(const x of ids.slice(i,i+2000)) if(own.call(st,x)) states[x]=st[x]; }
+        const legacy=ids.filter(x=>!known.has(x)&&(withStates||own.call(states,x))), unsure=ids.filter(x=>known.has(x)&&own.call(states,x)&&states[x]!=='ok'); // the server has it but will not book it / has not booked it yet
         const entries=recs.filter(r=>known.has(r.id)).map(r=>this.posLedgerEntry(b,r));
         for(let i=0;i<entries.length;i+=1000){ await this.apiFetch('/pos/ledger/activate',{method:'POST',body:{receipts:entries.slice(i,i+1000)},timeout:30000}); if(!ok()) return false; }
         for(let i=0;i<legacy.length;i+=2000){ await this.apiFetch('/pos/ledger/activate',{method:'POST',body:{legacy:legacy.slice(i,i+2000)},timeout:30000}); if(!ok()) return false; }
