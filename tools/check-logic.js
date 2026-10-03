@@ -1525,12 +1525,13 @@ apiBlock.then(async () => {
       if (m === 'DELETE') { const k = T.keys.find(x => x.id === decodeURIComponent(p.slice('/api-keys/'.length))); if (!k) return json(404, { error: 'not_found', message: 'Çelësi nuk u gjet' }); if (!k.revokedAt) k.revokedAt = '2026-09-20T11:00:00Z'; return json(200, { apiKey: k }); } }
     { const rot = /^\/terminals\/([^/]+)\/rotate$/.exec(p); if (rot && m === 'POST') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); if (!(T.terms || []).some(x => x.id === rot[1])) return json(404, { error: 'not_found', message: 'Terminali nuk u gjet' }); T.rotations = (T.rotations || 0) + 1; return json(200, { token: 'kt_new' + T.rotations }); } }
     // KONTABO BAR's product / category proposals (kontabo-backend /pos/proposals): the ERP reads the pending ones in seq order (permission
-    // `produkte` or `pos`; the Pronar always), `more` when more are pending than returned (no cursor: the resolved ones leave the list), and
+    // `produkte` or `pos`; the Pronar always), `more` when more are pending than returned, `after=<id>` = only those after that id's seq (an unknown id
+    // is ignored — from the start, as the backend's list_proposals), and
     // resolves them (only pending ones change — idempotent). T.props = [{id, seq, kind, key, terminal, before, after, sku, createdAt, state, result}]
     if (p === '/pos/proposals' || p === '/pos/proposals/resolve') { if (u.role !== 'Pronar' && !u.perms.produkte && !u.perms.pos) return json(403, { error: 'forbidden', message: 'Nuk keni leje' });
       if (S.propHold) { const hold = S.propHold(T.id, m + ' ' + p); if (hold) await hold; }
       if (p === '/pos/proposals' && m === 'GET') { if (+q.limit > 200) return json(400, { error: 'validation_error', message: 'limit' });
-        const lim = Math.min(+q.limit || 200, T.propCap || 200), L = (T.props || []).filter(x => !q.state || x.state === q.state).sort((a, b) => a.seq - b.seq);
+        const lim = Math.min(+q.limit || 200, T.propCap || 200), aft = q.after && (T.props || []).find(x => x.id === q.after), L = (T.props || []).filter(x => (!q.state || x.state === q.state) && (!aft || x.seq > aft.seq)).sort((a, b) => a.seq - b.seq);
         return json(200, { items: L.slice(0, lim).map(x => ({ id: x.id, kind: x.kind, key: x.key, terminal: x.terminal, before: x.before, after: x.after, sku: x.sku, createdAt: x.createdAt })), more: L.length > lim }); }
       if (p === '/pos/proposals/resolve' && m === 'POST') { if (T.onResolve) { const r = T.onResolve(body); if (r) return r; } const R = body.results || [];
         // strict like the first schema (MAX_PROPOSAL_TEXT = 200 on every string of a result, ≤ 50 fields — the backend cuts them now): the ERP never sends more
@@ -2555,7 +2556,8 @@ apiBlock.then(async () => {
           'proposals, rename: the category (same id) and every product of it; a new product queued under the old name lands in the renamed category (categories first, the old name read as the new one)'); }
       { const items = [pr('i1', { key: 'p:71', after: nu }), kr('i2', null, 'Kokteje')], x = apply(db0, items), y = apply(x.d, items);
         eq([y.patch, y.res, y.again, x.d.posProposalsDone.map(e => e.id)], [{}, [], x.d.posProposalsDone, ['i2', 'i1']], 'proposals: idempotent — a batch already in posProposalsDone changes nothing and is only resolved again with the stored results');
-        Z.PROP_KEEP = 3; const k = apply(x.d, [kr('i3', null, 'A1'), kr('i4', null, 'A2')]); Z.PROP_KEEP = 1000; eq(k.d.posProposalsDone.map(e => e.id), ['i1', 'i3', 'i4'], 'proposals: posProposalsDone keeps the last PROP_KEEP'); }
+        Z.PROP_KEEP = 3; const k = apply(x.d, [kr('i3', null, 'A1'), kr('i4', null, 'A2')]), g = apply(k.d, [items[0], kr('i5', null, 'A3')]); Z.PROP_KEEP = 1000;
+        eq([k.d.posProposalsDone.map(e => e.id), g.again.map(e => e.id), g.d.posProposalsDone.map(e => e.id)], [['i1', 'i3', 'i4'], ['i1'], ['i4', 'i1', 'i5']], 'proposals: posProposalsDone keeps the last PROP_KEEP — an id of the batch being resolved again moves to the end, never dropped while its verdict is on its way'); }
 
       // ── against the mock server: tenant tp on the POS ledger (LIM was sold by a till — its unit is locked by the ledger, not by the book)
       let seq = 0; const TB = { id: 'term-bar', name: 'Arka Bar', posId: 'BAR-1' };
@@ -2643,11 +2645,25 @@ apiBlock.then(async () => {
         const g0 = calls('tp', /^GET \/pos\/proposals$/).length; await tick(Y); eq(calls('tp', /^GET \/pos\/proposals$/).length - g0, 0, 'proposals: during the back-off the tick does not even ask');
         Y._propFail = 0; await tick(Y); eq([TP.commits.length - c0, st(TP).slice(-1), TP.state.products.find(x => x.sku === 'BAR-7').name], [1, ['p:110:applied'], 'Ujë i gazuar 0.5'], 'proposals: after the back-off applied once and resolved');
         TP.onCommit = null; }
-      // more pending than one page: batch after batch in the same tick, each committed and resolved before the next is read
+      // more pending than one page: every page read first (`after` = the last id), ONE batch, ONE commit, ONE resolve
       { TP.propCap = 2; for (const k of [111, 112, 113]) propose(TP, { key: 'p:' + k, after: { ...N, name: 'Koktej ' + k } });
         const c0 = TP.commits.length, r0 = TP.resolves.length, g0 = calls('tp', /^GET \/pos\/proposals$/).length; await tick(Y);
-        eq([TP.commits.length - c0, TP.resolves.length - r0, calls('tp', /^GET \/pos\/proposals$/).length - g0, st(TP).slice(-3), ['Koktej 111', 'Koktej 112', 'Koktej 113'].map(n => (TP.state.products.find(x => x.name === n) || {}).sku)], [2, 2, 2, ['p:111:applied', 'p:112:applied', 'p:113:applied'], ['BAR-11', 'BAR-12', 'BAR-13']],
-          'proposals while `more`: two pages in one tick — two commits, two resolves'); TP.propCap = 0; }
+        const aft = calls('tp', /^GET \/pos\/proposals$/).slice(g0).map(x => (/[?&]after=([^&]*)/.exec(x.path) || [])[1] || '');
+        eq([TP.commits.length - c0, TP.resolves.length - r0, calls('tp', /^GET \/pos\/proposals$/).length - g0, aft, st(TP).slice(-3), ['Koktej 111', 'Koktej 112', 'Koktej 113'].map(n => (TP.state.products.find(x => x.name === n) || {}).sku)],
+          [1, 1, 2, ['', TP.props.find(x => x.key === 'p:112').id], ['p:111:applied', 'p:112:applied', 'p:113:applied'], ['BAR-11', 'BAR-12', 'BAR-13']],
+          'proposals while `more`: every page read first (after=<the last id>) — ONE commit, ONE resolve'); TP.propCap = 0; }
+      // a rename read on a later page than a product of the category: one batch puts the categories first across the pages — Kafe proposed in
+      // 'Pijet' (page 1) before the rename Pije → Pijet (page 2) ends in the renamed category, not in a new one with the rename refused
+      { const TV = mkT('tv', 'Bar Faqe SH.P.K.', book(), 'on'), k0 = seen(TV.state, 'KAFE'); TV.propCap = 1;
+        propose(TV, { key: 'p:601', sku: 'KAFE', before: k0, after: { ...k0, cat: 'Pijet', gross_t: 26000 } }); propose(TV, { key: 'k:601', kind: 'category', before: { name: 'Pije' }, after: { name: 'Pijet' } });
+        const Q = mk(); await enter(Q, 'mag', 'tv'); await tick(Q); const s = TV.state;
+        eq([st(TV), TV.commits.length, (TV.resolves || []).length, calls('tv', /^GET \/pos\/proposals$/).length, s.categories.map(c => c.id + ':' + c.name), [...new Set(s.products.map(p => p.cat))], s.products.find(p => p.sku === 'KAFE').gross_t],
+          [['p:601:applied', 'k:601:applied'], 1, 1, 2, ['K-pije:Pijet'], ['Pijet'], 26000], 'proposals: a rename on a later page than a product of its category — one batch, the category renamed (same id) with every product, no second category');
+        // more than PROP_PAGES pages: the rest is the next batch of the same tick
+        for (const k of [602, 603, 604]) propose(TV, { key: 'p:' + k, after: { ...N, name: 'Koktej ' + k } });
+        Q.PROP_PAGES = 2; const c0 = TV.commits.length, g0 = calls('tv', /^GET \/pos\/proposals$/).length; await tick(Q); Q.PROP_PAGES = 5;
+        eq([st(TV).slice(-3), TV.commits.length - c0, TV.resolves.length, calls('tv', /^GET \/pos\/proposals$/).length - g0], [['p:602:applied', 'p:603:applied', 'p:604:applied'], 2, 3, 3], 'proposals: more than PROP_PAGES pages pending — the first PROP_PAGES in one batch, the rest in the next');
+        Q.logout(); done(Q); }
       // a long reason never blocks the tenant's resolves (the mock refuses a result string > 200 like the first schema): Kafe — the ERP changed its
       // name and price, its unit is locked — gives a 200-character reason; a verdict an older build stored with a 300-character reason is cut when
       // it is sent again; a verdict the server still refuses is sent alone and left out — the others of its chunk are resolved

@@ -2828,6 +2828,7 @@ class Component extends DCLogic {
   PROP_LBL = {name:'emri',cat:'kategoria',gross_t:'çmimi me TVSH',tax:'TVSH',unit:'njësia',active:'shfaqja në POS'};
   PROP_RATE = {'-1':'A','0':'C','8':'D','18':'E'}; // the bar's VAT rate (norma; -1 = exempt) → ATK letter, when the letter itself is missing / unknown
   PROP_KEEP = 1000; PROP_ROUNDS = 5; PROP_BACKOFF = 300000; // ids kept in the book · batches per tick (while `more`) · ms of rest after the server refused a batch
+  PROP_PAGES = 5; // pages of 200 read into ONE batch (× 200 ≤ PROP_KEEP: every id of a batch stays in posProposalsDone)
   PROP_TEXT = 200; // the server's limit on every text of a verdict (MAX_PROPOSAL_TEXT): a longer reason refused the WHOLE resolve on the first schema
   // a text of a verdict within PROP_TEXT: cut at the last word when that keeps at least half of it, with "…" (UTF-16 units — never fewer than the
   // server's code points; never half of a surrogate pair)
@@ -2892,16 +2893,17 @@ class Component extends DCLogic {
     return R('rejected','Kategoria ekziston në ERP si “'+ex.name+'”.'); }
   // one batch against the book d: proposals already in posProposalsDone are only resolved again (`again`, their stored result); the others are
   // applied on one working copy — the categories first (a renamed category is renamed before a product of it is merged), each kind in the
-  // server's order → {patch (products / categories / posProposalsDone, {} when nothing new), res, again}
+  // server's order → {patch (products / categories / posProposalsDone, {} when nothing new), res, again}. An id of this batch already in
+  // posProposalsDone (`again`) moves to the end of it: never dropped (PROP_KEEP) while its verdict is still on its way
   propBatch(d,items){ const done=new Map((d.posProposalsDone||[]).filter(e=>e&&e.id).map(e=>[e.id,e])), P0=d.products||[], K0=d.categories||[], W={...d,products:P0,categories:K0}, V=this.view(d), res=[], again=[], seen=new Set(), isK=x=>!!x&&x.kind==='category';
     for(const it of [...items.filter(isK),...items.filter(x=>!isK(x))]){ if(!it||!it.id||seen.has(it.id)) continue; seen.add(it.id); const old=done.get(it.id); if(old){ again.push({id:it.id,state:old.state,result:old.result}); continue; }
       const r=it.kind==='product'?this.propProduct(W,V,it):it.kind==='category'?this.propCategory(W,it):{state:'rejected',result:{applied:[],kept:[],reason:'Lloj i panjohur propozimi.'}};
       res.push({id:it.id,kind:it.kind,key:it.key,terminal:it.terminal||null,state:r.state,result:r.result,created:r.created||''}); }
     if(!res.length) return {patch:{},res,again};
-    const patch={posProposalsDone:[...(d.posProposalsDone||[]),...res.map(x=>({id:x.id,state:x.state,result:x.result}))].slice(-this.PROP_KEEP)};
+    const ag=new Set(again.map(x=>x.id)), patch={posProposalsDone:[...(d.posProposalsDone||[]).filter(e=>!(e&&ag.has(e.id))),...again.map(x=>done.get(x.id)),...res.map(x=>({id:x.id,state:x.state,result:x.result}))].slice(-this.PROP_KEEP)};
     if(W.products!==P0) patch.products=W.products; if(W.categories!==K0) patch.categories=W.categories; return {patch,res,again}; }
-  // the second half of every ledger tick (only the `produkte` permission / the Pronar act): GET /pos/proposals?state=pending → apply → ONE commit
-  // → wait until it landed → POST /pos/proposals/resolve; again while `more` (the resolved ones leave the pending list). Single-flight, company-
+  // the second half of every ledger tick (only the `produkte` permission / the Pronar act): GET /pos/proposals?state=pending, every page
+  // (propPending) → apply ALL → ONE commit → wait until it landed → POST /pos/proposals/resolve; again while `more` beyond PROP_PAGES. Single-flight, company-
   // guarded; never while unsent changes wait (the book must be the server's before anything is resolved) or while the POS migration runs
   posPropTick(){ if(this._propP) return this._propP; const p=this._propRun().catch(e=>{ this._propErr=String((e&&e.message)||e); return 0; }).then(n=>{ if(this._propP===p) this._propP=null; return n; }); this._propP=p; return p; }
   async _propRun(){ const tid=this.apiCfg().tenantId, gen=this._propGen, ok=()=>this._propGen===gen&&this.apiCfg().tenantId===tid&&this.apiAuthed()&&this.propPerm();
@@ -2909,8 +2911,8 @@ class Component extends DCLogic {
     let n=0;
     for(let round=0;round<this.PROP_ROUNDS;round++){
       if(!go()||!await this.propSettle(ok)||busy()||!go()) return n;
-      const pg=await this.apiFetch('/pos/proposals'+this.qs({state:'pending',limit:200}),{timeout:30000}), items=((pg&&pg.items)||[]).filter(x=>x&&x.id);
-      if(!go()||!items.length||busy()) return n;
+      const pg=await this.propPending(go); if(!pg) return n; const items=pg.items;
+      if(!items.length||busy()) return n;
       const doneIds=new Set((this.state.db.posProposalsDone||[]).map(e=>e&&e.id)); let out=null;
       if(items.some(x=>!doneIds.has(x.id))){ this.commit(d=>(out=this.propBatch(d,items)).patch);
         if(out.res.length){ this._propSent={p:this._sent,ids:out.res.map(x=>x.id)}; const st=await this.propSettle(ok); if(!st) return n; if(st==='lost') continue; this.propAudit(out.res); } }
@@ -2918,6 +2920,14 @@ class Component extends DCLogic {
       if(!await this.propResolve([...out.res,...out.again],ok)) return n;
       n+=out.res.length; if(!pg.more||!out.res.length) return n; }
     return n; }
+  // every pending proposal in seq order, page after page (`after` = the last id read — the resolved ones may leave the list meanwhile) while
+  // `more`, at most PROP_PAGES pages → {items, more} (null: another company / user by now). ONE batch over all of them puts the categories first
+  // across the pages: a rename read on a later page would otherwise come after a product of it had created the new name as a second category
+  async propPending(go){ const items=[], seen=new Set(); let after='', more=false;
+    for(let i=0;i<this.PROP_PAGES;i++){ const pg=await this.apiFetch('/pos/proposals'+this.qs({state:'pending',limit:200,after}),{timeout:30000}); if(!go()) return null;
+      const raw=((pg&&pg.items)||[]).filter(x=>x&&x.id); for(const x of raw) if(!seen.has(x.id)){ seen.add(x.id); items.push(x); } more=!!(pg&&pg.more);
+      if(!more||!raw.length) break; after=raw[raw.length-1].id; }
+    return {items,more}; }
   // POST /pos/proposals/resolve in chunks of 200 (propWire). A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
   // time: a verdict it still refuses is left out for the rest of this session (this._propSkip — sent every tick it would block its chunk again),
   // the others are resolved. Any other error stops the run (the next tick sends them again). → false once another company / user is on the page
