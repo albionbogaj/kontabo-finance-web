@@ -2841,16 +2841,18 @@ class Component extends DCLogic {
   // a product proposal against the working book W (W.products / W.categories are replaced, never mutated; V = W's book + the POS ledger, for the
   // unit lock). Located by sku, else by barKey === key, else (only a proposal with no `before`) by the case-insensitive name; not found → created
   // when `before` is null, else rejected. → {state, result:{sku, applied, kept, reason}, created}
+  // A category this batch renamed (W.renamed: its old name → the new one) is read under its new name on both sides (a proposal queued before the
+  // rename still carries the old name — it is the same category, not a new one)
   propProduct(W,V,it){ const key=String(it.key||''), A=it.after&&typeof it.after==='object'?it.after:null, B=it.before&&typeof it.before==='object'?it.before:null, sku=typeof it.sku==='string'?it.sku.trim():'', P=W.products, L=this.PROP_LBL;
-    const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason}});
+    const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason}}), rn=x=>{ const t=x.cat!==undefined&&W.renamed&&W.renamed.get(this.norm(x.cat)); if(t) x.cat=t; return x; };
     if(!A) return no('Propozimi nuk ka të dhënat e produktit.');
-    const a=this.propSide(A), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&P.find(x=>x.barKey===key))||(!B&&lo&&P.find(x=>this.propLow(x.name)===lo))||null;
+    const a=rn(this.propSide(A)), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&P.find(x=>x.barKey===key))||(!B&&lo&&P.find(x=>this.propLow(x.name)===lo))||null;
     if(!p){ if(B) return no('Produkti nuk gjendet në ERP'+(sku?' (SKU '+sku+')':'')+' — nuk krijohet sërish nga arka.');
       const miss=['name','cat','gross_t','tax','unit'].filter(f=>a[f]===undefined||(f==='unit'&&!this.UNITS.includes(a.unit))); if(miss.length) return no('Produkti i ri nuk u krijua: mungon ose është e pavlefshme '+miss.map(f=>L[f]).join(', ')+'.');
       const nsku=this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
       W.products=[...P,{name:a.name,sku:nsku,barcode:'—',cat:this.canonCat(W,a.cat),unit:a.unit,tax:a.tax,price_t:pt,price_c:this.cOfT(pt),cost_t:0,cost_c:0,gross_t:a.gross_t,openCost_c:0,opening:0,minStock:0,pos:a.active!==false,barKey:key}]; W.categories=this.withCategory(W,a.cat);
       return {state:'applied',created:nsku,result:{sku:nsku,applied:this.PROP_FIELDS.slice(),kept:[],reason:''}}; }
-    const b=B?this.propSide(B):{}, cur={name:p.name,cat:p.cat,gross_t:this.grossT(p,W),tax:p.tax,unit:p.unit,active:p.pos!==false}, applied=[], kept=[], erp=[], why=[], set={};
+    const b=B?rn(this.propSide(B)):{}, cur={name:p.name,cat:p.cat,gross_t:this.grossT(p,W),tax:p.tax,unit:p.unit,active:p.pos!==false}, applied=[], kept=[], erp=[], why=[], set={};
     for(const f of this.PROP_FIELDS){ if(!this.propHas(A,f)) continue; const av=a[f], bv=b[f], ev=cur[f];
       if(av===undefined||(f==='unit'&&!this.UNITS.includes(av))){ kept.push(f); why.push('vlerë e pavlefshme: '+L[f]); continue; }
       if(bv!==undefined&&this.propEq(f,av,bv)) continue; // the bar did not change it
@@ -2873,8 +2875,8 @@ class Component extends DCLogic {
     if(!nm||nm.length>200) return R('rejected','Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.');
     const cur=bn?K.find(c=>String(c.name||'').trim()===bn)||null:null, ex=this.findCategory(K,nm);
     if(cur){ if(cur.name===nm) return R('applied','',false); if(ex&&ex.id!==cur.id) return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.');
-      W.categories=K.map(c=>c.id===cur.id?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); return R('applied','',true); }
-    if(!ex){ W.categories=[...K,this.newCategory(nm,K)]; return R('applied','',true); }
+      W.categories=K.map(c=>c.id===cur.id?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); (W.renamed||(W.renamed=new Map())).set(this.norm(cur.name),nm); return R('applied','',true); }
+    if(!ex){ W.categories=[...K,this.newCategory(nm,K)]; if(W.renamed) W.renamed.delete(this.norm(nm)); return R('applied','',true); }
     if(ex.name===nm) return R('applied','',true);
     return R('rejected',bn?'Kategoria “'+bn+'” është ndryshuar në ERP; “'+ex.name+'” ekziston.':'Kategoria ekziston në ERP si “'+ex.name+'”.'); }
   // one batch against the book d: proposals already in posProposalsDone are only resolved again (`again`, their stored result); the others are
