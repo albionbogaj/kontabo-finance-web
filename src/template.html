@@ -1022,7 +1022,7 @@ input,select{font-family:inherit}
 
         <sc-if value="{{ fiscalReceiptsTab }}" hint-placeholder-val="{{ false }}">
           <div class="mf-card" style="overflow:hidden;padding:0">
-            <div style="padding:16px 20px 12px"><div class="mf-h" style="margin:0">Statuset fiskale të kuponëve <span style="font-size:12px;font-weight:600;color:#8FA3B8">{{ fiscalReceiptsCount }} {{ fiscalReceiptsNote }}</span></div></div>
+            <div style="padding:16px 20px 12px"><div class="mf-h" style="margin:0">{{ fiscalReceiptsTitle }} <span style="font-size:12px;font-weight:600;color:#8FA3B8">{{ fiscalReceiptsCount }} {{ fiscalReceiptsNote }}</span></div></div>
             <sc-if value="{{ !fiscalHasReceipts }}" hint-placeholder-val="{{ false }}"><div style="padding:28px 20px;text-align:center;color:#526477;font-size:13px">{{ fiscalReceiptsEmpty }}</div></sc-if>
             <sc-if value="{{ fiscalHasReceipts }}" hint-placeholder-val="{{ true }}">
               <sc-raw-table style="width:100%;border-collapse:collapse;font-size:13px">
@@ -1791,7 +1791,7 @@ class Component extends DCLogic {
   ST = {
     'Draft':{bg:'rgba(16,36,58,.06)',fg:'#3C5268'},'Lëshuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Paguar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     'Pjesërisht':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Vonuar':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Anuluar':{bg:'rgba(16,36,58,.06)',fg:'#8FA3B8'},'Kthyer':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},
-    'Fiskalizuar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Në pritje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Dështoi':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Ritentim':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Në proces':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'E suksesshme':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
+    'Fiskalizuar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Në pritje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Dështoi':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Ritentim':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pa fiskalizim':{bg:'rgba(16,36,58,.06)',fg:'#526477'},'Në proces':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'E suksesshme':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     'Aktiv':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Ftuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pezulluar':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'—':{bg:'transparent',fg:'#8FA3B8'},'Vëmendje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Në rregull':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     // purchases, stock, finance, accounting
     'Pranuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Hyrje':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Dalje':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Blerje':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Shitje':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Rregullim':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Hapje':{bg:'rgba(16,36,58,.06)',fg:'#3C5268'},'Anulim shitje':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},'Anulim blerje':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},
@@ -2650,7 +2650,9 @@ class Component extends DCLogic {
   LEDGER_KEYS = ['posLedgerV','posLegacyNos','posLegacyShifts']; // book markers: on the ledger / receipt nos + shift ids still kept in the book
   POS_RT_KEYS = ['cursorSrv','lastSyncSrv','unsyncedSrv','catalogHashSrv','catalogVersionSrv','lastPush','lastError'];
   LEDGER_POLL = 2000; // ms between "is the server's POS book ready?" polls during the migration
-  LEDGER_FS = {fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',failed:'Dështoi'};
+  // a shift id as the lists show it: a UUID (KONTABO BAR before 1.11.3) is cut to its first 8 characters + “…” — still a real part of the id
+  shiftLabel(id){ const s=String(id||''); return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)?s.slice(0,8)+'…':s; }
+  LEDGER_FS = {fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',processing:'Në pritje',failed:'Dështoi',error:'Dështoi',unknown:'Pa fiskalizim',cancelled:'Anuluar'}; // unknown = the till sold without fiscalizing (fiscalization off there)
   ledgerFresh(tenantId){ this._ledGen=(this._ledGen||0)+1; return {tenantId:tenantId||'',epoch:null,rev:0,rows:new Map(),shifts:new Map(),ready:false,mode:'off',pending:0,loaded:false,gen:this._ledGen,ver:0}; }
   // GET /health → true (posLedger:1) / false (a server without it) / null (no answer; with `retry` asked again after HEALTH_RETRY ms);
   // every answer also says whether the server takes KONTABO BAR's product proposals (posProposals:1 → this._propFeat)
@@ -3013,7 +3015,7 @@ class Component extends DCLogic {
     if(!receipts.length&&!shifts.length) return n;
     this.commit(d=>{
       const nd={...d,movements:[...d.movements],payments:[...d.payments],queue:[...d.queue],posReceipts:[...(d.posReceipts||[])],posShifts:[...(d.posShifts||[])]};
-      const FS={fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',failed:'Dështoi'}, QS={fiscalized:'E suksesshme',fiscalized_sim:'E suksesshme',pending:'Në pritje',failed:'Dështoi'};
+      const FS={fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',processing:'Në pritje',failed:'Dështoi',error:'Dështoi',unknown:'Pa fiskalizim',cancelled:'Anuluar'}, QS={fiscalized:'E suksesshme',fiscalized_sim:'E suksesshme',pending:'Në pritje',failed:'Dështoi'};
       const acctFor=posId=>this.cashAccountFor(posId,nd);
       const txOf=r=>String(r.atk_transaction_id||r.atk_tx_id||r.transaction_id||'');
       const qReason=(r,doc)=>doc.status==='Anulim'?('Anulim i kuponit '+(doc.origNo||'—')+(doc.atkTx?' · ATK '+doc.atkTx:'')+(doc.cancelReason?' · Arsyeja: '+doc.cancelReason:'')+(r.fiscal_status==='fiscalized_sim'?' · SIMULATOR — pa vlerë fiskale':r.fiscal_error?' · '+r.fiscal_error:'')):((doc.source==='block'?this.posBlockLabel(doc)+' · ':'')+(r.fiscal_status==='fiscalized_sim'?'SIMULATOR — pa vlerë fiskale':(r.fiscal_error||'—')));
@@ -4392,7 +4394,7 @@ class Component extends DCLogic {
         const sh=[...synced,...db.pos].filter(x=>inPeriod(x.date)); T.title='Raporti i POS-it'; T.sub=periodLabel+' · ndërrimet e arkës ('+synced.length+' të sinkronizuara nga POS-i desktop, '+db.pos.length+' demo)'; T.count=sh.length;
         T.kpis=[{label:'Shitje POS',value:money(sum(sh,'total')),sub:plural(sum(sh,'receipts'),'kupon','kupona')},{label:'Para në dorë',value:money(sum(sh,'cash'))},{label:'Kartë',value:money(sum(sh,'card'))},{label:'Diferenca në arkë',value:money(sum(sh,'diff')),c:sum(sh,'diff')<0?'#B91C1C':'#15803D',sub:'numërim − sistem'}];
         if(cur==='Ndërrimet'){ T.cols=[{label:'Ndërrimi'},{label:'Data'},{label:'Arka'},{label:'Operatori'},{label:'Hapur–mbyllur'},{label:'Kupona',align:'right'},{label:'Para',align:'right'},{label:'Kartë',align:'right'},{label:'Totali',align:'right'},{label:'Diferenca',align:'right'},{label:'Statusi'}];
-          T.rows=sh.map(x=>({cells:[C(x.id,{mono:true}),C(x.date,{color:'#526477'}),C(x.pos,{b:true,sub:x.branch}),C(x.operator),C(x.open+' – '+x.close,{color:'#526477'}),C(String(x.receipts),{align:'right'}),M(x.cash),M(x.card),M(x.total,{b:true}),x.diff?M(x.diff,{color:x.diff<0?'#B91C1C':'#15803D'}):C('—',{align:'right',color:'#8FA3B8'}),B(x.status==='Hapur'?'Në proces':'Në rregull')]})); }
+          T.rows=sh.map(x=>({cells:[C(this.shiftLabel(x.id),{mono:true}),C(x.date,{color:'#526477'}),C(x.pos,{b:true,sub:x.branch}),C(x.operator),C(x.open+' – '+x.close,{color:'#526477'}),C(String(x.receipts),{align:'right'}),M(x.cash),M(x.card),M(x.total,{b:true}),x.diff?M(x.diff,{color:x.diff<0?'#B91C1C':'#15803D'}):C('—',{align:'right',color:'#8FA3B8'}),B(x.status==='Hapur'?'Në proces':'Në rregull')]})); }
         else { const key=cur==='Sipas arkës'?'pos':'operator'; T.cols=[{label:cur==='Sipas arkës'?'Arka':'Operatori'},{label:'Ndërrime',align:'right'},{label:'Kupona',align:'right'},{label:'Para',align:'right'},{label:'Kartë',align:'right'},{label:'Totali',align:'right'},{label:'Mesatarja / kupon',align:'right'},{label:'Diferenca',align:'right'}];
           T.rows=group(sh,x=>x[key]).map(([k,xs])=>({cells:[C(k,{b:true}),C(String(xs.length),{align:'right'}),C(String(sum(xs,'receipts')),{align:'right'}),M(sum(xs,'cash')),M(sum(xs,'card')),M(sum(xs,'total'),{b:true}),M(sum(xs,'receipts')?Math.round(sum(xs,'total')/sum(xs,'receipts')):0),sum(xs,'diff')?M(sum(xs,'diff'),{color:sum(xs,'diff')<0?'#B91C1C':'#15803D'}):C('—',{align:'right',color:'#8FA3B8'})]})); }
         break; }
@@ -4460,7 +4462,7 @@ class Component extends DCLogic {
         // POS ledger: a server shift carries its own totals (from its frozen receipts); a legacy shift of the book still sums the book's receipts
         const led=this.ledgerLive(this.state.db), shTot=x=>{ if(x._srv){ const t=x.totals||{}; return {n:Number(t.count)||0,total:Number(t.total_c)||0}; } const mine=(db.posReceipts||[]).filter(r=>!r._srv&&r.shift===x.id); return {n:mine.length,total:mine.reduce((a,r)=>a+r.total,0)}; };
         T.cols=[{label:'Ndërrimi'},{label:'Arka'},{label:'Operatori'},{label:'Hapur'},{label:'Mbyllur'},{label:'Hapje',align:'right'},{label:'Pritej',align:'right'},{label:'Numëruar',align:'right'},{label:'Diferenca',align:'right'},...(led?[{label:'Kupona',align:'right'},{label:'Shitje',align:'right'}]:[]),{label:'Statusi'}];
-        T.rows=list.map(x=>{ const st=led?shTot(x):null; return {cells:[C(x.id,{mono:true}),C(x.posName,{sub:x.branch}),C(x.operator,{b:true}),C(x.openedAt,{color:'#526477'}),C(x.closedAt||'—',{color:'#526477'}),M(x.opening_c),x.expected_c==null?C('—',{align:'right',color:'#8FA3B8'}):M(x.expected_c),x.counted_c==null?C('—',{align:'right',color:'#8FA3B8'}):M(x.counted_c),x.diff_c==null?C('—',{align:'right',color:'#8FA3B8'}):M(x.diff_c,{b:true,color:x.diff_c<0?'#B91C1C':x.diff_c>0?'#B45309':'#15803D'}),...(st?[C(String(st.n),{align:'right'}),M(st.total,{b:true})]:[]),B(x.status==='Hapur'?'Në proces':'Në rregull')]}; });
+        T.rows=list.map(x=>{ const st=led?shTot(x):null; return {cells:[C(this.shiftLabel(x.id),{mono:true}),C(x.posName,{sub:x.branch}),C(x.operator,{b:true}),C(x.openedAt,{color:'#526477'}),C(x.closedAt||'—',{color:'#526477'}),M(x.opening_c),x.expected_c==null?C('—',{align:'right',color:'#8FA3B8'}):M(x.expected_c),x.counted_c==null?C('—',{align:'right',color:'#8FA3B8'}):M(x.counted_c),x.diff_c==null?C('—',{align:'right',color:'#8FA3B8'}):M(x.diff_c,{b:true,color:x.diff_c<0?'#B91C1C':x.diff_c>0?'#B45309':'#15803D'}),...(st?[C(String(st.n),{align:'right'}),M(st.total,{b:true})]:[]),B(x.status==='Hapur'?'Në proces':'Në rregull')]}; });
         T.empty='Asnjë ndërrim i sinkronizuar ende.';
         break; }
       case 'P:Raportet e arkës': { return this.morePages('R:POS',T,H); }
@@ -5376,7 +5378,8 @@ class Component extends DCLogic {
       hasDr:!!dr,dr:dr||{},closeDr:()=>this.setState({dr:null}),
       hasFrm:!!frm,frm:frm||{},closeFrm:()=>this.setState({frm:null}),
       fiscalTabs,fiscalMonitor:s.fiscalTab==='Arkat',fiscalQueue:s.fiscalTab==='Radha',fiscalReceiptsTab:s.fiscalTab==='Kuponët',fiscalTerms,fiscalHasTerms,fiscalGuide,fiscalUrls,taxGroups,queue,queueStats,fiscalReceipts,fiscalHasReceipts,fiscalReceiptsCount:fiscalLed?(FL&&!FL.err&&(!FL.busy||FL.items.length)?String(FL.total||0):'…'):String((db.posReceipts||[]).length),
-      fiscalReceiptsNote:fiscalLed?'kuponë pa u fiskalizuar (365 ditët e fundit, nga serveri) · vetëm lexim'+(FL&&FL.err&&FL.items.length?' · '+FL.err:''):'kuponë të sinkronizuar · vetëm lexim', // a failed reload / next page keeps the rows shown — the error is said next to them
+      fiscalReceiptsTitle:fiscalLed?'Kuponët pa u fiskalizuar':'Statuset fiskale të kuponëve',
+      fiscalReceiptsNote:fiscalLed?'kuponë pa u fiskalizuar (365 ditët e fundit, nga serveri) · të fiskalizuarit shihen te POS › Shitje · vetëm lexim'+(FL&&FL.err&&FL.items.length?' · '+FL.err:''):'kuponë të sinkronizuar · vetëm lexim', // a failed reload / next page keeps the rows shown — the error is said next to them
       fiscalReceiptsEmpty:fiscalLed?(!FL||FL.busy?'Duke ngarkuar kuponët nga serveri…':FL.err?FL.err:'Asnjë kupon pa u fiskalizuar — të gjithë kuponët e 365 ditëve të fundit janë fiskalizuar.'):'Asnjë kupon i sinkronizuar ende — statuset shfaqen sapo arkat të dërgojnë shitjet.',
       fiscalHasMore:!!(FL&&FLw&&FL.base===FLw.base&&!FL.busy&&!FL.err&&FL.items.length<(FL.total||0)),fiscalMore:()=>this.posListMore(FLw),fiscalMoreLabel:FL?'Shfaq më shumë ('+Math.min(this.POS_LIST_PAGE,Math.max(0,(FL.total||0)-FL.items.length))+' nga '+Math.max(0,(FL.total||0)-FL.items.length)+' të tjerë)':'',
       users:sub.users,activeUsers,extraUsers,totalPrice,planName:planDef.name.toUpperCase(),planPrice:this.fmt(base),planIncluded:planDef.includedUsers,planExtra:this.fmt(extra),planModules:planDef.modules,nextBilling:sub.nextBilling,subCard:sub.card,subCardExp:sub.cardExp,
