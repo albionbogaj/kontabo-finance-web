@@ -2849,10 +2849,14 @@ class Component extends DCLogic {
   propLow(s){ return typeof s==='string'?s.trim().toLowerCase().replace(/\s+/g,' '):''; }
   // the next free 'BAR-<n>' (after the highest BAR-n there is; unique under the SKU rule — norm() of every SKU)
   propSku(P){ const taken=new Set(P.map(p=>this.norm(p.sku))); let n=0; for(const p of P){ const m=/^BAR-(\d{1,9})$/i.exec(String(p.sku||'').trim()); if(m) n=Math.max(n,parseInt(m[1],10)); } let s; do{ s='BAR-'+(++n); }while(taken.has(this.norm(s))); return s; }
+  // the SKU a bar proposes for a product it created: 'BAR-<the venue's 4-character token>-<its product id>' — the tills sell under it from the
+  // first sale, so a new product takes it when no product has it yet (the SKU rule, norm()); otherwise the next free 'BAR-<n>' (propSku)
+  PROP_SKU = /^BAR-[A-Z0-9]{4}-\d{1,9}$/;
   // a product proposal against the working book W (W.products / W.categories are replaced, never mutated; V = W's book + the POS ledger, for the
   // unit lock). Located by sku, else by barKey === key of the SAME terminal (barTerm — the bar's keys are its own product ids, unique per terminal
   // only: two bars of one company both send 'p:1'; a deleted terminal (id null) matches no barKey), else (only a proposal with no `before`) by the
-  // case-insensitive name; not found → created (barKey + barTerm) when `before` is null, else rejected. → {state, result:{sku, applied, kept, reason}, created}
+  // case-insensitive name; not found → created (barKey + barTerm; the bar's SKU when PROP_SKU and free, else BAR-<n>) when `before` is null, else
+  // rejected. → {state, result:{sku (the SKU used / found), applied, kept, reason}, created}
   // A category this batch renamed (W.renamed: its old name → the new one) is read under its new name on both sides (a proposal queued before the
   // rename still carries the old name — it is the same category, not a new one)
   propProduct(W,V,it){ const key=String(it.key||''), A=it.after&&typeof it.after==='object'?it.after:null, B=it.before&&typeof it.before==='object'?it.before:null, sku=typeof it.sku==='string'?it.sku.trim():'', P=W.products, L=this.PROP_LBL, tid=it.terminal&&typeof it.terminal==='object'&&typeof it.terminal.id==='string'?it.terminal.id:'';
@@ -2861,7 +2865,7 @@ class Component extends DCLogic {
     const a=rn(this.propSide(A)), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&tid&&P.find(x=>x.barKey===key&&x.barTerm===tid))||(!B&&lo&&P.find(x=>this.propLow(x.name)===lo))||null;
     if(!p){ if(B) return no('Produkti nuk gjendet në ERP'+(sku?' (SKU '+sku+')':'')+' — nuk krijohet sërish nga arka.');
       const miss=['name','cat','gross_t','tax','unit'].filter(f=>a[f]===undefined||(f==='unit'&&!this.UNITS.includes(a.unit))); if(miss.length) return no('Produkti i ri nuk u krijua: mungon ose është e pavlefshme '+miss.map(f=>L[f]).join(', ')+'.');
-      const nsku=this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
+      const nsku=this.PROP_SKU.test(sku)&&!P.some(x=>this.norm(x.sku)===this.norm(sku))?sku:this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
       W.products=[...P,{name:a.name,sku:nsku,barcode:'—',cat:this.canonCat(W,a.cat),unit:a.unit,tax:a.tax,price_t:pt,price_c:this.cOfT(pt),cost_t:0,cost_c:0,gross_t:a.gross_t,openCost_c:0,opening:0,minStock:0,pos:a.active!==false,barKey:key,barTerm:tid||null}]; W.categories=this.withCategory(W,a.cat);
       return {state:'applied',created:nsku,result:{sku:nsku,applied:this.PROP_FIELDS.slice(),kept:[],reason:''}}; }
     const b=B?rn(this.propSide(B)):{}, cur={name:p.name,cat:p.cat,gross_t:this.grossT(p,W),tax:p.tax,unit:p.unit,active:p.pos!==false}, applied=[], kept=[], erp=[], why=[], set={};
