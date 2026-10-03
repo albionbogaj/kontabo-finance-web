@@ -2910,15 +2910,17 @@ class Component extends DCLogic {
     const go=()=>ok()&&this._propFeat===true&&!!this._ledger&&!this._entering&&!this._migrating&&!!this.state.db&&Date.now()-(this._propFail||0)>=this.PROP_BACKOFF, busy=()=>(this._pending||[]).length>0||!!this._flushing;
     let n=0;
     for(let round=0;round<this.PROP_ROUNDS;round++){
-      if(!go()||!await this.propSettle(ok)||busy()||!go()) return n;
+      if(!go()) return n; const s=await this.propSettle(ok); if(!s) return n;
+      if(s.res){ n+=s.res.length; if(!await this.propResolve(this.propLanded(s.res),ok)) return n; } // a batch of an earlier run (its flush outlived posFlushed) that landed only now: its audit line + resolve now
+      if(busy()||!go()) return n;
       const pg=await this.propPending(go); if(!pg) return n; const items=pg.items;
       if(!items.length||busy()) return n;
-      const doneIds=new Set((this.state.db.posProposalsDone||[]).map(e=>e&&e.id)); let out=null;
+      const doneIds=new Set((this.state.db.posProposalsDone||[]).map(e=>e&&e.id)); let out=null, R=[];
       if(items.some(x=>!doneIds.has(x.id))){ this.commit(d=>(out=this.propBatch(d,items)).patch);
-        if(out.res.length){ this._propSent={p:this._sent,ids:out.res.map(x=>x.id)}; const st=await this.propSettle(ok); if(!st) return n; if(st==='lost') continue; this.propAudit(out.res); } }
+        if(out.res.length){ this._propSent={p:this._sent,ids:out.res.map(x=>x.id),res:out.res}; const st=await this.propSettle(ok); if(!st) return n; if(!st.res) continue; R=this.propLanded(st.res); n+=R.length; } } // 'lost': applied again on the server's book
       else out=this.propBatch(this.state.db,items);
-      if(!await this.propResolve([...out.res,...out.again],ok)) return n;
-      n+=out.res.length; if(!pg.more||!out.res.length) return n; }
+      if(!await this.propResolve([...R,...out.again],ok)) return n;
+      if(!pg.more||!out.res.length) return n; }
     return n; }
   // every pending proposal in seq order, page after page (`after` = the last id read — the resolved ones may leave the list meanwhile) while
   // `more`, at most PROP_PAGES pages → {items, more} (null: another company / user by now). ONE batch over all of them puts the categories first
@@ -2940,12 +2942,22 @@ class Component extends DCLogic {
         for(const r of part){ if(!ok()) return false; try{ await post([r]); }catch(e2){ if(!bad(e2)) throw e2; no(r,e2); } } }
       if(!ok()) return false; }
     return true; }
-  // the batch this page committed and has not confirmed yet: 'acked' (it landed) · 'lost' (a 409 — the server's book was reloaded — or the server
-  // refused it: its marks stayed in the local book only → the server's book is loaded again and the next try waits PROP_BACKOFF) · false (still
-  // unsent, or another company by now) · 'none'
+  // the batch this page committed and has not settled yet (this._propSent = {p: the queued patch, ids, res — kept across runs, so a batch whose
+  // flush outlived posFlushed still gets its audit line and resolve) → the batch {…, res} when it landed: the server acked the patch, or the
+  // server's book, loaded again, holds its ids (the answer was lost: a timeout, then a 409 carrying it — res = those ids with the book's verdicts)
+  // · 'lost': the server's book does not have it — a 409 put that book here (applied again on it), or the server refused it (4xx: the marks were
+  // local only — the server's book is loaded again, the next try waits PROP_BACKOFF) · false: still unsent / not known yet (the reload failed —
+  // settled by a later run) or another company by now · 'none'
   async propSettle(ok){ const s=this._propSent; if(!s) return 'none'; if(!await this.posFlushed(ok)||this._propSent!==s) return false;
-    this._propSent=null; if(this.apiAcked(s.p)) return 'acked'; const ids=new Set(s.ids);
-    if(((this.state.db||{}).posProposalsDone||[]).some(e=>e&&ids.has(e.id))){ this._propFail=Date.now(); await this.apiReloadState().catch(()=>{}); } return 'lost'; }
+    if(this.apiAcked(s.p)){ this._propSent=null; return s; }
+    const ids=new Set(s.ids), mine=()=>((this.state.db||{}).posProposalsDone||[]).filter(e=>e&&ids.has(e.id));
+    if(!mine().length){ this._propSent=null; return 'lost'; }
+    try{ await this.apiReloadState(); }catch(e){ return false; }
+    if(!ok()||this._propSent!==s) return false; this._propSent=null; const got=new Map(mine().map(e=>[e.id,e]));
+    if(got.size) return {...s,res:s.res.filter(x=>got.has(x.id)).map(x=>({...x,state:got.get(x.id).state,result:got.get(x.id).result}))};
+    this._propFail=Date.now(); return 'lost'; }
+  // a batch that landed: its audit line → its verdicts (to resolve)
+  propLanded(res){ this.propAudit(res); return res; }
   // one audit line (+ a toast) per batch that landed: "N produkte / M kategori nga KONTABO BAR (arkat): … të zbatuara · … pjesërisht · … të refuzuara · produktet e reja"
   propAudit(res){ const np=res.filter(x=>x.kind==='product').length, c=s=>res.filter(x=>x.state===s).length, made=res.filter(x=>x.created).map(x=>x.created), terms=[...new Set(res.map(x=>x.terminal&&(x.terminal.name||x.terminal.posId)).filter(Boolean))];
     const a=np+' produkte / '+(res.length-np)+' kategori nga KONTABO BAR'+(terms.length?' ('+terms.join(', ')+')':'')+': '+[c('applied')+' të zbatuara',c('partial')?c('partial')+' pjesërisht (fiton ERP-ja)':'',c('rejected')?c('rejected')+' të refuzuara':'',made.length?'të reja: '+made.slice(0,10).join(', ')+(made.length>10?' …':''):''].filter(Boolean).join(' · ');

@@ -2680,6 +2680,21 @@ apiBlock.then(async () => {
         eq([st(TR).slice(-2), n1 - n0, calls('tr', /^POST \/pos\/proposals\/resolve$/).length - n1, /^Serveri e refuzoi vendimin/.test(Q._propErr || '')], [['p:304:pending', 'p:305:applied'], 3, 0, true],
           'proposals: a chunk the server refuses (400) is sent one by one — the refused verdict is left out (this session), the others are resolved; the next tick does not send it again');
         TR.onResolve = null; Q.logout(); done(Q); }
+      // the batch reached the server but its answer was lost (a timeout, then a 409 whose book already carries it): the server's book is loaded
+      // and holds the batch → landed — audited and resolved at once, no back-off, nothing applied twice
+      { const TU = mkT('tu', 'Bar Vonese SH.P.K.', book(), 'on'), k0 = seen(TU.state, 'KAFE');
+        propose(TU, { key: 'p:501', sku: 'KAFE', before: k0, after: { ...k0, name: 'Kafe e vonë' } });
+        TU.onCommit = patch => { if ('posProposalsDone' in patch && !TU.landed) { TU.landed = true; TU.version++; TU.state = { ...TU.state, ...patch }; return json(409, { error: 'version_conflict', version: TU.version, state: TU.state }); } return null; };
+        const Q = mk(); await enter(Q, 'own', 'tu'); await tick(Q);
+        eq([TU.landed, TU.state.products.find(x => x.sku === 'KAFE').name, st(TU), (TU.resolves || []).length, TU.audit.filter(a => /KONTABO BAR \(/.test(a)).length, Q._propFail || 0, TU.commits.length, Q.state.db.posProposalsDone.length],
+          [true, 'Kafe e vonë', ['p:501:applied'], 1, 1, 0, 0, 1], 'proposals: a batch that landed but whose answer was lost (409 carrying it) — the server\'s book has it: audited and resolved at once, no back-off, not applied again');
+        // a flush slower than posFlushed: the run gives up waiting, the batch lands later — the next run settles it: its audit line + resolve
+        propose(TU, { key: 'p:502', sku: 'KAFE', before: seen(TU.state, 'KAFE'), after: { ...seen(TU.state, 'KAFE'), name: 'Kafe e ngadaltë' } });
+        Q._propFail = 0; const pf = Q.posFlushed; Q.posFlushed = async () => false; await tick(Q); Q.posFlushed = pf; for (let i = 0; i < 400 && (Q._flushing || (Q._pending || []).length); i++) await wait();
+        const a0 = [TU.commits.length, st(TU).slice(-1)[0], TU.audit.filter(a => /KONTABO BAR \(/.test(a)).length]; await tick(Q);
+        eq([a0, TU.commits.length, st(TU).slice(-1), TU.audit.filter(a => /KONTABO BAR \(/.test(a)).length, (TU.resolves || []).length], [[1, 'p:502:pending', 1], 1, ['p:502:applied'], 2, 2],
+          'proposals: a batch whose flush outlived posFlushed is settled by the next run — its audit line is written then, resolved once, never applied twice');
+        TU.onCommit = null; Q.logout(); done(Q); }
       Y.logout(); M.logout(); done(Y); done(M);
       eq([S.bad.slice(bad0), S.noHdr, TP.commits.every(c => Object.keys(c).every(k => ['products', 'categories', 'posProposalsDone'].includes(k)))], [[], [], true], 'mock server (proposals): no commit carried `_srv` rows or posSync runtime fields — only products / categories / posProposalsDone; every call had X-Kontabo-Client: 2');
     } finally { S.features = feat0; }
