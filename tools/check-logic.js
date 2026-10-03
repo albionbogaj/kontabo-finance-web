@@ -1524,6 +1524,18 @@ apiBlock.then(async () => {
         T.keys.push(k); T.rawKeys = [...(T.rawKeys || []), raw]; return json(200, { key: raw, apiKey: k }); }
       if (m === 'DELETE') { const k = T.keys.find(x => x.id === decodeURIComponent(p.slice('/api-keys/'.length))); if (!k) return json(404, { error: 'not_found', message: 'Çelësi nuk u gjet' }); if (!k.revokedAt) k.revokedAt = '2026-09-20T11:00:00Z'; return json(200, { apiKey: k }); } }
     { const rot = /^\/terminals\/([^/]+)\/rotate$/.exec(p); if (rot && m === 'POST') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); if (!(T.terms || []).some(x => x.id === rot[1])) return json(404, { error: 'not_found', message: 'Terminali nuk u gjet' }); T.rotations = (T.rotations || 0) + 1; return json(200, { token: 'kt_new' + T.rotations }); } }
+    // KONTABO BAR's product / category proposals (kontabo-backend /pos/proposals): the ERP reads the pending ones in seq order (permission
+    // `produkte` or `pos`; the Pronar always), `more` when more are pending than returned (no cursor: the resolved ones leave the list), and
+    // resolves them (only pending ones change — idempotent). T.props = [{id, seq, kind, key, terminal, before, after, sku, createdAt, state, result}]
+    if (p === '/pos/proposals' || p === '/pos/proposals/resolve') { if (u.role !== 'Pronar' && !u.perms.produkte && !u.perms.pos) return json(403, { error: 'forbidden', message: 'Nuk keni leje' });
+      if (S.propHold) { const hold = S.propHold(T.id, m + ' ' + p); if (hold) await hold; }
+      if (p === '/pos/proposals' && m === 'GET') { if (+q.limit > 200) return json(400, { error: 'validation_error', message: 'limit' });
+        const lim = Math.min(+q.limit || 200, T.propCap || 200), L = (T.props || []).filter(x => !q.state || x.state === q.state).sort((a, b) => a.seq - b.seq);
+        return json(200, { items: L.slice(0, lim).map(x => ({ id: x.id, kind: x.kind, key: x.key, terminal: x.terminal, before: x.before, after: x.after, sku: x.sku, createdAt: x.createdAt })), more: L.length > lim }); }
+      if (p === '/pos/proposals/resolve' && m === 'POST') { if (T.onResolve) { const r = T.onResolve(body); if (r) return r; } const R = body.results || [];
+        if (!Array.isArray(R) || R.length > 200 || R.some(r => !r || !r.id || !['applied', 'partial', 'rejected'].includes(r.state))) return json(400, { error: 'validation_error', message: 'results' });
+        (T.resolves = T.resolves || []).push(JSON.parse(JSON.stringify(body))); let n = 0;
+        for (const r of R) { const x = (T.props || []).find(y => y.id === r.id); if (x && x.state === 'pending') { x.state = r.state; x.result = r.result; n++; } } return json(200, { resolved: n }); } }
     return json(404, { error: 'not_found', message: path });
   };
   const calls = (tid, re) => S.calls.filter(x => x.tid === tid && re.test(x.m + ' ' + x.p));
@@ -2460,4 +2472,161 @@ apiBlock.then(async () => {
       eq([S.bad, S.noHdr], [[], []], 'mock server (month rows): no commit carried `_srv` rows or posSync runtime fields, every call had X-Kontabo-Client: 2');
       M.logout(); done(M);
     } finally { for (const x of made) { x.posListAuto = () => {}; x.posListAutoStop(); clearTimeout(x._plT); done(x); } delete ctx.document.visibilityState; S.rcHold = null; } // (a refresh still on its way re-arms nothing; no app timer outlives a test that threw)
-  }).catch(e => { console.log('FAIL auto-refresh / month tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+    return H; // (for the KONTABO BAR proposals block below)
+  }).catch(e => { console.log('FAIL auto-refresh / month tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
+// ══ ERP · propozimet e KONTABO BAR (serveri: posProposals:1): produktet dhe kategoritë që një bar i krijon ose i ndryshon zbatohen në ERP në tikun e librit
+// të POS-it — bashkim me tri anë për çdo fushë (fiton ERP-ja), produktet e reja me SKU BAR-n, kategoritë (krijim / riemërim), njësia e kyçur, idempotenca
+// pas 409 / ringarkimit / refuzimit, zgjidhja e sërishme, lejet (vetëm `produkte` ose Pronari), veçoria e fikur = asgjë; asnjë commit me rreshta `_srv` ══
+  .then(async (H) => { if (!H) { console.log('FAIL KONTABO BAR proposals tests skipped: the month block did not finish'); process.exitCode = 1; return; }
+    const { S, mkT, pub, calls, json, mk, enter, done, wait, book, line, row } = H, feat0 = S.features, bad0 = S.bad.length;
+    try {
+      // ── the merge rules, headless: propBatch(book, pending items) → {patch, res, again} (no server, no ledger)
+      const Z = new C({}), RATE = { A: -1, C: 0, D: 8, E: 18 }, ALL = ['name', 'cat', 'gross_t', 'tax', 'unit', 'active'];
+      const Pp = (sku, name, o = {}) => ({ name, sku, barcode: '—', cat: 'Pije', unit: 'copë', tax: 'E', price_t: 21186, price_c: 212, gross_t: 25000, cost_t: 10000, cost_c: 100, openCost_c: 100, opening: 0, minStock: 0, ...o });
+      const db0 = { v: 2, taxV: 2, taxSettings: { vatRegistered: true, defaultGroup: 'E' }, movements: [{ date: '01.09.2026', type: 'adjust', sku: 'MV', qm: 1000, unit_c: 100, ref: 'INV-01092026' }], invoices: [], purchases: [], purchaseOrders: [],
+        products: [Pp('LP', 'Lëng portokalli'), Pp('MV', 'Me lëvizje'), Pp('PK', 'Rum i paketuar', { unit: 'l', pack: { unit: 'shishe', qm: 700 } }), Pp('BAR-7', 'Ujë i gazuar'), Pp('BAR 8', 'Shurup', { cat: 'Ëmbëlsira' })],
+        categories: [{ id: 'K-pije', name: 'Pije', note: '' }, { id: 'K-embelsira', name: 'Ëmbëlsira', note: '' }, { id: 'K-ushqim', name: 'Ushqim', note: '' }] };
+      // what the bar last received for a product (the catalogue's values in the bar's terms: gross_t, rate -1/0/8/18, letter, active)
+      const seen = (d, sku, o = {}) => { const p = d.products.find(x => x.sku === sku); return { name: p.name, cat: p.cat, gross_t: Z.grossT(p, d), rate: RATE[p.tax], tax: p.tax, unit: p.unit, active: p.pos !== false, ingredient: false, ...o }; };
+      const TB0 = { id: 'tb', name: 'Arka Bar', posId: 'BAR-1' }, pr = (id, o) => ({ id, kind: 'product', key: 'p:' + id, terminal: TB0, before: null, sku: null, createdAt: '2026-09-20T10:00:00Z', ...o });
+      const kr = (id, before, name) => ({ id, kind: 'category', key: 'k:' + id, terminal: TB0, before: before === null ? null : { name: before }, after: { name }, sku: null, createdAt: '2026-09-20T10:00:00Z' });
+      const apply = (d, items) => { const o = Z.propBatch(d, items); return { ...o, d: { ...d, ...o.patch }, r: Object.fromEntries(o.res.map(x => [x.id, [x.state, x.result]])) }; }, prod = (d, sku) => d.products.find(x => x.sku === sku);
+      { const x = apply(db0, [pr('a1', { sku: 'LP', before: seen(db0, 'LP'), after: { name: 'Lëng molle', cat: 'Freskuese', gross_t: 30000, rate: 8, tax: 'D', unit: 'shishe', active: false, ingredient: false } })]), p = prod(x.d, 'LP');
+        eq([x.r.a1, [p.name, p.cat, p.unit, p.tax, p.gross_t, p.price_t, p.price_c, p.pos, p.cost_c, p.opening], Z.grossT(p, x.d), x.d.categories.map(c => c.name), Object.keys(x.patch).sort(), x.d.posProposalsDone],
+          [['applied', { sku: 'LP', applied: ALL, kept: [], reason: '' }], ['Lëng molle', 'Freskuese', 'shishe', 'D', 30000, 27778, 278, false, 100, 0], 30000, ['Pije', 'Ëmbëlsira', 'Ushqim', 'Freskuese'], ['categories', 'posProposalsDone', 'products'], [{ id: 'a1', state: 'applied', result: { sku: 'LP', applied: ALL, kept: [], reason: '' } }]],
+          'proposals: nothing changed in the ERP since the bar\'s catalogue → every field the bar changed is applied (name, a new category, the gross verbatim with the net derived at the new rate like the product form, letter D, unit, hidden on the tills); cost / stock untouched; the id + result kept in posProposalsDone'); }
+      { const d1 = { ...db0, products: db0.products.map(p => p.sku === 'LP' ? { ...p, name: 'Lëng portokalli 1L', price_t: 22034, price_c: 220, gross_t: 26000 } : p) }; // the ERP renamed it and raised the price after the bar's catalogue
+        const x = apply(d1, [pr('a2', { sku: 'LP', before: seen(db0, 'LP'), after: seen(db0, 'LP', { name: 'Lëng portokalli i freskët', gross_t: 28000, cat: 'Ushqim' }) })]), p = prod(x.d, 'LP');
+        eq([x.r.a2, [p.name, p.cat, p.gross_t, p.price_t, p.price_c]], [['partial', { sku: 'LP', applied: ['cat'], kept: ['name', 'gross_t'], reason: 'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: emri, çmimi me TVSH' }], ['Lëng portokalli 1L', 'Ushqim', 26000, 22034, 220]],
+          'proposals, three-way merge: a field the ERP changed since the bar saw it keeps the ERP value (name, price — the ERP wins), the others are applied (category) → partial');
+        const y = apply(d1, [pr('a3', { sku: 'LP', before: seen(db0, 'LP'), after: seen(db0, 'LP', { name: 'X', gross_t: 1 }) })]);
+        eq([y.r.a3[0], y.r.a3[1].applied, y.r.a3[1].kept, Object.keys(y.patch)], ['rejected', [], ['name', 'gross_t'], ['posProposalsDone']], 'proposals: every field the bar changed was changed in the ERP too → rejected, the products are not touched (only the proposal is recorded)');
+        const z = apply(d1, [pr('a4', { sku: 'LP', before: { name: 'Lëng portokalli', cat: 'Pije', gross_t: 25000 }, after: seen(db0, 'LP', { name: 'Lëng portokalli' }) }), pr('a5', { sku: 'LP', before: { name: 'Lëng portokalli' }, after: seen(db0, 'LP') })]);
+        eq([z.r.a4, z.r.a5, prod(z.d, 'LP').gross_t], [['applied', { sku: 'LP', applied: ['tax', 'unit', 'active'], kept: [], reason: '' }], ['partial', { sku: 'LP', applied: ['cat', 'tax', 'unit', 'active'], kept: ['gross_t'], reason: 'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: çmimi me TVSH' }], 26000],
+          'proposals: a field the bar did not change is never listed (the ERP\'s new price stays); a field missing from `before` counts as changed by the ERP unless the ERP already has the bar\'s value'); }
+      { const { tax, ...noLetter } = seen(db0, 'LP'); const x = apply(db0, [pr('a6', { sku: 'LP', before: seen(db0, 'LP'), after: { ...noLetter, rate: 8 } })]), p = prod(x.d, 'LP');
+        eq([x.r.a6[0], x.r.a6[1].applied, p.tax, p.gross_t, p.price_t, p.price_c], ['applied', ['tax'], 'D', 25000, 23148, 231], 'proposals: the VAT from the bar\'s rate alone (8 → D): the gross stays verbatim, the net is derived again at 8 %'); }
+      { const x = apply(db0, [pr('u1', { sku: 'LP', before: seen(db0, 'LP'), after: seen(db0, 'LP', { unit: 'litra' }) }), pr('u2', { sku: 'MV', before: seen(db0, 'MV'), after: seen(db0, 'MV', { unit: 'kg' }) }), pr('u3', { sku: 'PK', before: seen(db0, 'PK'), after: seen(db0, 'PK', { unit: 'shishe' }) }), pr('u4', { sku: 'BAR-7', before: seen(db0, 'BAR-7'), after: seen(db0, 'BAR-7', { unit: 'l' }) })]);
+        eq([x.r.u1, x.r.u2[0], x.r.u2[1].kept, /^Njësia nuk ndryshohet/.test(x.r.u2[1].reason), x.r.u3[0], /^Paketimi: njësia e paketimit/.test(x.r.u3[1].reason), x.r.u4[0], ['LP', 'MV', 'PK', 'BAR-7'].map(s => prod(x.d, s).unit)],
+          [['rejected', { sku: 'LP', applied: [], kept: ['unit'], reason: 'vlerë e pavlefshme: njësia' }], 'rejected', ['unit'], true, 'rejected', true, 'applied', ['copë', 'copë', 'l', 'l']], 'proposals, unit: an unknown unit is refused, a product with a movement keeps its unit (unitLocked), the pack rule holds; a free product changes unit'); }
+      const nu = { name: 'Çaj mali', cat: 'Pije', gross_t: 12345, rate: 18, tax: 'E', unit: 'gotë', active: true, ingredient: false };
+      { const x = apply(db0, [pr('c1', { key: 'p:41', after: nu }), pr('c2', { key: 'p:42', after: { ...nu, name: 'Sheqer', cat: 'Përbërës', gross_t: 0, rate: -1, tax: 'A', unit: 'kg', active: true, ingredient: true } }), pr('c3', { key: 'p:43', after: { ...nu, name: 'Tjetër', gross_t: undefined, unit: 'filxhan' } }), { ...pr('c4', { after: nu }), kind: 'recete' }]), p2 = prod(x.d, 'BAR-10');
+        eq([x.r.c1, x.r.c2[1].sku, x.r.c3, x.r.c4, prod(x.d, 'BAR-9'), [p2.name, p2.cat, p2.tax, p2.unit, p2.gross_t, p2.price_t, p2.pos, p2.barKey], x.d.categories.map(c => c.name), x.d.products.length],
+          [['applied', { sku: 'BAR-9', applied: ALL, kept: [], reason: '' }], 'BAR-10', ['rejected', { sku: null, applied: [], kept: [], reason: 'Produkti i ri nuk u krijua: mungon ose është e pavlefshme çmimi me TVSH, njësia.' }], ['rejected', { applied: [], kept: [], reason: 'Lloj i panjohur propozimi.' }],
+            { name: 'Çaj mali', sku: 'BAR-9', barcode: '—', cat: 'Pije', unit: 'gotë', tax: 'E', price_t: 10462, price_c: 105, cost_t: 0, cost_c: 0, gross_t: 12345, openCost_c: 0, opening: 0, minStock: 0, pos: true, barKey: 'p:41' },
+            ['Sheqer', 'Përbërës', 'A', 'kg', 0, 0, false, 'p:42'], ['Pije', 'Ëmbëlsira', 'Ushqim', 'Përbërës'], 7],
+          'proposals, a new product: SKU BAR-<next free> (BAR-7 and "BAR 8" exist → BAR-9, BAR-10), the gross verbatim + the net derived like the product form, cost / opening 0, barKey = the bar\'s key; ingredient-only → hidden on the tills; an incomplete one or an unknown kind is refused');
+        const nv = apply({ ...db0, taxSettings: { vatRegistered: false } }, [pr('c5', { key: 'p:45', after: nu })]), p5 = prod(nv.d, 'BAR-9');
+        eq([p5.tax, p5.gross_t, p5.price_t, p5.price_c, Z.grossT(p5, nv.d)], ['E', 12345, 12345, 123, 12345], 'proposals, a company not registered for VAT: the net equals the gross (rate 0, like the product form); the letter stays as data');
+        const y = apply(x.d, [pr('c6', { key: 'p:41', before: seen(x.d, 'BAR-9'), after: seen(x.d, 'BAR-9', { name: 'Çaj mali i ftohtë' }) })]);
+        eq([y.r.c6, prod(y.d, 'BAR-9').name, y.d.products.length], [['applied', { sku: 'BAR-9', applied: ['name'], kept: [], reason: '' }], 'Çaj mali i ftohtë', 7], 'proposals: a product created from the bar is found again by its barKey while the bar has no SKU for it yet'); }
+      { const x = apply(db0, [pr('l1', { key: 'p:51', after: seen(db0, 'LP', { name: 'lëng  PORTOKALLI' }) }), pr('l2', { key: 'p:52', before: seen(db0, 'LP'), after: seen(db0, 'LP') }), pr('l3', { key: 'p:53', sku: 'GONE', before: seen(db0, 'LP'), after: seen(db0, 'LP') })]);
+        eq([x.r.l1, x.r.l2, x.r.l3, x.d.products.length], [['partial', { sku: 'LP', applied: ['cat', 'gross_t', 'tax', 'unit', 'active'], kept: ['name'], reason: 'produkti ekziston në ERP — mbeten vlerat e ERP-së: emri' }], ['rejected', { sku: null, applied: [], kept: [], reason: 'Produkti nuk gjendet në ERP — nuk krijohet sërish nga arka.' }], ['rejected', { sku: 'GONE', applied: [], kept: [], reason: 'Produkti nuk gjendet në ERP (SKU GONE) — nuk krijohet sërish nga arka.' }], 5],
+          'proposals, locating: by the case-insensitive name only without a `before` (then every field counts as the ERP\'s — only the equal ones pass, nothing is created); with a `before` an unknown product is never created again'); }
+      { const x = apply(db0, [kr('k1', null, 'Kokteje'), kr('k2', null, 'Pije'), kr('k3', null, 'pije'), kr('k4', 'Ushqim', 'Ëmbëlsira'), kr('k5', 'Snacks', 'Snacks të kripura'), kr('k6', null, '  ')]), ok1 = { applied: ['name'], kept: [], reason: '' };
+        eq([x.r.k1, x.r.k2, x.r.k3, x.r.k4, x.r.k5, x.r.k6, x.d.categories.map(c => c.id + ':' + c.name)],
+          [['applied', ok1], ['applied', ok1], ['rejected', { applied: [], kept: ['name'], reason: 'Kategoria ekziston në ERP si “Pije”.' }], ['rejected', { applied: [], kept: ['name'], reason: 'Kategoria “Ëmbëlsira” ekziston tashmë në ERP.' }], ['applied', ok1], ['rejected', { applied: [], kept: ['name'], reason: 'Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.' }],
+            ['K-pije:Pije', 'K-embelsira:Ëmbëlsira', 'K-ushqim:Ushqim', 'K-kokteje:Kokteje', 'K-snacks-te-kripura:Snacks të kripura']],
+          'proposals, categories: a new name is created (also when the ERP no longer has the `before` name), an existing one is nothing to do, another spelling or a rename onto another category is refused (the ERP wins), an empty name is refused');
+        const y = apply(db0, [pr('r1', { key: 'p:61', after: { name: 'Mjaltë', cat: 'Ëmbëlsira', gross_t: 5000, tax: 'E', rate: 18, unit: 'kg', active: true, ingredient: false } }), kr('r2', 'Ëmbëlsira', 'Ëmbëlsirat')]);
+        eq([y.r.r2, y.d.categories.map(c => c.id + ':' + c.name), prod(y.d, 'BAR 8').cat, prod(y.d, 'BAR-9').cat, y.res.map(z => z.id)], [['applied', ok1], ['K-pije:Pije', 'K-embelsira:Ëmbëlsirat', 'K-ushqim:Ushqim'], 'Ëmbëlsirat', 'Ëmbëlsirat', ['r2', 'r1']],
+          'proposals, rename: the category (same id) and every product of it; a new product queued under the old name lands in the renamed category (categories first, the old name read as the new one)'); }
+      { const items = [pr('i1', { key: 'p:71', after: nu }), kr('i2', null, 'Kokteje')], x = apply(db0, items), y = apply(x.d, items);
+        eq([y.patch, y.res, y.again, x.d.posProposalsDone.map(e => e.id)], [{}, [], x.d.posProposalsDone, ['i2', 'i1']], 'proposals: idempotent — a batch already in posProposalsDone changes nothing and is only resolved again with the stored results');
+        Z.PROP_KEEP = 3; const k = apply(x.d, [kr('i3', null, 'A1'), kr('i4', null, 'A2')]); Z.PROP_KEEP = 1000; eq(k.d.posProposalsDone.map(e => e.id), ['i1', 'i3', 'i4'], 'proposals: posProposalsDone keeps the last PROP_KEEP'); }
+
+      // ── against the mock server: tenant tp on the POS ledger (LIM was sold by a till — its unit is locked by the ledger, not by the book)
+      let seq = 0; const TB = { id: 'term-bar', name: 'Arka Bar', posId: 'BAR-1' };
+      // the terminal's POST /pos/terminal/proposals as the backend keeps it: a new proposal for a key with a pending one supersedes it and keeps the OLDEST `before`
+      const propose = (T, x) => { T.props = T.props || []; const old = T.props.filter(y => y.key === x.key && y.state === 'pending'); for (const y of old) y.state = 'superseded';
+        const it = { id: 'pp-' + (++seq), seq, kind: x.kind || 'product', key: x.key, terminal: TB, before: old.length ? old[0].before : x.before === undefined ? null : x.before, after: x.after, sku: x.sku === undefined ? null : x.sku, createdAt: '2026-09-20T10:00:00Z', state: 'pending', result: null }; T.props.push(it); return it; };
+      const st = T => (T.props || []).filter(x => x.state !== 'superseded').map(x => x.key + ':' + x.state), tick = async x => { await x.ledgerTick(); for (let i = 0; i < 100 && x._propP; i++) await x._propP; await wait(); };
+      const bk = book(), SOD = { name: 'Sodë', sku: 'SOD', barcode: '—', cat: 'Pije', unit: 'copë', tax: 'E', price_t: 12712, price_c: 127, gross_t: 15000, cost_c: 50, openCost_c: 50, opening: 0, minStock: 0 };
+      const TP = mkT('tp', 'Bar Propozime SH.P.K.', book({ products: [...bk.products, SOD, { ...SOD, name: 'Ujë i gazuar', sku: 'BAR-7' }, { ...SOD, name: 'Shurup', sku: 'BAR 8', cat: 'Ëmbëlsira' }], categories: [...bk.categories, { id: 'K-embelsira', name: 'Ëmbëlsira', note: '' }, { id: 'K-ushqim', name: 'Ushqim', note: '' }] }), 'on');
+      pub(TP, row('D:k1a2b3:2026-09-20', 'day', '2026-09-20', { items: [line('LIM', 'Limon', 'copë', 10000, 50, 10)], moves: [['LIM', -1000, 10, 'sale']], pays: [['cash1', 'cash', 50]] }));
+      const kafe0 = seen(TP.state, 'KAFE'), sod0 = seen(TP.state, 'SOD'), lim0 = seen(TP.state, 'LIM'), N = { name: 'Mojito pa alkool', cat: 'Kokteje', gross_t: 35000, rate: 18, tax: 'E', unit: 'gotë', active: true, ingredient: false };
+      TP.state.products = TP.state.products.map(p => p.sku === 'KAFE' ? { ...p, price_t: 33898, price_c: 339, gross_t: 40000 } : p); // the ERP raised the price of Kafe after the bar's last catalogue
+      propose(TP, { key: 'k:1', kind: 'category', after: { name: 'Kokteje' } });
+      propose(TP, { key: 'p:101', after: { ...N, name: 'Mojito', gross_t: 30000 } }); propose(TP, { key: 'p:101', after: N }); // edited again before it was sent: the newer one supersedes it
+      propose(TP, { key: 'p:102', after: { name: 'Sheqer kallami', cat: 'Ëmbëlsira', gross_t: 0, rate: -1, tax: 'A', unit: 'kg', active: false, ingredient: true } });
+      propose(TP, { key: 'k:2', kind: 'category', before: { name: 'Ëmbëlsira' }, after: { name: 'Ëmbëlsirat' } });
+      propose(TP, { key: 'p:103', sku: 'SOD', before: sod0, after: { name: 'Sodë limoni', cat: 'Freskuese', gross_t: 16000, rate: 8, tax: 'D', unit: 'shishe', active: false, ingredient: false } });
+      propose(TP, { key: 'p:104', sku: 'KAFE', before: kafe0, after: { ...kafe0, name: 'Kafe espresso', gross_t: 38000, unit: 'kg' } });
+      propose(TP, { key: 'p:105', sku: 'LIM', before: lim0, after: { ...lim0, unit: 'kg' } });
+      propose(TP, { key: 'p:106', sku: 'GONE', before: lim0, after: lim0 });
+      propose(TP, { key: 'k:3', kind: 'category', before: { name: 'Ushqim' }, after: { name: 'Pije' } });
+      const pend0 = st(TP);
+      // feature off: /health without posProposals:1 → nothing is read or applied
+      S.features = ['posLedger:1'];
+      { const X = mk(); await enter(X, 'own', 'tp'); await tick(X);
+        eq([X._propFeat, calls('tp', /\/pos\/proposals/).length, TP.commits.length, st(TP)], [false, 0, 0, pend0], 'proposals, feature off (/health without posProposals:1): nothing is read or applied, no commit'); X.logout(); done(X); }
+      S.features = ['posLedger:1', 'posProposals:1'];
+      { const K = mk(); await enter(K, 'kas', 'tp'); await tick(K); await tick(K);
+        eq([K._propFeat, K.propPerm(), calls('tp', /\/pos\/proposals/).length, TP.commits.length, st(TP)], [true, false, 0, 0, pend0], 'proposals: a cashier with `pos` but without `produkte` neither reads nor applies them (only the `produkte` permission or the Pronar)'); K.logout(); done(K); }
+      // a user with `produkte` (Magazinier): the 9 pending proposals in ONE commit, then ONE resolve
+      const M = mk(); await enter(M, 'mag', 'tp'); await tick(M);
+      { const s = TP.state, p = sku => s.products.find(x => x.sku === sku), R = (TP.resolves || [])[0] || { results: [] }, keyOf = id => (TP.props.find(y => y.id === id) || {}).key, res = Object.fromEntries(R.results.map(x => [keyOf(x.id), [x.state, x.result]]));
+        eq([TP.commits.length, Object.keys(TP.commits[0] || {}).sort(), (TP.resolves || []).length, R.results.map(x => keyOf(x.id)), st(TP), JSON.stringify(s.posProposalsDone) === JSON.stringify(R.results), JSON.stringify(M.state.db.products) === JSON.stringify(s.products)],
+          [1, ['categories', 'posProposalsDone', 'products'], 1, ['k:1', 'k:2', 'k:3', 'p:101', 'p:102', 'p:103', 'p:104', 'p:105', 'p:106'], ['k:1:applied', 'p:101:applied', 'p:102:applied', 'k:2:applied', 'p:103:applied', 'p:104:partial', 'p:105:rejected', 'p:106:rejected', 'k:3:rejected'], true, true],
+          'proposals, a `produkte` user\'s ledger tick: the pending ones applied in ONE commit (products, categories, posProposalsDone), then ONE POST /pos/proposals/resolve with every result (categories first)');
+        eq([p('BAR-9'), [p('BAR-10').name, p('BAR-10').cat, p('BAR-10').pos, p('BAR-10').tax, p('BAR-10').unit], [p('SOD').name, p('SOD').cat, p('SOD').unit, p('SOD').tax, p('SOD').gross_t, p('SOD').price_t, p('SOD').price_c, p('SOD').pos], [p('KAFE').name, p('KAFE').unit, p('KAFE').gross_t, p('KAFE').price_t, p('KAFE').cost_c, p('KAFE').opening], [p('LIM').unit, p('BAR 8').cat], s.categories.map(c => c.name)],
+          [{ name: 'Mojito pa alkool', sku: 'BAR-9', barcode: '—', cat: 'Kokteje', unit: 'gotë', tax: 'E', price_t: 29661, price_c: 297, cost_t: 0, cost_c: 0, gross_t: 35000, openCost_c: 0, opening: 0, minStock: 0, pos: true, barKey: 'p:101' }, ['Sheqer kallami', 'Ëmbëlsirat', false, 'A', 'kg'], ['Sodë limoni', 'Freskuese', 'shishe', 'D', 16000, 14815, 148, false], ['Kafe espresso', 'copë', 40000, 33898, 30, 100000], ['copë', 'Ëmbëlsirat'], ['Pije', 'Ëmbëlsirat', 'Ushqim', 'Kokteje', 'Freskuese']],
+          'proposals in the book: the new product (BAR-9, the newest proposal of its key) and the ingredient (hidden, in the renamed category), Sodë with every field, Kafe renamed but the ERP\'s price and the locked unit kept, LIM\'s unit locked by the ledger, the category renamed for its products');
+        eq([res['p:101'], res['p:104'], res['p:105'][1].kept, /^Njësia nuk ndryshohet/.test(res['p:105'][1].reason), res['p:106'][1].reason, res['k:3'][1].reason],
+          [['applied', { sku: 'BAR-9', applied: ALL, kept: [], reason: '' }], ['partial', { sku: 'KAFE', applied: ['name'], kept: ['gross_t', 'unit'], reason: 'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: çmimi me TVSH · Njësia nuk ndryshohet: produkti ka gjendje fillestare, lëvizje stoku, përdoret në një recetë ose është në një dokument draft.' }], ['unit'], true, 'Produkti nuk gjendet në ERP (SKU GONE) — nuk krijohet sërish nga arka.', 'Kategoria “Pije” ekziston tashmë në ERP.'],
+          'proposals: the results sent to the server (sku, applied, kept, reason)');
+        eq(TP.audit.filter(a => /KONTABO BAR/.test(a)), ['6 produkte / 3 kategori nga KONTABO BAR (Arka Bar): 5 të zbatuara · 1 pjesërisht (fiton ERP-ja) · 3 të refuzuara · të reja: BAR-9, BAR-10'], 'proposals: one audit line per batch');
+        const g0 = calls('tp', /^GET \/pos\/proposals$/).length, t0 = TP.tries; await tick(M);
+        eq([calls('tp', /^GET \/pos\/proposals$/).length - g0, TP.tries - t0, TP.resolves.length], [1, 0, 1], 'proposals: the next tick finds nothing pending → no commit, no resolve'); }
+      // the Pronar (who also has the POS permission): the catalogue goes back to the tills by itself
+      const O = mk(); await enter(O, 'own', 'tp'); await tick(O);
+      { await O.posSync(false); const cat = TP.catalogs[TP.catalogs.length - 1] || { products: [], categories: [] }, cp = sku => cat.products.find(x => x.sku === sku) || {};
+        eq([[cp('BAR-9').name, cp('BAR-9').cat, cp('BAR-9').unit, cp('BAR-9').gross_t, cp('BAR-9').price_t, cp('BAR-9').rate], !!cp('SOD').sku, !!cp('BAR-10').sku, cp('KAFE').name, cp('KAFE').gross_t, cat.categories.map(c => c.name)],
+          [['Mojito pa alkool', 'Kokteje', 'gotë', 35000, 29661, 18], false, false, 'Kafe espresso', 40000, ['Pije', 'Ëmbëlsirat', 'Ushqim', 'Kokteje', 'Freskuese']], 'proposals: the catalogue goes back to the tills (POS permission, its hash changed) — the new product with its gross verbatim, the hidden ones left out, the ERP\'s values where it won'); }
+      // the commit landed but the resolve failed: the next tick resolves it again with the stored result — nothing applied twice
+      { const b7 = seen(TP.state, 'BAR-7'); propose(TP, { key: 'p:107', sku: 'BAR-7', before: b7, after: { ...b7, name: 'Ujë mineral i gazuar' } }); let fail = 1; TP.onResolve = () => (fail-- > 0 ? json(503, { error: 'unavailable', message: 'Serveri po rinis' }) : null);
+        const c0 = TP.commits.length; await tick(O);
+        eq([TP.commits.length - c0, st(TP).slice(-1), O.state.db.posProposalsDone.slice(-1)[0].state, TP.state.products.find(x => x.sku === 'BAR-7').name], [1, ['p:107:pending'], 'applied', 'Ujë mineral i gazuar'], 'proposals: the Pronar applies; the commit landed but POST /pos/proposals/resolve failed — still pending on the server, kept in posProposalsDone');
+        const r0 = TP.resolves.length; await tick(O);
+        eq([TP.commits.length - c0, st(TP).slice(-1), TP.resolves.length - r0, TP.resolves.slice(-1)[0].results, TP.audit.filter(a => /KONTABO BAR/.test(a)).length], [1, ['p:107:applied'], 1, [O.state.db.posProposalsDone.slice(-1)[0]], 2], 'proposals: re-resolved on the next tick with the stored result — no second commit, no second audit line');
+        TP.onResolve = null; }
+      // … and in a later session (the page was closed before the resolve): another user finds it pending but already applied
+      let Y;
+      { const b7 = seen(TP.state, 'BAR-7'); propose(TP, { key: 'p:108', sku: 'BAR-7', before: b7, after: { ...b7, gross_t: 21000 } }); TP.onResolve = () => json(503, { error: 'unavailable', message: 'Serveri po rinis' });
+        const c0 = TP.commits.length; await tick(O); O.logout(); done(O); TP.onResolve = null;
+        Y = mk(); await enter(Y, 'mag', 'tp'); await tick(Y); const p7 = TP.state.products.find(x => x.sku === 'BAR-7');
+        eq([TP.commits.length - c0, st(TP).slice(-1), [p7.gross_t, p7.price_t], TP.resolves.slice(-1)[0].results.map(r => [r.state, r.result.applied])], [1, ['p:108:applied'], [21000, 17797], [['applied', ['gross_t']]]], 'proposals: after a reload another user finds it pending but in posProposalsDone — resolved with the stored result, never applied twice'); }
+      // a 409 while committing the batch (another user changed the price meanwhile): applied again on the server's book — the ERP's price is kept
+      { const b7 = seen(TP.state, 'BAR-7'); propose(TP, { key: 'p:109', sku: 'BAR-7', before: b7, after: { ...b7, gross_t: 23000, name: 'Ujë me gaz' } });
+        TP.onCommit = patch => { if ('posProposalsDone' in patch && !TP.raced) { TP.raced = true; TP.version++; TP.state = { ...TP.state, products: TP.state.products.map(p => p.sku === 'BAR-7' ? { ...p, price_t: 18644, price_c: 186, gross_t: 22000 } : p) }; return json(409, { error: 'version_conflict', version: TP.version, state: TP.state }); } return null; };
+        const c0 = TP.commits.length, t0 = TP.tries; await tick(Y); const p7 = TP.state.products.find(x => x.sku === 'BAR-7'), last = TP.props.find(x => x.key === 'p:109');
+        eq([TP.raced, TP.tries - t0, TP.commits.length - c0, [p7.name, p7.gross_t, p7.price_t], [last.state, last.result], Y.state.db.products.find(x => x.sku === 'BAR-7').gross_t, Y.state.db.posProposalsDone.filter(e => e.id === last.id).length],
+          [true, 2, 1, ['Ujë me gaz', 22000, 18644], ['partial', { sku: 'BAR-7', applied: ['name'], kept: ['gross_t'], reason: 'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: çmimi me TVSH' }], 22000, 1],
+          'proposals after a 409: the server\'s book is reloaded (the lost batch leaves no mark — posProposalsDone follows the server), the batch is applied again on it, ONE commit lands, resolved once');
+        TP.onCommit = null; }
+      // the same on a company whose book never had posProposalsDone: the reload must drop the lost batch's marks (bookMerge follows the server
+      // for that key too) — else the proposal would be resolved as applied while the server's book never got the change
+      { const TQ = mkT('tq', 'Bar i Ri SH.P.K.', book(), 'on'), k0 = seen(TQ.state, 'KAFE'); propose(TQ, { key: 'p:201', sku: 'KAFE', before: k0, after: { ...k0, name: 'Kafe turke' } });
+        TQ.onCommit = patch => { if ('posProposalsDone' in patch && !TQ.raced) { TQ.raced = true; TQ.version++; TQ.state = { ...TQ.state, products: TQ.state.products.map(p => p.sku === 'KAFE' ? { ...p, name: 'Kafe e zezë' } : p) }; return json(409, { error: 'version_conflict', version: TQ.version, state: TQ.state }); } return null; };
+        const Q = mk(); await enter(Q, 'own', 'tq'); await tick(Q); const it = TQ.props[0];
+        eq([TQ.raced, 'posProposalsDone' in TQ.state, TQ.commits.length, TQ.state.products.find(x => x.sku === 'KAFE').name, [it.state, it.result && it.result.kept], Q.state.db.posProposalsDone.map(e => e.state)], [true, true, 1, 'Kafe e zezë', ['rejected', ['name']], ['rejected']],
+          'proposals: a 409 on the very first batch of a book (no posProposalsDone on the server yet) — the lost marks are dropped with the reload, the batch is applied again: the ERP\'s new name wins → rejected');
+        Q.logout(); done(Q); }
+      // the server refuses the batch (4xx): the local marks would lie → the server's book again, nothing resolved, the next try after PROP_BACKOFF
+      { const b7 = seen(TP.state, 'BAR-7'); propose(TP, { key: 'p:110', sku: 'BAR-7', before: b7, after: { ...b7, name: 'Ujë i gazuar 0.5' } });
+        TP.onCommit = patch => ('posProposalsDone' in patch && !TP.refused ? (TP.refused = true, json(413, { error: 'payload_too_large', message: 'Kërkesa është shumë e madhe' })) : null);
+        const c0 = TP.commits.length, r0 = TP.resolves.length, id = TP.props[TP.props.length - 1].id; await tick(Y);
+        eq([TP.refused, TP.commits.length - c0, TP.resolves.length - r0, st(TP).slice(-1), Y.state.db.products.find(x => x.sku === 'BAR-7').name, Y.state.db.posProposalsDone.some(e => e.id === id), Y._propFail > 0], [true, 0, 0, ['p:110:pending'], 'Ujë me gaz', false, true],
+          'proposals refused by the server (4xx): the server\'s book is loaded again (no local mark left), nothing is resolved, the next try waits PROP_BACKOFF');
+        const g0 = calls('tp', /^GET \/pos\/proposals$/).length; await tick(Y); eq(calls('tp', /^GET \/pos\/proposals$/).length - g0, 0, 'proposals: during the back-off the tick does not even ask');
+        Y._propFail = 0; await tick(Y); eq([TP.commits.length - c0, st(TP).slice(-1), TP.state.products.find(x => x.sku === 'BAR-7').name], [1, ['p:110:applied'], 'Ujë i gazuar 0.5'], 'proposals: after the back-off applied once and resolved');
+        TP.onCommit = null; }
+      // more pending than one page: batch after batch in the same tick, each committed and resolved before the next is read
+      { TP.propCap = 2; for (const k of [111, 112, 113]) propose(TP, { key: 'p:' + k, after: { ...N, name: 'Koktej ' + k } });
+        const c0 = TP.commits.length, r0 = TP.resolves.length, g0 = calls('tp', /^GET \/pos\/proposals$/).length; await tick(Y);
+        eq([TP.commits.length - c0, TP.resolves.length - r0, calls('tp', /^GET \/pos\/proposals$/).length - g0, st(TP).slice(-3), ['Koktej 111', 'Koktej 112', 'Koktej 113'].map(n => (TP.state.products.find(x => x.name === n) || {}).sku)], [2, 2, 2, ['p:111:applied', 'p:112:applied', 'p:113:applied'], ['BAR-11', 'BAR-12', 'BAR-13']],
+          'proposals while `more`: two pages in one tick — two commits, two resolves'); TP.propCap = 0; }
+      Y.logout(); M.logout(); done(Y); done(M);
+      eq([S.bad.slice(bad0), S.noHdr, TP.commits.every(c => Object.keys(c).every(k => ['products', 'categories', 'posProposalsDone'].includes(k)))], [[], [], true], 'mock server (proposals): no commit carried `_srv` rows or posSync runtime fields — only products / categories / posProposalsDone; every call had X-Kontabo-Client: 2');
+    } finally { S.features = feat0; }
+  }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
