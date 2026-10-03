@@ -24,7 +24,7 @@ kontabo-finance/
 │  ├─ unpack.js            ← zbërthen një bundle .html në src/
 │  ├─ pack.js              ← ribën dist/Kontabo finance.html nga src/
 │  ├─ dev.js               ← gjeneron dev/index.html për preview pa pack (asset-e me path relativ)
-│  ├─ check-logic.js       ← kontroll sintakse + 1097 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, render sweep)
+│  ├─ check-logic.js       ← kontroll sintakse + 1129 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU BAR-n, kategoritë, idempotenca, lejet), render sweep)
 │  └─ verify-roundtrip.js  ← verifikon që pack(unpack(x)) == x
 ├─ dev/index.html          ← preview i shpejtë (gjenerohet)
 └─ dist/
@@ -436,6 +436,34 @@ përmbledhjen ditore: dokumenti *Përmbledhje mujore · <arka>*, pagesat `POS-<Y
 “Përmbledhje mujore POS” në ditar dhe lëvizjet me kostot e ngrira — me totale identike me ditët që zëvendëson (stoku, arka,
 raportet, TVSH-ja, paneli). Sirtari tregon muajin, numrin e kuponëve, ditën e parë–të fundit dhe operatorët e mbledhur; “Shiko
 kuponat e muajit” hap P:Shitje me atë arkë nga data 1 deri në fund të muajit. Një rresht mujor nuk numërohet kurrë si “sot”.
+
+### Propozimet e KONTABO BAR (`posProposals:1`)
+
+Kur `GET /health` liston edhe `posProposals:1`, produktet dhe kategoritë që një bar (KONTABO BAR) i krijon ose i ndryshon vijnë si
+**propozime** `{key, kind, before, after, sku}`. Në çdo tik të librit të POS-it (pas ngarkimit, çdo 15 s) **vetëm** një përdorues me
+lejen `produkte` ose Pronari i merr me `GET /pos/proposals?state=pending&limit=200`, i zbaton të gjitha në **një commit** dhe, pasi
+commit-i të ketë zbritur në server, i mbyll me `POST /pos/proposals/resolve` (`applied` / `partial` / `rejected` + `{sku, applied,
+kept, reason}`); kur serveri thotë `more`, vazhdon me grumbullin tjetër. Pa veçorinë, ose pa leje, nuk lexohet asgjë.
+
+- **Fiton ERP-ja** (bashkim me tri anë, fushë për fushë: emri, kategoria, çmimi me TVSH `gross_t`, TVSH-ja — shkronja ose norma e
+  barit −1/0/8/18 → A/C/D/E —, njësia, “Shfaqe në POS” = `active && !ingredient`): vlera e barit merret vetëm aty ku vlera e ERP-së
+  është ende ajo që bari pa (`before`); një fushë që mungon te `before` llogaritet si e ndryshuar nga ERP-ja, përveç kur ERP-ja e ka
+  tashmë vlerën e barit. Njësia ndjek kyçjen (`unitLocked`, edhe me lëvizjet e librit të POS-it) dhe rregullin e paketimit. Çmimi
+  bruto ruhet siç vjen, neto (`price_t` / `price_c`) llogaritet prej tij si te formulari i produktit, me normën e shkronjës (së re).
+  Stoku dhe kostoja nuk preken kurrë.
+- Produkti gjendet me `sku`, pastaj me `barKey` (çelësi i barit), pastaj — vetëm pa `before` — me emrin pa dallim shkronjash të
+  mëdha/vogla. **Produkt i ri** (pa `before`, i pa gjetur): SKU `BAR-<numri i lirë i radhës>`, kategoria krijohet po mungoi, kosto
+  dhe gjendje fillestare 0, `barKey`; një produkt vetëm për receta del i fshehur nga POS-i. Me `before` një produkt që ERP-ja nuk
+  e ka nuk krijohet sërish (refuzohet). Receta nuk krijohen kurrë nga bari.
+- **Kategoritë** zbatohen të parat: riemërim kur ERP-ja ka ende emrin `before` (kategoria dhe `cat` i çdo produkti të saj — një
+  produkt i propozuar me emrin e vjetër bie te kategoria e riemëruar), krijim kur asnjë kategori nuk e ka emrin `after`, përndryshe
+  refuzim (ERP-ja fiton).
+- **Idempotent**: çdo propozim i trajtuar mbetet në libër te `posProposalsDone` (1000 të fundit, me rezultatin) dhe nuk zbatohet
+  dy herë; një që serveri e ka ende në pritje mbyllet sërish me rezultatin e ruajtur. Pas një 409 libri i serverit fiton (edhe
+  `posProposalsDone` e ndjek serverin) dhe grumbulli zbatohet sërish mbi të; kur serveri e refuzon commit-in (4xx) libri ringarkohet
+  dhe provohet pas 5 minutash. Nuk punon ndërsa ka ndryshime të padërguara ose ndërsa libri i POS-it po kalon.
+- Një rresht audit-i për grumbull (“N produkte / M kategori nga KONTABO BAR (arkat): … të zbatuara · … pjesërisht · … të refuzuara
+  · të reja: BAR-…”); katalogu shkon sërish te arkat vetë (hash-i ndryshoi) nga një përdorues me leje POS.
 
 ## Çfarë NUK bën ky prototip (me qëllim)
 - Nuk fiskalizon realisht: faturat vetëm hyjnë në radhë me status *Në pritje*; Fiscal Agent,
