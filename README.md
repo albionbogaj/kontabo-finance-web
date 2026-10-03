@@ -24,7 +24,7 @@ kontabo-finance/
 │  ├─ unpack.js            ← zbërthen një bundle .html në src/
 │  ├─ pack.js              ← ribën dist/Kontabo finance.html nga src/
 │  ├─ dev.js               ← gjeneron dev/index.html për preview pa pack (asset-e me path relativ)
-│  ├─ check-logic.js       ← kontroll sintakse + 1156 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU BAR-n, kategoritë, idempotenca, lejet), render sweep)
+│  ├─ check-logic.js       ← kontroll sintakse + 1166 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU BAR-n, kategoritë, idempotenca, lejet), render sweep)
 │  └─ verify-roundtrip.js  ← verifikon që pack(unpack(x)) == x
 ├─ dev/index.html          ← preview i shpejtë (gjenerohet)
 └─ dist/
@@ -489,10 +489,26 @@ kept, reason}`); kur serveri thotë `more`, vazhdon me grumbullin tjetër. Pa ve
 - Një rresht audit-i për grumbull (“N produkte / M kategori nga KONTABO BAR (arkat): … të zbatuara · … pjesërisht · … të refuzuara
   · të reja: BAR-…”); katalogu shkon sërish te arkat vetë (hash-i ndryshoi) nga një përdorues me leje POS.
 
+## Pagesat: regjistrimi dhe storno
+
+Një pagesë nuk fshihet kurrë. **Storno pagesën** (sirtari i faturës dhe i blerjes, vetëm kur ka pagesë të
+pastornuar) regjistron pagesën e kundërt me të njëjtën shumë dhe llogari: dokumenti e zbret `paid`, statusi kthehet
+(Paguar → Pjesërisht → Lëshuar/Pranuar), llogaria dhe ditari rregullohen vetvetiu nga drejtimi i pagesës, dhe të dy
+rreshtat tregojnë njëri-tjetrin (`storno` / `voidedBy`). Konfirmimi e emërton pagesën (numri, data, llogaria, shuma).
+Kështu një faturë e paguar gabimisht mund të stornohet dhe pastaj të anulohet — më parë mesazhi „storno pagesën para
+anulimit" kërkonte një veprim që nuk ekzistonte. Pagesat e arkës (kuponët e POS-it) nuk stornohen nga ERP-ja: ato
+rrjedhin nga kuponi dhe anulohen në arkë (`Historia › Anulo kuponin`).
+
+Cilësime › Faturat › **Trego referencën fiskale (ATK)** (çelësi historik `showQr`) shfaq ose fsheh numrin e
+transaksionit te koka dhe te fundi i faturës A4. QR-ja e verifikueshme e ATK-së ekziston vetëm te kuponi i arkës
+(nënshkruhet atje); fatura A4 mban referencën si tekst derisa fiskalizimi i serverit (Fiscal Agent) të japë një
+payload të nënshkruar edhe për faturat.
+
 ## Çfarë NUK bën ky prototip (me qëllim)
 - Nuk fiskalizon realisht: faturat vetëm hyjnë në radhë me status *Në pritje*; Fiscal Agent,
   adapterët Tremol/F-Link/ATK dhe nënshkrimi nuk janë pjesë e këtij skedari.
-- Nuk ka backend/databazë qendrore — ruajtja është në shfletues.
+- Pa server, ruajtja është vetëm në shfletues (një skedar, një kompjuter). Me `kontabo-backend` (shih
+  “Modaliteti me server”) të dhënat rrinë në PostgreSQL dhe ndahen mes përdoruesve e pajisjeve.
 - Ende pa ndërtuar: **HR** dhe **Prodhim** — shfaqen si faqe me shënimin “modul i pandërtuar”, pa asnjë simulim.
 - Printimi/PDF-ja kalojnë nga dialogu i shfletuesit (nuk ka gjenerim PDF në server); email-i nuk dërgohet nga
   aplikacioni (hapet programi i përdoruesit); këto janë pikat e para për backend-in.

@@ -125,6 +125,33 @@ eq([inv.paid, inv.status, db().payments[0].ref, c.accountBalance('bank1') - bank
 c.recordPayment({ kind: 'sale', ref: 'FSH-2026-00125', amount_c: 999999, account: 'cash1', date: '12.09.2026', note: '' });
 inv = db().invoices.find(r => r.no === 'FSH-2026-00125');
 eq([inv.paid, inv.status], [inv.total, 'Paguar'], 'recordPayment: overpayment is capped at the remaining amount → Paguar');
+// ── storno e pagesës (03.10.2026): pa të, një faturë e paguar gabimisht nuk anulohej dot kurrë („storno pagesën
+// para anulimit" e kërkonte një veprim që s'ekzistonte). Bëhet mbi FSH-2026-00123, që e lëmë si e gjetëm. ──
+{
+  const NO = 'FSH-2026-00123';
+  const inv0 = db().invoices.find(r => r.no === NO), cash0 = c.accountBalance('cash1'), nPays0 = db().payments.length;
+  const seeded = c.lastPayment(NO);   // the book seeds this invoice with one payment already
+  eq([inv0.paid, seeded.no, seeded.amount_c], [100000, 'PAG-2026-00042', 100000], 'lastPayment: the newest not-yet-reversed payment of the document');
+  c.recordPayment({ kind: 'sale', ref: NO, amount_c: 50000, account: 'cash1', date: '13.09.2026', note: 'provë' });
+  const pay = c.lastPayment(NO);
+  eq([db().invoices.find(r => r.no === NO).paid, pay.amount_c, pay.dir, c.accountBalance('cash1') - cash0], [inv0.paid + 50000, 50000, 'in', 50000], 'recordPayment (për provën e storno-s): 500.00 nga arka mbi atë që ishte paguar');
+  eq(c.voidPayment(pay.no), true, 'voidPayment: accepted');
+  const inv1 = db().invoices.find(r => r.no === NO), st = db().payments[0], orig = db().payments.find(p => p.no === pay.no);
+  eq([inv1.paid, inv1.status, inv1.status === inv0.status, db().payments.length - nPays0], [inv0.paid, inv0.status, true, 2],
+    'voidPayment: the document is unpaid again with its original status, and NOTHING is deleted — the reversal is a second row');
+  eq([st.dir, st.amount_c, st.account, st.kind, st.ref, st.storno, orig.voidedBy, st.note.startsWith('Storno i pagesës ' + pay.no)],
+    ['out', pay.amount_c, 'cash1', 'sale', NO, pay.no, st.no, true],
+    'voidPayment: the mirror payment is the opposite direction with the same amount/account and the two rows point at each other');
+  eq([c.accountBalance('cash1'), c.lastPayment(NO).no], [cash0, seeded.no], 'voidPayment: the account balance is back where it started and the next reversal would take the seeded payment');
+  eq([c.voidPayment(pay.no), c.voidPayment('PAG-nuk-ekziston')], [false, false], 'voidPayment: never twice, and an unknown number is refused');
+  const hist = inv1.history[inv1.history.length - 1];
+  eq([hist.a.includes('Storno i pagesës ' + pay.no), hist.a.includes(c.fmt(50000)), c.rem(inv1) === c.rem(inv0)], [true, true, true],
+    'voidPayment: the history names the reversal and the amount, and the document owes exactly what it owed before — reversing every payment brings paid to 0, which is the gate cancelInvoice checks');
+  const posPay = (db().payments || []).find(p => p.kind === 'pos');
+  if (posPay) eq(c.voidPayment(posPay.no), false, 'voidPayment: a till payment is not reversed here — the coupon is cancelled on the till');
+  else eq(true, true, '(no till payment in this book to try)');
+}
+
 const before = stock('BJ-015');
 c.cancelInvoice('FSH-2026-00121'); // unpaid, issued, fiscalisation had FAILED: stock back, failed queue entry withdrawn, no fiscal cancel
 eq([db().invoices.find(r => r.no === 'FSH-2026-00121').status, stock('BJ-015') - before, db().queue.find(q => q.ref === 'FSH-2026-00121').status, db().queue[0].kind !== 'Anulim'], ['Anuluar', 30, 'Anuluar', true], 'cancelInvoice (failed fiscal): reverses stock, withdraws the queued request');
@@ -416,6 +443,15 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
 // ── printing, barcodes, labels, e-mail templates ──
 { const h = c.docPrintHtml(invOf('FSH-2026-00125')); eq([h.includes('FSH-2026-00125'), h.includes('FATURË'), h.includes('Drini Market'), h.includes(c.fmtEu(277064)), h.includes('KS-TX-7F3A21')], [true, true, true, true, true], 'print html: invoice carries number, title, customer, total, fiscal ref'); }
 { const h = c.docPrintHtml(purOf('BL-2026-00033')); eq([h.includes('BLERJE'), h.includes('FURNITORI')], [true, true], 'print html: purchase document'); }
+// cilësimi „Trego referencën fiskale (ATK)" (çelësi historik `showQr`) e shfaq ose e fsheh bllokun fiskal te A4-ta;
+// QR-ja e verifikueshme ekziston vetëm te kuponi i arkës, prandaj fatura mban numrin e transaksionit si tekst
+{ const on = c.docPrintHtml(invOf('FSH-2026-00125'));
+  c.commit(d => ({ invoiceSettings: { ...d.invoiceSettings, showQr: false } }));
+  const off = c.docPrintHtml(invOf('FSH-2026-00125'));
+  c.commit(d => ({ invoiceSettings: { ...d.invoiceSettings, showQr: true } }));
+  const back = c.docPrintHtml(invOf('FSH-2026-00125'));
+  eq([on.includes('Nr. fiskal i transaksionit'), on.includes('KS-TX-7F3A21'), off.includes('KS-TX-7F3A21'), off.includes('Nr. fiskal i transaksionit'), back.includes('KS-TX-7F3A21')],
+    [true, true, false, false, true], 'A4: the invoice-settings toggle really controls the fiscal block (it used to promise a QR that was never drawn)'); }
 // ── telefoni: gjendja `narrow` dhe sirtari i menysë ──
 { const m = new C({}); m.state.db = m.seedDb(); m.state.session = { userId: 'u1', role: 'Pronar' };
   m.state.narrow = true; m.state.nav = false;

@@ -1506,6 +1506,7 @@ input,select{font-family:inherit}
       <button sc-camel-on-click="{{ emailInvoice }}" title="Hap programin e email-it me shabllonin nga Cilësime › Email" class="mf-btn" style="padding:7px 12px;font-size:12.5px">Email</button>
       <button sc-camel-on-click="{{ dupToast }}" class="mf-btn" style="padding:7px 12px;font-size:12.5px">Dupliko</button>
       <sc-if value="{{ invCanPay }}" hint-placeholder-val="{{ true }}"><button sc-camel-on-click="{{ payInvoice }}" class="mf-btn" data-k="ok" style="padding:7px 12px;font-size:12.5px">Regjistro pagesë</button></sc-if>
+      <sc-if value="{{ invCanUnpay }}" hint-placeholder-val="{{ false }}"><button sc-camel-on-click="{{ unpayInvoice }}" title="Storno pagesën e fundit — regjistrohet pagesa e kundërt, asgjë nuk fshihet" class="mf-btn" style="padding:7px 12px;font-size:12.5px">Storno pagesën</button></sc-if>
       <sc-if value="{{ invCanCredit }}" hint-placeholder-val="{{ false }}"><button sc-camel-on-click="{{ creditInvoice }}" title="Kthim malli / notë krediti" class="mf-btn" style="padding:7px 12px;font-size:12.5px;color:#6D28D9;border-color:rgba(124,58,237,.3)">Notë krediti</button></sc-if>
       <sc-if value="{{ invHasSrc }}" hint-placeholder-val="{{ false }}"><button sc-camel-on-click="{{ openInvSrc }}" class="mf-btn" style="padding:7px 12px;font-size:12.5px">{{ invSrcLabel }}</button></sc-if>
       <div style="flex:1"></div>
@@ -2177,6 +2178,33 @@ class Component extends DCLogic {
 
   /* ───────── operations that connect the modules ───────── */
   // a payment against a sales invoice (in) or a purchase (out): creates the payment, updates paid/status, hits the account
+  // STORNO i një pagese: pagesa nuk fshihet kurrë (ditari dhe llogaria duhet ta mbajnë gjurmën) — regjistrohet
+  // pagesa e kundërt me të njëjtën shumë dhe llogari, dokumenti i zbret `paid` dhe statusi kthehet. Pa këtë veprim
+  // një faturë e paguar gabimisht nuk anulohej dot kurrë, ndonëse mesazhi i anulimit e kërkonte („storno pagesën
+  // para anulimit"). Pagesat e arkës (kuponët e POS-it) nuk stornohen këtu: ato rrjedhin nga kuponi, dhe kuponi
+  // anulohet në arkë. Kthen true kur storno u krye.
+  voidPayment(no){
+    const db=this.view(), pay=(db.payments||[]).find(p=>p.no===no);
+    if(!pay){ this.toast('Pagesa nuk u gjet.','#B45309'); return false; }
+    if(pay.storno||pay.voidedBy){ this.toast('Pagesa '+no+' është stornuar tashmë.','#B45309'); return false; }
+    if(pay.kind!=='sale'&&pay.kind!=='purchase'){ this.toast(pay.kind==='pos'?'Pagesat e arkës vijnë nga kuponi — anulohet kuponi te POS-i.':'Kjo pagesë nuk stornohet nga këtu.','#B45309'); return false; }
+    const isSale=pay.kind==='sale';
+    this.commit(d=>{
+      const list=isSale?d.invoices:d.purchases, doc=list.find(x=>x.no===pay.ref); if(!doc) return {};
+      const st={no:this.nextNo('PAG')(1),date:this.today(),dir:isSale?'out':'in',kind:pay.kind,ref:pay.ref,party:pay.party,
+        amount_c:pay.amount_c,account:pay.account,method:pay.method,note:'Storno i pagesës '+pay.no+(pay.note?' · '+pay.note:''),user:this.who(),storno:pay.no};
+      const upd={...doc,paid:Math.max(0,doc.paid-pay.amount_c),history:[...doc.history,{t:this.stamp(),a:'Storno i pagesës '+pay.no+' · '+this.fmt(pay.amount_c)+' · '+st.no,u:this.who()}]};
+      upd.status=this.settleStatus(upd,upd.paid>0?'Pjesërisht':(isSale?'Lëshuar':'Pranuar'));
+      return {[isSale?'invoices':'purchases']:list.map(x=>x.no===pay.ref?upd:x),
+        payments:[st,...d.payments.map(p=>p.no===pay.no?{...p,voidedBy:st.no}:p)]};
+    },'Pagesa '+no+' u stornua · '+this.fmt(pay.amount_c),'#B45309');
+    return true;
+  }
+  // pagesa e fundit e dokumentit që ende nuk është stornuar — ajo që propozon butoni „Storno pagesën"
+  lastPayment(ref,db){
+    const d=db||this.view();
+    return (d.payments||[]).find(p=>p.ref===ref&&!p.storno&&!p.voidedBy&&(p.kind==='sale'||p.kind==='purchase'))||null;
+  }
   recordPayment({kind,ref,amount_c,account,date,note}){
     const isSale=kind==='sale';
     this.commit(db=>{
@@ -3440,7 +3468,11 @@ class Component extends DCLogic {
       +(money?'<div class="k">Monedha</div><div class="v">EUR</div>':'')
       +'</div></div></header>';
     const refs=[['Nr. i dokumentit',doc.no],['Referenca',doc.ref],['Arsyeja',doc.reason],
-      ['Nga → Në',doc.fromName?doc.fromName+' → '+doc.toName:''],['Nr. fiskal i transaksionit',doc.fiscalRef&&doc.fiscalRef!=='—'?doc.fiscalRef:'']]
+      ['Nga → Në',doc.fromName?doc.fromName+' → '+doc.toName:''],// `showQr`: çelësi ka mbetur nga një premtim i vjetër për një QR në faturë. QR-ja e verifikueshme e ATK-së
+      // ekziston VETËM te kuponi i arkës (nënshkruhet atje, pos/atk.py); fatura A4 mban numrin e transaksionit si
+      // tekst, dhe ky çelës e shfaq ose e fsheh atë bllok. Kur fiskalizimi i serverit (Fiscal Agent) të ekzistojë
+      // dhe fatura të ketë payload të nënshkruar, QR-ja hyn pikërisht këtu.
+      ['Nr. fiskal i transaksionit',db.invoiceSettings.showQr!==false&&doc.fiscalRef&&doc.fiscalRef!=='—'?doc.fiscalRef:'']]
       .filter(([,v])=>String(v||'').trim()).map(([k,v])=>'<div class="k">'+e(k)+'</div><div class="v">'+e(v)+'</div>').join('');
     const partyBlock=party
       ?'<div><div class="lab acc">'+(isPurchase?'FURNITORI':doc.kind==='Kthim shitje'?'KLIENTI':'FATURUAR PËR')+'</div>'
@@ -3513,7 +3545,7 @@ class Component extends DCLogic {
       +'<svg width="4.2mm" height="4.2mm" viewBox="0 0 96 96" fill="none" stroke-linecap="round" stroke-width="18" aria-hidden="true">'
       +'<path d="M26 16V80" stroke="#10243A"></path><path d="M50 44 76 18" stroke="#10243A"></path><path d="M50 52 76 82" stroke="#38BDF8"></path></svg>'
       +'<span><span class="wm">kontabo</span> <span class="ws">ERP</span></span></div>':'<div></div>';
-    const foot='<div class="foot">'+brand+'<div>'+(doc.fiscalRef&&doc.fiscalRef!=='—'?'Nr. fiskal i transaksionit: '+e(doc.fiscalRef):'')+'</div><div class="pg"></div></div>';
+    const foot='<div class="foot">'+brand+'<div>'+(db.invoiceSettings.showQr!==false&&doc.fiscalRef&&doc.fiscalRef!=='—'?'Nr. fiskal i transaksionit: '+e(doc.fiscalRef):'')+'</div><div class="pg"></div></div>';
     return '<article class="doc"><div class="head">'+head+band+sim+'</div>'+cont+table+tail+foot+'</article>';
   }
   // Kutia e parapamjes: dokumenti i plotë + sa i madh të shfaqet. Shkalla llogaritet nga gjerësia e dritares, që
@@ -3996,6 +4028,11 @@ class Component extends DCLogic {
       if(p.status==='Draft') actions.push({label:'Prano mallin',kind:'primary',go:()=>this.receivePurchase(p.no)});
       if(p.status!=='Draft'&&p.status!=='Anuluar'&&this.rem(p)>0) actions.push({label:'Regjistro pagesë',kind:'ok',go:()=>this.openForm('payment',{docKind:'purchase',ref:p.no,party:p.supplier,amount:this.fromC(this.rem(p))})});
       if(this.returnable('purchase',db).some(x=>x.doc.no===p.no)) actions.push({label:'Kthim te furnitori',kind:'',go:()=>this.openForm('return',{docKind:'purchase',ref:p.no})});
+      if(p.paid>0&&this.lastPayment(p.no,db)) actions.push({label:'Storno pagesën',kind:'',go:()=>{ const pay=this.lastPayment(p.no,db);
+        const acc=(this.ACCOUNTS.find(a=>a.id===pay.account)||{}).name||pay.account;
+        this.setState({confirm:{title:'Storno pagesën '+pay.no+'?',color:'#B45309',
+          body:'Pagesa e '+pay.date+' · '+acc+' · '+this.fmt(pay.amount_c)+' kthehet me një pagesë të kundërt (asgjë nuk fshihet). Blerja '+p.no+' mbetet e papaguar për '+this.fmt(pay.amount_c)+'.',
+          ok:()=>this.voidPayment(pay.no)}}); }});
       actions.push({label:'Printo',kind:'',go:()=>this.printDocs([p])});
       if(p.fromPo) actions.push({label:'Porosia '+p.fromPo,kind:'',go:()=>this.openDr('po',p.fromPo)});
       if(p.status!=='Anuluar'&&p.paid===0&&!(p.credited>0)) actions.push({label:'Anulo',kind:'danger',go:()=>this.setState({confirm:{title:'Anulo blerjen '+p.no+'?',body:p.status==='Draft'?'Drafti anulohet; nuk ka lëvizje stoku.':'Malli i pranuar zbritet nga stoku dhe detyrimi ndaj furnitorit hiqet.',ok:()=>this.cancelPurchase(p.no)}})});
@@ -4299,7 +4336,7 @@ class Component extends DCLogic {
       case 'Faturat': {
         P.sub='Parazgjedhjet e dokumenteve të shitjes. Përdoren te “Fatura e re”, faturimi masiv dhe printimi A4.';
         P.cards=[card('Numërimi',{rows:[{k:'Fatura e radhës',v:nextNos.FSH,mono:true},{k:'Profatura e radhës',v:nextNos.PRO,mono:true},{k:'Nota e kreditit e radhës',v:nextNos.KR,mono:true},{k:'Oferta / porosia e radhës',v:nextNos.OF+' · '+nextNos.PS,mono:true},{k:'Blerja / porosia e blerjes',v:nextNos.BL+' · '+nextNos.PB,mono:true},{k:'Kthimi te furnitori',v:nextNos.KD,mono:true},{k:'Pagesa / shpenzimi i radhës',v:nextNos.PAG+' · '+nextNos.SHP,mono:true},{k:'Transferimi i radhës',v:nextNos.TR,mono:true}],note:'Numrat vazhdojnë pa boshllëqe brenda vitit; ndryshimi manual nuk lejohet.'}),
-          card('Parazgjedhjet',{fields:[is.txt('dueDays','Afati i pagesës (ditë)',{half:true,decimal:true,err:this.toQ(db.invoiceSettings.dueDays)===null}),is.txt('paymentText','Mënyra e pagesës në faturë',{half:true}),is.seg('template','Shablloni A4',[['Standard','Standard'],['Modern','Modern'],['Minimal','Minimal']],{half:true}),is.seg('lang','Gjuha e dokumentit',[['Shqip','Shqip'],['English','English'],['Dygjuhësh','Dygjuhësh']],{half:true})],toggles:[is.tog('showQr','Trego QR-në fiskale','Vetëm për faturat e fiskalizuara elektronikisht'),is.tog('showBank','Trego bankën & IBAN-in','Nga Kompania › Të dhënat e kompanisë')]}),
+          card('Parazgjedhjet',{fields:[is.txt('dueDays','Afati i pagesës (ditë)',{half:true,decimal:true,err:this.toQ(db.invoiceSettings.dueDays)===null}),is.txt('paymentText','Mënyra e pagesës në faturë',{half:true}),is.seg('template','Shablloni A4',[['Standard','Standard'],['Modern','Modern'],['Minimal','Minimal']],{half:true}),is.seg('lang','Gjuha e dokumentit',[['Shqip','Shqip'],['English','English'],['Dygjuhësh','Dygjuhësh']],{half:true})],toggles:[is.tog('showQr','Trego referencën fiskale (ATK)','Numri i transaksionit te koka e faturës A4 — vetëm për faturat e fiskalizuara'),is.tog('showBank','Trego bankën & IBAN-in','Nga Kompania › Të dhënat e kompanisë')]}),
           card('Pamja e faturës A4',{sub:'Formati “Precision Flow”: A4 me margjina 15/20 mm, kolonat Nr. · Përshkrimi · Njësia · Sasia · Çmimi · TVSH · Shuma, përmbledhja djathtas dhe faqezimi me “Faqe X nga Y”.',fields:[is.seg('logoStyle','Logoja në kokë',[['monogram','Monogram'],['wordmark','Emri i kompanisë'],['none','Pa logo']],{half:true}),is.seg('accent','Ngjyra e theksit',[['#2563EB','Blu'],['#10243A','Navy'],['#0F766E','Jeshile'],['#7C3AED','Vjollcë']],{half:true}),is.txt('swift','SWIFT/BIC (opsional)',{half:true,ph:'p.sh. PRCBXKPR'}),is.area('paymentTerms','Kushtet e pagesës',{hint:'Shfaqet nën të dhënat bankare; bosh = nuk shtypet.'})],toggles:[is.tog('showBarcode','Barkodi i numrit të faturës','Code 128 nën numrin, djathtas lart'),is.tog('showDiscountCol','Kolona e zbritjes','Shfaqet gjithsesi kur ndonjë rresht ka zbritje'),is.tog('showSignature','Vendet e nënshkrimit','Për kompaninë / Për klientin'),is.tog('showBranding','“Gjeneruar me Kontabo ERP” në fund','Logoja e platformës në footer-in e çdo faqeje')],note:'Varianti “Minimal” te Shablloni A4 printon me pak bojë: sfondet bëhen të bardha dhe tabela e përmbledhja marrin vijë navy.'}),
           card('Teksti në fund të faturës',{wide:true,fields:[is.area('footer','Shënimi i fundit')],note:'Shfaqet te çdo faturë A4 nën totalin.'})];
         break; }
@@ -5195,7 +5232,7 @@ class Component extends DCLogic {
     const all=db.invoices, retSale=(db.returns||[]).filter(r=>r.kind==='Kthim shitje');
     const canCreditSet=new Set(s.db?this.returnable('sale',db).map(x=>x.doc.no):[]);
     const decorate=r=>{ const status=this.docStatus(r), remC=this.rem(r), credited=r.credited||0, vatOn=this.vatOn()||r.vat>0; return {...r,status,st:this.st(status),fs:this.ST[r.fiscal]||this.ST['—'],totalFmt:this.fmt(r.total),vatFmt:this.fmt(r.vat),vatOn,subFmt:this.fmt(r.sub),paidFmt:this.fmt(r.paid),dueFmt:this.fmt(remC),credited,creditedFmt:this.fmt(credited),hasCredit:credited>0,hasDisc:(r.discount||0)>0,discFmt:'−'+this.fmt(r.discount||0),grossFmt:this.fmt(r.total+(r.discount||0)),
-      isPro:r.kind==='Profaturë',docTitle:r.kind==='Profaturë'?'Profaturë':'Faturë',hasNote:!!r.note,note:r.note||'',canPay:r.kind!=='Profaturë'&&r.status!=='Draft'&&r.status!=='Anuluar'&&remC>0,canCancel:r.status!=='Anuluar'&&r.paid===0&&credited===0,
+      isPro:r.kind==='Profaturë',docTitle:r.kind==='Profaturë'?'Profaturë':'Faturë',hasNote:!!r.note,note:r.note||'',canPay:r.kind!=='Profaturë'&&r.status!=='Draft'&&r.status!=='Anuluar'&&remC>0,canCancel:r.status!=='Anuluar'&&r.paid===0&&credited===0,canUnpay:r.paid>0&&!!this.lastPayment(r.no,db),
       canIssue:r.status==='Draft'&&r.kind==='Faturë',canConvert:r.kind==='Profaturë'&&r.status!=='Anuluar'&&!r.invoiceNo,canCredit:canCreditSet.has(r.no),hasCredits:retSale.some(x=>x.ref===r.no),
       hasSrc:!!(r.fromOrder||r.fromQuote||r.fromPos||r.fromProforma||r.invoiceNo),srcLabel:r.fromPos?'Kuponi '+r.posNo:r.fromOrder?'Porosia '+r.fromOrder:r.fromQuote?'Oferta '+r.fromQuote:r.fromProforma?'Profatura '+r.fromProforma:r.invoiceNo?'Fatura '+r.invoiceNo:'',
       openSrc:()=>{ if(r.fromPos){ if(this.ledgerLive(this.state.db)&&!(this.state.db.posReceipts||[]).some(x=>x.id===r.fromPos)) this.openPosReceipt(r.fromPos); else this.openDr('pos',r.fromPos); } else if(r.fromOrder) this.openDr('order',r.fromOrder); else if(r.fromQuote) this.openDr('quote',r.fromQuote); else if(r.fromProforma) this.setState({drawer:r.fromProforma}); else if(r.invoiceNo) this.setState({drawer:r.invoiceNo}); },
@@ -5506,6 +5543,14 @@ class Component extends DCLogic {
       convertProforma:()=>{ if(!invRaw||!inv.canConvert) return; this.openForm('invoice',{customer:invRaw.customer,customerQ:invRaw.customer,note:invRaw.note||'',lines:this.linesFrom(invRaw.items),fromProforma:invRaw.no}); },
       openInvSrc:()=>inv.openSrc&&inv.openSrc(),invCredits,invHasCredits:invCredits.length>0,
       cancelInvoiceConfirm:()=>{ if(!invRaw) return; if(!inv.canCancel){ this.toast(invRaw.status==='Anuluar'?'Fatura është e anuluar.':invRaw.credited>0?'Fatura ka notë krediti — anulohet nota, jo fatura.':'Fatura ka pagesa — storno pagesën para anulimit.','#B45309'); return; } this.setState({confirm:{title:'Anulo faturën '+invRaw.no+'?',body:(invRaw.status==='Draft'||invRaw.kind==='Profaturë'?'Dokumenti shënohet i anuluar; nuk ka lëvizje stoku.':'Artikujt kthehen në stok, kërkesa ndaj klientit hiqet dhe një transaksion anulimi dërgohet në fiskalizim.')+' Veprimi regjistrohet në audit log.',ok:()=>this.cancelInvoice(invRaw.no)}}); },
+      invCanUnpay:!!inv.canUnpay,
+      // storno i pagesës së fundit: konfirmimi e emërton pagesën (numri, data, llogaria, shuma), që të mos stornohet kurrë gabimisht
+      unpayInvoice:()=>{ if(!invRaw) return; const p=this.lastPayment(invRaw.no);
+        if(!p){ this.toast('Fatura nuk ka pagesë të stornueshme.','#B45309'); return; }
+        const acc=(this.ACCOUNTS.find(a=>a.id===p.account)||{}).name||p.account;
+        this.setState({confirm:{title:'Storno pagesën '+p.no+'?',color:'#B45309',
+          body:'Pagesa e '+p.date+' · '+acc+' · '+this.fmt(p.amount_c)+' kthehet me një pagesë të kundërt (asgjë nuk fshihet). Fatura '+invRaw.no+' mbetet e papaguar për '+this.fmt(p.amount_c)+' dhe mund të anulohet.',
+          ok:()=>this.voidPayment(p.no)}}); },
       invCanPay:inv.canPay,invCanCancel:inv.canCancel,invCanIssue:!!inv.canIssue,invCanConvert:!!inv.canConvert,invCanCredit:!!inv.canCredit,invHasSrc:!!inv.hasSrc,invSrcLabel:inv.srcLabel||'',
       hasConfirm:!!s.confirm,confirmTitle:s.confirm?.title,confirmBody:s.confirm?.body,confirmColor:s.confirm?.color||'#DC2626',closeConfirm:()=>this.setState({confirm:null}),doConfirm:()=>{const c=s.confirm;this.setState({confirm:null});c&&c.ok();},
       canEmptyBooks:this.apiAuthed()&&!!(s.session&&s.session.role==='Pronar'),emptyBooksConfirm:()=>this.setState({confirm:{title:'Zbraz librat e kompanisë në server?',body:'Fshihen të gjitha faturat, blerjet, pagesat, produktet, klientët, kuponët POS dhe cilësimet e librit për '+db.company.name+' — përdoruesit, rolet, terminalet dhe konfigurimi fiskal mbeten. Veprimi nuk kthehet mbrapsht.',color:'#B91C1C',ok:()=>this.resetDemo()}}),
