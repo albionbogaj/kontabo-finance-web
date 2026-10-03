@@ -2870,7 +2870,7 @@ class Component extends DCLogic {
   POS_LIST_STATUS = {Shitje:[['','Statusi: të gjitha shitjet','final,returned,void'],['final','Finalizuar','final'],['returned','Kthyer (me kthim)','returned'],['void','Anuluar','void']],Kthime:[['','Statusi: kthime + anulime','return,cancel'],['return','Kthime','return'],['cancel','Anulime (ATK CANCEL)','cancel']]};
   POS_LIST_RANGES = [['sot','Sot'],['7','7 ditë'],['muaj','Ky muaj'],['31','31 ditë']];
   posF(){ return {range:'31',from:'',to:'',terminal:'',status:'',q:'',...(this.state.posF||{})}; }
-  posFilter(patch){ this.setState(s=>({posF:{range:'31',from:'',to:'',terminal:'',status:'',q:'',...(s.posF||{}),...patch}})); }
+  posFilter(patch){ this.setState(s=>({posF:{range:'31',from:'',to:'',terminal:'',status:'',q:'',...(s.posF||{}),...patch},posPages:null})); } // a changed filter starts again at the first page (never the pages of an earlier visit to the same filter)
   posRange(F){ const t=this.today(); switch(F.range){ case 'sot': return {from:t,to:t}; case '7': return {from:this.addDays(t,-6),to:t}; case 'muaj': return {from:t.slice(0,8)+'01',to:t}; case 'custom': return {from:F.from||'',to:F.to||''}; default: return {from:this.addDays(t,-30),to:t}; } }
   // the list the page shows now → {base (what), pages (how many), key, params} or null (not a list page / not ledger mode)
   posListWant(){ const s=this.state, b=s.db; if(!b||s.admin||!s.session||!this.ledgerLive(b)) return null; const tid=this.apiCfg().tenantId;

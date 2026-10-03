@@ -1126,6 +1126,7 @@ apiBlock.then(async () => {
     if (p === '/pos/ledger/activate') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.activates.push(body); if (T.onActivate) T.onActivate(body); if (body.done) { T.led.mode = 'on'; T.led.notReady = T.notReadyAfterDone; } return json(200, { updated: (body.receipts || []).filter(r => T.known.has(r.id)).length, mode: T.led.mode }); }
     if (p === '/pos/ledger/reset') { if (u.role !== 'Pronar') return json(403, { error: 'forbidden', message: 'Vetëm pronari' }); T.resets++; T.led.epoch += '-r' + T.resets; for (const [id, r] of [...T.led.rows]) if (!r.removed) tomb(T, id); for (const s of [...T.led.shifts.values()]) if (!s.removed) pubShift(T, { ...s, removed: true }); return json(200, { epoch: T.led.epoch, resetSeq: 99 }); }
     // receipts one by one (kontabo-backend GET /pos/receipts, /pos/receipts/{id}): any member; filters, newest first, limit/offset, total
+    if (S.rcHold && /^\/pos\/receipts(\/|$)/.test(p) && m === 'GET') { const hold = S.rcHold(T.id, path); if (hold) await hold; } // a test holds one answer back (late / out-of-order answers)
     if (p === '/pos/receipts' && m === 'GET') { if (T.rcDeny) return json(403, { error: 'forbidden', message: 'Nuk keni leje' });
       if (+q.limit > 200) return json(400, { error: 'validation_error', message: 'limit' }); const to = q.to || '2026-09-20', from = q.from || c.addDays(to, -30), sts = (q.status || '').split(',').filter(Boolean), qq = (q.q || '').toLowerCase();
       const L = (T.rc || []).filter(r => r.day >= from && r.day <= to && (!q.terminal || r.terminalKey === q.terminal) && (!sts.length || sts.includes(r.status)) && (q.fiscal !== 'open' || !['fiscalized', 'fiscalized_sim', 'cancelled'].includes(r.fiscalStatus)) && (!qq || (r.no + ' ' + r.operator).toLowerCase().includes(qq)))
@@ -1340,4 +1341,157 @@ apiBlock.then(async () => {
 
   eq(S.bad, [], 'mock server: no commit ever carried `_srv` rows or posSync runtime fields');
   eq(S.noHdr, [], 'mock server: every request carried X-Kontabo-Client: 2');
-}).catch(e => { console.log('FAIL POS ledger tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+  return { S, users, mkT, pub, pubShift, calls, json, mk, enter, done, wait, until, store, book, TERM, line, row, SHIFT, legacyBook }; // for the E-L2 block below
+}).catch(e => { console.log('FAIL POS ledger tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
+// ══ Faza B · E-L2 (API mode, POS ledger): the server's receipts one by one (GET /pos/receipts[/{id}]) on P:Shitje / P:Kthime / the fiscal monitor
+// and in the receipt drawer, the day-summary drawer, the pages derived from the ledger rows, the A4 invoice from a server receipt, the server's
+// API keys and the terminal token rotation; ensurePins stable; feature-off / local mode as before. Runs after the ledger block (same mock server). ══
+  .then(async (H) => { if (!H) { console.log('FAIL E-L2 tests skipped: the POS ledger block did not finish'); process.exitCode = 1; return; }
+    const { S, users, mkT, pub, pubShift, calls, mk, enter, done, wait, until, store, book, TERM, line, row, SHIFT, legacyBook } = H;
+    const defer = () => { let open; const p = new Promise(r => (open = r)); return { p, open }; };
+    // the runtime calls componentDidUpdate after every state change (batched, after the render): emulated with a microtask per burst
+    const mkR = () => { const x = mk(), set = x.setState.bind(x); let q = false; x.setState = u => { set(u); if (!q) { q = true; Promise.resolve().then(() => { q = false; x.componentDidUpdate(); }); } }; return x; };
+    const idle = x => { const s = x.state; return !x._plT && !(s.posList && s.posList.busy) && !(s.posRc && s.posRc.busy) && !(s.apiKeysSrv && s.apiKeysSrv.busy); };
+    const settle = async x => { await wait(); await until(() => idle(x)); await wait(); };
+    const rcOf = (tid, k0) => S.calls.slice(k0).filter(x => x.tid === tid && /^\/pos\/receipts(\/|$)/.test(x.p) && x.p !== '/pos/receipts/known').map(x => x.m + ' ' + x.path);
+    const cellsT = r => r.cells.map(c => c.t), lab = list => (list || []).map(a => a.label);
+    // ── receipts as kontabo-backend's receipt_items() returns them: the till's payload + the frozen booking (lines / totals / payments / moves)
+    const TERM2 = { key: 'k2b3c4d5-0000-4000-8000-000000000002', id: 'k2b3c4d5-0000-4000-8000-000000000002', posId: 'BAR-2', name: 'Arka 2', branch: 'Qendra', warehouse: 'W1' };
+    const pli = (sku, name, unit, qty_q, tot_c, o = {}) => { const vat = Math.sign(tot_c) * Math.round(Math.abs(tot_c) * 18 / 118); return { sku, name, unit, qty_q, unit_t: Math.round(Math.abs(tot_c - vat) * 1e6 / Math.abs(qty_q)), rate: 18, tax: 'E', disc_bp: o.disc_bp || 0, ...(o.disc_c ? { disc_c: o.disc_c } : {}), ...(o.gross_t ? { gross_t: o.gross_t } : {}), sub_c: tot_c - vat, vat_c: vat, tot_c }; };
+    const pay = (id, no, status, items, o = {}) => { const tot = k => items.reduce((a, i) => a + i[k], 0), t = o.term || TERM;
+      return { id, no, ts: (o.day || '2026-09-20') + ' ' + (o.time || '10:00:00'), shift_id: o.shift || 'SH-9', pos_id: t.posId, pos_name: t.name, branch: 'Qendra', operator: o.operator || 'Ana', customer: o.customer || '', customer_nui: o.nui || '', status, items,
+        sub_c: o.total != null ? o.total - Math.round(o.total * 18 / 118) : tot('sub_c'), vat_c: o.total != null ? Math.round(o.total * 18 / 118) : tot('vat_c'), total_c: o.total != null ? o.total : tot('tot_c'), cash_c: o.cash != null ? o.cash : (o.total != null ? o.total : tot('tot_c')), card_c: o.card || 0, change_c: o.change || 0, discount_total_c: o.disc || 0,
+        fiscal_status: o.fiscal || 'fiscalized', fiscal_ref: o.ref || '', fiscal_error: o.err || '', fiscal_mode: 'ATK_ELECTRONIC', fiscal_version: 3, ...(o.orig ? { orig_id: o.orig[0], orig_no: o.orig[1] } : {}), ...(o.extra || {}) }; };
+    const fz = (p, o = {}) => { const cancel = p.status === 'cancel', sg = v => (cancel ? -Math.abs(v) : v), M = o.mirror;
+      const lines = M ? M.lines.map(l => ({ ...l, qty_q: -l.qty_q, sub_c: -l.sub_c, vat_c: -l.vat_c, tot_c: -l.tot_c, disc_c: -l.disc_c }))
+        : p.items.map(i => ({ sku: i.sku, name: i.name, unit: i.unit, tax: i.tax, rate: i.rate, qty_q: sg(i.qty_q), unit_t: i.unit_t, sub_c: sg(i.sub_c), vat_c: sg(i.vat_c), tot_c: sg(i.tot_c), disc_c: Math.abs(i.disc_c || 0) * (cancel ? -1 : 1), cost_c: 30, recipe: null }));
+      const totals = M ? Object.fromEntries(Object.entries(M.totals).map(([k, v]) => [k, k === 'change_c' ? 0 : -v])) : { sub_c: sg(p.sub_c), vat_c: sg(p.vat_c), total_c: sg(p.total_c), cash_c: sg(p.cash_c), card_c: sg(p.card_c), change_c: cancel ? 0 : p.change_c, discount_c: Math.abs(p.discount_total_c) * (cancel ? -1 : 1) };
+      const payments = M ? M.payments.map(x => ({ ...x, amount_c: -x.amount_c })) : [...(totals.cash_c ? [{ account: o.cashAcc || 'cash1', kind: 'cash', amount_c: totals.cash_c }] : []), ...(totals.card_c ? [{ account: 'bank1', kind: 'card', amount_c: totals.card_c }] : [])];
+      if (o.noVat) { for (const l of lines) Object.assign(l, { src: { tax: l.tax, rate: l.rate, sub_c: l.sub_c, vat_c: l.vat_c }, tax: 'A', rate: 0, sub_c: l.tot_c, vat_c: 0 }); totals.sub_c = totals.total_c; totals.vat_c = 0; }
+      return { lines, totals, payments, moves: lines.map(l => ({ sku: l.sku, wh: 'W2', qm: -Math.round(l.qty_q / 10), cost_c: l.cost_c, via: null })) }; };
+    const LBL = { return: 'Kthim', returned: 'Kthyer', void: 'Anuluar', cancel: 'Anulim' };
+    const rcv = (p, o = {}) => { const t = o.term || TERM, frozen = o.frozen === null ? null : (o.frozen || fz(p, o));
+      return { id: p.id, no: p.no, ts: p.ts, day: p.ts.slice(0, 10), terminalKey: t.key, terminal: { key: t.key, id: t.id, posId: t.posId, name: t.name, branch: t.branch, warehouse: t.warehouse }, seq: o.seq || 1, receivedAt: p.ts.slice(0, 10) + 'T' + p.ts.slice(11) + 'Z',
+        status: p.status, statusLabel: LBL[p.status] || 'Finalizuar', fiscalStatus: p.fiscal_status, fiscalRef: p.fiscal_ref || null, fiscalError: p.fiscal_error || null, customer: p.customer, nui: p.customer_nui, operator: p.operator, origId: p.orig_id || null, origNo: p.orig_no || null,
+        ledgerState: frozen ? 'ok' : 'new', ledgerError: null, frozen, payload: p, relations: { orig: p.orig_id ? { id: p.orig_id, no: p.orig_no } : null, returns: o.returns || [], cancel: o.cancel || null } }; };
+    const I = {};
+    I.s1 = rcv(pay('s1', 'BAR-1/0010', 'returned', [pli('KAFE', 'Kafe', 'copë', 20000, 300)], { time: '09:00:00', ref: 'TX-10' }), { returns: [{ id: 'r1', no: 'BAR-1/0011' }] });
+    I.r1 = rcv(pay('r1', 'BAR-1/0011', 'return', [pli('KAFE', 'Kafe', 'copë', -10000, -150)], { time: '09:30:00', ref: 'TX-11', orig: ['s1', 'BAR-1/0010'] }));
+    I.s2 = rcv(pay('s2', 'BAR-1/0012', 'final', [pli('KAFE', 'Kafe', 'copë', 20000, 300, { gross_t: 15000 }), pli('UJE', 'Ujë', 'shishe', 30000, 300, { disc_bp: 1000, disc_c: 33 })], { time: '11:00:00', operator: 'Besa', customer: 'Drini Market SH.P.K.', nui: '811234500', cash: 200, card: 400, change: 50, fiscal: 'pending' }), { cashAcc: 'cash2' });
+    I.s3 = rcv(pay('s3', 'BAR-1/0013', 'void', [pli('UJE', 'Ujë', 'shishe', 10000, 100)], { time: '12:00:00', ref: 'TX-13' }), { cancel: { id: 'c3', no: 'BAR-1/0014' } });
+    I.c3 = rcv(pay('c3', 'BAR-1/0014', 'cancel', [], { time: '12:05:00', ref: 'TX-14', total: 0, orig: ['s3', 'BAR-1/0013'], extra: { cancel_reason: 'Gabim në porosi' } }), { mirror: I.s3.frozen });
+    I.s4 = rcv(pay('s4', 'BAR-1/0015', 'final', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { time: '13:00:00', fiscal: 'pending' }), { frozen: null });
+    I.s5 = rcv(pay('s5', 'BAR-1/0016', 'final', [pli('UJE', 'Ujë', 'shishe', 10000, 100)], { time: '14:00:00' }), { noVat: true });
+    I.s6 = rcv(pay('s6', 'BAR-2/0001', 'final', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { term: TERM2, time: '18:00:00', operator: 'Besa', fiscal: 'failed', err: 'ATK: timeout' }), { term: TERM2 });
+    I.s7 = rcv(pay('s7', 'BAR-1/0017', 'final', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { time: '15:00:00', extra: { source: 'block', block_no: '0042', block_code: 'BT-7', block_ts: '2026-09-20 14:50' } }));
+    const fill = Array.from({ length: 55 }, (_, k) => rcv(pay('f' + k, 'BAR-2/' + (1000 + k), 'final', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { term: TERM2, day: '2026-09-05', time: '10:' + String(k).padStart(2, '0') + ':00', operator: 'Gent', shift: 'SH-2' }), { term: TERM2, seq: k + 10 }));
+    const old = rcv(pay('o1', 'BAR-1/0001', 'final', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { day: '2026-08-01', time: '09:00:00' }));
+    // the ledger rows these receipts make (days per terminal; the buyer-NUI receipt s2 alone) and two shifts with their totals
+    const L1 = row('D:k1a2b3:2026-09-20', 'day', '2026-09-20', { n: 6, counts: { receipts: 4, returns: 1, cancels: 1, voided: 1 }, items: [line('KAFE', 'Kafe', 'copë', 20000, 300, 30), line('UJE', 'Ujë', 'shishe', 10000, 100, 30)], moves: [['KAFE', -2000, 30, 'sale'], ['UJE', -1000, 30, 'sale']], pays: [['cash1', 'cash', 400]], fiscal: { fiscalized: 6 }, extra: { operators: { Ana: { count: 6, total_c: 400, returns_c: 150, cancels_c: 100 } } } });
+    const L2 = row('R:s2', 'receipt', '2026-09-20', { no: 'BAR-1/0012', time: '11:00:00', items: [line('KAFE', 'Kafe', 'copë', 20000, 300, 30), line('UJE', 'Ujë', 'shishe', 30000, 300, 30)], moves: [['KAFE', -2000, 30, 'sale'], ['UJE', -3000, 30, 'sale']], pays: [['cash2', 'cash', 200], ['bank1', 'card', 400]], fiscal: { pending: 1 }, fiscalOpen: [{ id: 's2', no: 'BAR-1/0012', ts: '2026-09-20 11:00:00', status: 'pending', error: null }], extra: { customer: 'Drini Market SH.P.K.', nui: '811234500', operator: 'Besa', origId: null, origNo: null, fiscalRef: '', operators: { Besa: { count: 1, total_c: 600, returns_c: 0, cancels_c: 0 } } } });
+    const L3 = row('D:k2b3c4:2026-09-20', 'day', '2026-09-20', { no: 'POS-BAR-2-20260920-k2b3c4', time: '18:00:00', items: [line('KAFE', 'Kafe', 'copë', 10000, 150, 30)], moves: [['KAFE', -1000, 30, 'sale']], pays: [['cash1', 'cash', 150]], fiscal: { failed: 1 }, fiscalOpen: [{ id: 's6', no: 'BAR-2/0001', ts: '2026-09-20 18:00:00', status: 'failed', error: 'ATK: timeout' }], extra: { terminal: TERM2, firstTs: '2026-09-20 18:00:00', operators: { Besa: { count: 1, total_c: 150, returns_c: 0, cancels_c: 0 } } } });
+    const L4 = row('D:k2b3c4:2026-09-05', 'day', '2026-09-05', { n: 55, no: 'POS-BAR-2-20260905-k2b3c4', items: [line('KAFE', 'Kafe', 'copë', 550000, 8250, 30)], moves: [['KAFE', -55000, 30, 'sale']], pays: [['cash1', 'cash', 8250]], fiscal: { fiscalized: 54, failed: 1 }, fiscalOpen: [{ id: 'f3', no: 'BAR-2/1003', ts: '2026-09-05 10:03:00', status: 'failed', error: 'ATK: 500' }], extra: { terminal: TERM2, operators: { Gent: { count: 55, total_c: 8250, returns_c: 0, cancels_c: 0 } } } });
+    const L5 = row('D:k1a2b3:2026-08-15', 'day', '2026-08-15', { n: 2, items: [line('KAFE', 'Kafe', 'copë', 20000, 300, 30)], moves: [['KAFE', -2000, 30, 'sale']], pays: [['cash1', 'cash', 300]], extra: { operators: { Ana: { count: 2, total_c: 300, returns_c: 0, cancels_c: 0 } } } });
+    const T9 = mkT('t9', 'Kuponat SH.P.K.', book(), 'on');
+    T9.terms = [{ id: TERM.id, name: 'Arka Bar', branch: 'Qendra', posId: 'BAR-1', warehouse: 'W2', status: 'Aktiv', lastSeen: '' }, { id: TERM2.id, name: 'Arka 2', branch: 'Qendra', posId: 'BAR-2', warehouse: 'W1', status: 'Aktiv', lastSeen: '' }];
+    T9.rc = [I.s1, I.r1, I.s2, I.s3, I.c3, I.s4, I.s5, I.s6, I.s7, ...fill, old];
+    for (const r of [L1, L2, L3, L4, L5]) pub(T9, JSON.parse(JSON.stringify(r)));
+    pubShift(T9, { ...SHIFT, id: 'S:k1a2b3:SH-9', shiftId: 'SH-9', opened_at: '2026-09-20 08:00:00', totals: { count: 7, total_c: 1000, cash_c: 600, card_c: 400, returns_c: 150, cancels_c: 100 } });
+    pubShift(T9, { ...SHIFT, id: 'S:k2b3c4:SH-2', shiftId: 'SH-2', terminal: TERM2, status: 'closed', opened_at: '2026-09-05 08:00:00', closed_at: '2026-09-05 20:00:00', opening_c: 0, expected_c: 8250, counted_c: 8200, diff_c: -50, operator: 'Gent', totals: { count: 55, total_c: 8250, cash_c: 8250, card_c: 0, returns_c: 0, cancels_c: 0 } });
+
+    // ── posDocFromPayload (pure): the server's frozen lines / totals / payments win; an unprocessed receipt is read like importPosSales reads it
+    { const c9 = new C({}); c9.state.db = book(); const vat0 = { ...book(), taxSettings: { ...book().taxSettings, vatRegistered: false } };
+      const d2 = c9.posDocFromPayload(I.s2);
+      eq([d2.id, d2.kind, d2.no, d2.pos, d2.posName, d2.branch, d2.termKey, d2.operator, d2.date, d2.time, d2.isoDate, d2.customer, d2.nui, d2.status, d2.fiscal, d2.fiscalStatus, d2.fiscalRef, d2.sub, d2.vat, d2.total, d2.cash_c, d2.card_c, d2.change_c, d2.discount, d2.frozen, d2.ledgerState, d2.payments, d2.shift, d2.returns, d2.origId],
+        ['s2', 'Kupon POS', 'BAR-1/0012', 'BAR-1', 'Arka Bar', 'Qendra', TERM.key, 'Besa', '20.09.2026', '11:00', '2026-09-20', 'Drini Market SH.P.K.', '811234500', 'Finalizuar', 'Në pritje', 'pending', '—', 508, 92, 600, 200, 400, 50, 0, true, 'ok', [{ account: 'cash2', kind: 'cash', amount_c: 200 }, { account: 'bank1', kind: 'card', amount_c: 400 }], 'SH-9', [], null],
+        'posDocFromPayload: a frozen sale — terminal snapshot, operator, buyer + NUI, fiscal label, totals and the frozen payments (their accounts)');
+      eq(d2.items.map(i => [i.sku, i.qty, i.qty_q, i.unit_t, i.unit_c, i.gross_t, i.disc, i.disc_c, i.tax, i.rate, i.sub, i.vatc, i.tot]), [['KAFE', 2, 20000, 12700, 127, 15000, 0, undefined, 'E', 18, 254, 46, 300], ['UJE', 3, 30000, 8467, 85, undefined, 10, 33, 'E', 18, 254, 46, 300]], 'posDocFromPayload: frozen lines → ERP items (4-decimal qty / unit, gross_t and disc % from the till\'s own line)');
+      const dr1 = c9.posDocFromPayload(I.r1);
+      eq([dr1.kind, dr1.status, dr1.total, dr1.sub, dr1.vat, dr1.cash_c, dr1.origId, dr1.origNo, dr1.items.map(i => [i.qty, i.qty_q, i.tot])], ['Kupon POS', 'Kthim', -150, -127, -23, -150, 's1', 'BAR-1/0010', [[-1, -10000, -150]]], 'posDocFromPayload: a return — negative lines and totals, the original\'s id / no');
+      const dc3 = c9.posDocFromPayload(I.c3);
+      eq([dc3.kind, dc3.status, dc3.total, dc3.sub, dc3.vat, dc3.cash_c, dc3.card_c, dc3.change_c, dc3.cancelReason, dc3.origId, dc3.origNo, dc3.items.map(i => [i.sku, i.qty, i.tot, i.disc]), dc3.payments], ['Anulim kuponi POS', 'Anulim', -100, -85, -15, -100, 0, 0, 'Gabim në porosi', 's3', 'BAR-1/0013', [['UJE', -1, -100, 0]], [{ account: 'cash1', kind: 'cash', amount_c: -100 }]], 'posDocFromPayload: a cancel WITHOUT lines of its own — the server\'s mirrored booking of the original (payload totals 0 ignored)');
+      const dw = c9.posDocFromPayload({ ...I.c3, frozen: null, ledgerState: 'wait_orig', payload: { ...I.c3.payload, total_c: 100, sub_c: 85, vat_c: 15, cash_c: 100 } });
+      eq([dw.status, dw.items, dw.total, dw.sub, dw.vat, dw.cash_c, dw.payments, dw.frozen], ['Anulim', [], -100, -85, -15, -100, null, false], 'posDocFromPayload: a cancel the server could not book yet (no frozen) — its own amounts, negative');
+      const d3 = c9.posDocFromPayload(I.s3), d3b = c9.posDocFromPayload({ ...I.s3, statusLabel: undefined }), dc3b = c9.posDocFromPayload({ ...I.c3, statusLabel: undefined });
+      eq([d3.status, d3.cancelId, d3.cancelNo, d3b.status, dc3b.status, d3.total], ['Anuluar', 'c3', 'BAR-1/0014', 'Anuluar', 'Anulim', 100], 'posDocFromPayload: a voided original (cancel relation); without statusLabel the till\'s status decides (void without a reference = Anuluar, cancel with one = Anulim)');
+      const d5 = c9.posDocFromPayload(I.s5);
+      eq([c9.vatOn(), d5.items.map(i => [i.tax, i.rate, i.sub, i.vatc, i.tot]), d5.sub, d5.vat, d5.total], [true, [['A', 0, 100, 0, 100]], 100, 0, 100], 'posDocFromPayload: a frozen no-VAT booking wins over the till\'s line and over the book\'s VAT setting');
+      const d4 = c9.posDocFromPayload(I.s4), d4n = c9.posDocFromPayload(I.s4, vat0);
+      eq([d4.frozen, d4.ledgerState, d4.payments, d4.items.map(i => [i.tax, i.rate, i.sub, i.vatc, i.tot]), d4.sub, d4.vat, d4.total], [false, 'new', null, [['E', 18, 127, 23, 150]], 127, 23, 150], 'posDocFromPayload: a receipt not booked yet (no frozen) — read from the till\'s payload');
+      eq([d4n.items.map(i => [i.tax, i.rate, i.sub, i.vatc, i.tot]), d4n.sub, d4n.vat, d4n.total], [[['A', 0, 150, 0, 150]], 150, 0, 150], 'posDocFromPayload: no frozen + a book not registered for VAT → group A, no VAT (importPosSales\' rule)');
+      const d7 = c9.posDocFromPayload(I.s7); eq([d7.source, d7.blockNo, d7.blockCode, d7.blockTs, c9.posBlockLabel(d7)], ['block', '0042', 'BT-7', '2026-09-20 14:50', 'nga blloku tatimor nr. 0042 (BT-7)'], 'posDocFromPayload: a receipt from the paper tax block');
+      // the same document importPosSales books for the same payload (sale, and a cancel with lines of its own and no original in the book)
+      const pick = r => [r.kind, r.no, r.status, r.customer, r.nui, r.operator, r.date, r.time, r.sub, r.vat, r.total, r.discount, r.cash_c, r.card_c, r.change_c, r.fiscal, r.fiscalRef, r.origId, r.origNo, r.cancelReason || '', r.items.map(i => [i.sku, i.qty, i.qty_q, i.unit_c, i.unit_t, i.gross_t, i.rate, i.tax, i.disc, i.disc_c, i.sub, i.vatc, i.tot])];
+      const cx = pay('cx', 'BAR-1/0099', 'cancel', [pli('KAFE', 'Kafe', 'copë', 10000, 150)], { time: '16:00:00', orig: ['zz', 'BAR-1/0098'], extra: { cancel_reason: 'Test' } }), sx = { ...I.s2.payload, id: 'sx', no: 'BAR-1/0098' };
+      for (const [p, nm] of [[sx, 'a sale'], [cx, 'a cancel with its own lines']]) for (const db of [book(), vat0]) {
+        const loc = new C({}); loc._api = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' }; loc.state.db = JSON.parse(JSON.stringify(db)); loc.importPosSales([JSON.parse(JSON.stringify(p))], []); clearTimeout(loc._t);
+        eq(pick(c9.posDocFromPayload(rcv(p, { frozen: null }), db)), pick(loc.state.db.posReceipts[0]), 'posDocFromPayload without frozen = the document importPosSales books (' + nm + ', VAT ' + (db === vat0 ? 'off' : 'on') + ')'); } }
+
+    // ── P:Shitje / P:Kthime: the server's receipts one by one (GET /pos/receipts → state.posList), loaded from componentDidUpdate
+    const R = mkR(); await enter(R, 'own', 't9'); await settle(R);
+    const Q31 = 'from=2026-08-21&to=2026-09-20', ST = '&status=final%2Creturned%2Cvoid';
+    { eq([R._ledger.loaded, R.state.posList, rcOf('t9', 0)], [true, null, []], 'E-L2: the dashboard asks the server for no receipt list');
+      const k0 = S.calls.length, hold = defer(); S.rcHold = (tid, path) => (tid === 't9' && path.startsWith('/pos/receipts?') ? hold.p : null);
+      R.go('pos', 'Shitje'); await until(() => R.state.posList && R.state.posList.busy);
+      const T0 = R.pageTable('P:Shitje');
+      eq([rcOf('t9', k0), T0.title, T0.count, T0.rows.length, T0.empty, T0.hasMore, T0.hasFilters, T0.filters.map(f => [f.title, f.value]), T0.period.map(p => p.label + (p.on ? '*' : ''))],
+        [['GET /pos/receipts?' + Q31 + ST + '&limit=50&offset=0'], 'Shitjet nga POS-i', '', 0, 'Duke ngarkuar kuponët nga serveri…', false, true, [['Nga data', '2026-08-21'], ['Deri më', '2026-09-20'], ['Arka', ''], ['Statusi', '']], ['Sot', '7 ditë', 'Ky muaj', '31 ditë*']],
+        'P:Shitje (ledger): GET /pos/receipts — the last 31 days, the sale statuses, 50 per page; while it loads: no rows, no count, the loading text');
+      S.rcHold = null; hold.open(); await settle(R);
+      const T = R.pageTable('P:Shitje');
+      eq([T.count, T.rows.length, T.hasMore, T.moreLabel, T.footer, rcOf('t9', k0).length], ['62', 50, true, 'Shfaq më shumë (12 nga 12 të tjerë)', 'Shfaqen 50 nga 62 kupona · ' + R.fmt(8000), 1], 'P:Shitje: the first 50 of 62, the total from the server, "Shfaq më shumë"');
+      eq(T.rows.slice(0, 7).map(cellsT), [['BAR-2/0001', '20.09.2026 18:00', 'Arka 2', 'Besa', 'Klient me shumicë', '1', '€1.50', '€0.00', '€1.50', 'Në rregull', 'Dështoi', '—'], ['BAR-1/0017', '20.09.2026 15:00', 'Arka Bar', 'Ana', 'Klient me shumicë', '1', '€1.50', '€0.00', '€1.50', 'Në rregull', 'Fiskalizuar', '—'],
+        ['BAR-1/0016', '20.09.2026 14:00', 'Arka Bar', 'Ana', 'Klient me shumicë', '1', '€1.00', '€0.00', '€1.00', 'Në rregull', 'Fiskalizuar', '—'], ['BAR-1/0015', '20.09.2026 13:00', 'Arka Bar', 'Ana', 'Klient me shumicë', '1', '€1.50', '€0.00', '€1.50', 'Në rregull', 'Në pritje', '—'],
+        ['BAR-1/0013', '20.09.2026 12:00', 'Arka Bar', 'Ana', 'Klient me shumicë', '1', '€1.00', '€0.00', '€1.00', 'Anuluar', 'Fiskalizuar', '—'], ['BAR-1/0012', '20.09.2026 11:00', 'Arka Bar', 'Besa', 'Drini Market SH.P.K.', '2', '€2.00', '€4.00', '€6.00', 'Në rregull', 'Në pritje', '—'],
+        ['BAR-1/0010', '20.09.2026 09:00', 'Arka Bar', 'Ana', 'Klient me shumicë', '1', '€3.00', '€0.00', '€3.00', 'Kthyer', 'Fiskalizuar', '—']], 'P:Shitje: one row per receipt, newest first (number, time, till, operator, buyer, items, cash, card, total, status, fiscal, A4)');
+      eq([T.rows[0].cells[10].sub, T.rows[1].cells[0].sub, T.rows[3].cells[0].sub, T.rows[4].cells[9].sub, T.rows[5].cells[4].sub, T.rows[6].cells[9].sub], ['ATK: timeout', 'nga blloku tatimor nr. 0042 (BT-7)', 'në përpunim në server', 'anuluar me BAR-1/0014', 'NUI 811234500', '1 kthim: BAR-1/0011'], 'P:Shitje: the fiscal error, the tax block, a receipt not booked yet, the cancel / return relations, the buyer\'s NUI');
+      eq(T.kpis.map(k => [k.label, k.value, k.sub]), [['Shitje sot (neto)', R.fmt(1150), '8 kupona · neto nga 2 kthime/anulime'], ['Para', R.fmt(750), ''], ['Kartë', R.fmt(400), ''], ['Fiskalizimi sot', '2 pa fiskalizuar', '1 dështuan']], 'P:Shitje: today\'s KPIs from the ledger rows in memory (no extra call)');
+      // "Shfaq më shumë": the next page (offset = what is loaded), appended
+      const k1 = S.calls.length; T.more(); await settle(R); const Tm = R.pageTable('P:Shitje');
+      eq([rcOf('t9', k1), Tm.rows.length, Tm.count, Tm.hasMore, new Set(R.state.posList.items.map(x => x.id)).size, Tm.footer], [['GET /pos/receipts?' + Q31 + ST + '&limit=50&offset=50'], 62, '62', false, 62, 'Shfaqen 62 nga 62 kupona · ' + R.fmt(9800)], 'P:Shitje "Shfaq më shumë": GET …&offset=50, appended (62 rows, no duplicate, no more button)');
+      // CSV of what is loaded
+      const blobs = []; Object.assign(ctx, { Blob: class { constructor(parts) { blobs.push(parts.join('')); } }, URL: { createObjectURL: () => 'blob:x', revokeObjectURL() {} } }); ctx.document.createElement = () => ({ click() {}, remove() {} }); ctx.document.body = { appendChild() {} };
+      try { Tm.actions.find(a => a.label === 'Eksporto CSV').go(); } finally { delete ctx.document.createElement; delete ctx.document.body; }
+      const csv = (blobs[0] || '').replace(/^﻿/, '').split('\r\n');
+      eq([csv.length, csv[0], csv[6], /62 rreshta/.test(R.state.toast || '')], [63, 'Kuponi;Data;Arka;Operatori;Klienti;Artikuj;Para;Kartë;Totali;Statusi;Fiskalizimi;Fatura A4', 'BAR-1/0012;20.09.2026 11:00;Arka Bar (Qendra);Besa;Drini Market SH.P.K. (NUI 811234500);2;€2.00;€4.00;€6.00;Në rregull;Në pritje;—', true], 'P:Shitje: the CSV exports the 62 receipts loaded'); }
+    // filters: period / terminal / status / dates → the exact query; a new filter starts again at page 1
+    { const go = async f => { const k = S.calls.length; f(); await settle(R); return rcOf('t9', k); }, T = () => R.pageTable('P:Shitje'), flt = t => T().filters.find(f => f.title === t);
+      eq(await go(() => T().period.find(p => p.label === 'Sot').go()), ['GET /pos/receipts?from=2026-09-20&to=2026-09-20' + ST + '&limit=50&offset=0'], 'P:Shitje "Sot": from = to = today, back to the first page');
+      eq([T().count, T().rows.map(r => r.cells[0].t)], ['7', ['BAR-2/0001', 'BAR-1/0017', 'BAR-1/0016', 'BAR-1/0015', 'BAR-1/0013', 'BAR-1/0012', 'BAR-1/0010']], 'P:Shitje "Sot": today\'s 7 sales');
+      eq(await go(() => T().period.find(p => p.label === '7 ditë').go()), ['GET /pos/receipts?from=2026-09-14&to=2026-09-20' + ST + '&limit=50&offset=0'], 'P:Shitje "7 ditë"');
+      eq(await go(() => T().period.find(p => p.label === 'Ky muaj').go()), ['GET /pos/receipts?from=2026-09-01&to=2026-09-20' + ST + '&limit=50&offset=0'], 'P:Shitje "Ky muaj"');
+      eq([flt('Arka').opts.map(o => [o.id, o.label])], [[['', 'Arka: të gjitha'], [TERM.id, 'Arka Bar (BAR-1)'], [TERM2.id, 'Arka 2 (BAR-2)']]], 'P:Shitje: the terminal filter lists the company\'s terminals (by terminal key)');
+      eq(await go(() => flt('Arka').set({ target: { value: TERM2.key } })), ['GET /pos/receipts?from=2026-09-01&to=2026-09-20&terminal=' + TERM2.key + ST + '&limit=50&offset=0'], 'P:Shitje: the terminal filter → terminal=<key>');
+      eq([T().count, T().rows.length, flt('Arka').value], ['56', 50, TERM2.key], 'P:Shitje: 56 receipts of that terminal this month');
+      eq(await go(() => flt('Statusi').set({ target: { value: 'void' } })), ['GET /pos/receipts?from=2026-09-01&to=2026-09-20&terminal=' + TERM2.key + '&status=void&limit=50&offset=0'], 'P:Shitje: the status filter → status=void');
+      eq([T().count, T().rows.length, T().empty], ['0', 0, 'Asnjë kupon për këtë filtër — ndryshoni periudhën, arkën, statusin ose kërkimin.'], 'P:Shitje: an empty result says so');
+      eq(await go(() => { R.posFilter({ terminal: '', status: '' }); }), ['GET /pos/receipts?from=2026-09-01&to=2026-09-20' + ST + '&limit=50&offset=0'], 'P:Shitje: filters cleared');
+      eq(await go(() => flt('Nga data').set({ target: { value: '2026-08-01' } })), ['GET /pos/receipts?from=2026-08-01&to=2026-09-20' + ST + '&limit=50&offset=0'], 'P:Shitje: a typed start date → custom period (the end date kept)');
+      eq([T().count, T().period.filter(p => p.on).map(p => p.label), flt('Nga data').value], ['63', ['01.08.2026 – 20.09.2026'], '2026-08-01'], 'P:Shitje: the custom period is shown as the active period');
+      eq(await go(() => flt('Deri më').set({ target: { value: '2026-08-31' } })), ['GET /pos/receipts?from=2026-08-01&to=2026-08-31' + ST + '&limit=50&offset=0'], 'P:Shitje: a typed end date');
+      eq([T().rows.map(r => r.cells[0].t)], [['BAR-1/0001']], 'P:Shitje: August holds the one old receipt');
+      // the search waits for the typing to stop (300 ms) and then asks once
+      await go(() => T().period.find(p => p.label === '31 ditë').go());
+      const k2 = S.calls.length; T().setQ({ target: { value: 'b' } }); await wait(60); T().setQ({ target: { value: 'be' } }); await wait(60); T().setQ({ target: { value: 'Bes' } }); await wait(60);
+      eq([rcOf('t9', k2), R.state.posList.base.endsWith('|q='), T().rows.length], [[], true, 50], 'search: nothing is asked while typing — the previous list stays');
+      await wait(300); await settle(R);
+      eq([rcOf('t9', k2), T().count, T().rows.map(r => r.cells[3].t), T().q], [['GET /pos/receipts?' + Q31 + ST + '&q=Bes&limit=50&offset=0'], '2', ['Besa', 'Besa'], 'Bes'], 'search: ONE request with q=Bes after the typing stopped (300 ms)');
+      const k3 = S.calls.length; R.setState({ x: 1 }); R.setState({ x: 2 }); await settle(R); R.go('pos', 'Shitje'); await settle(R);
+      eq(rcOf('t9', k3), [], 'P:Shitje: unrelated updates and coming back to the same filter ask nothing again');
+      R.posFilter({ q: '' }); await wait(350); await settle(R); }
+    // P:Kthime: returns + cancels (ATK CANCEL); a refusal is an error state, not a spinner (and no retry loop)
+    { const k0 = S.calls.length; R.go('pos', 'Kthime'); await settle(R); const T = R.pageTable('P:Kthime');
+      eq([rcOf('t9', k0), T.title, T.count, T.rows.map(cellsT), T.rows.map(r => r.cells[9].sub)], [['GET /pos/receipts?' + Q31 + '&status=return%2Ccancel&limit=50&offset=0'], 'Kthimet nga POS-i', '2',
+        [['BAR-1/0014', '20.09.2026 12:05', 'Arka Bar', 'Ana', 'Klient me shumicë', '1', '-€1.00', '€0.00', '-€1.00', 'Anuluar', 'Fiskalizuar', '—'], ['BAR-1/0011', '20.09.2026 09:30', 'Arka Bar', 'Ana', 'Klient me shumicë', '1', '-€1.50', '€0.00', '-€1.50', 'Kthyer', 'Fiskalizuar', '—']], ['anulim i BAR-1/0013', 'kthim i BAR-1/0010']],
+        'P:Kthime: status=return,cancel — the cancel (mirrored by the server) and the return, negative, with their originals');
+      eq(T.kpis.map(k => [k.label, k.value, k.sub]), [['Kthime sot', '-€1.50', '1 kthim'], ['Anulime sot', '-€1.00', '1 anulim'], ['Në listë', '2', 'sipas filtrave'], ['Fiskalizimi sot', '2 pa fiskalizuar', '1 dështuan']], 'P:Kthime: today\'s returns / cancels from the ledger rows');
+      eq(await (async () => { const k = S.calls.length; T.filters.find(f => f.title === 'Statusi').set({ target: { value: 'cancel' } }); await settle(R); return [rcOf('t9', k), R.pageTable('P:Kthime').count]; })(), [['GET /pos/receipts?' + Q31 + '&status=cancel&limit=50&offset=0'], '1'], 'P:Kthime: "Anulime" → status=cancel');
+      R.posFilter({ status: '' }); await settle(R);
+      T9.rcDeny = true; const k1 = S.calls.length; R.go('pos', 'Shitje'); await settle(R); let Td = R.pageTable('P:Shitje');
+      eq([rcOf('t9', k1).length, R.state.posList.busy, Td.rows.length, Td.count, Td.empty, Td.kpis.length], [1, false, 0, '', 'Nuk keni leje për kuponët e POS-it — kërkojini pronarit qasjen.', 4], 'a refused list (403): the error in place of the rows — not an endless "Duke ngarkuar"');
+      R.setState({ x: 3 }); await settle(R); R.renderVals(); R.setState({ x: 4 }); await settle(R);
+      eq(rcOf('t9', k1).length, 1, 'a refused list is not asked again on every update');
+      T9.rcDeny = false; Td.actions.find(a => a.label === 'Rifresko').go(); await settle(R); Td = R.pageTable('P:Shitje');
+      eq([rcOf('t9', k1).length, Td.count, Td.rows.length], [2, '62', 50], '"Rifresko" asks again'); }
+    // @@E-L2-END@@
+  }).catch(e => { console.log('FAIL E-L2 tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
