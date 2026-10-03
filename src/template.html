@@ -2906,9 +2906,14 @@ class Component extends DCLogic {
   // one batch against the book d: proposals already in posProposalsDone are only resolved again (`again`, their stored result); the others are
   // applied on one working copy — the categories first (a renamed category is renamed before a product of it is merged), each kind in the
   // server's order → {patch (products / categories / posProposalsDone, {} when nothing new), res, again}. An id of this batch already in
-  // posProposalsDone (`again`) moves to the end of it: never dropped (PROP_KEEP) while its verdict is still on its way
+  // posProposalsDone (`again`) moves to the end of it: never dropped (PROP_KEEP) while its verdict is still on its way. Two proposals of one key of
+  // one terminal in a batch (the bar pushed again between two pages read): only the later one (seq; else the one read later) — the server superseded
+  // the earlier one and gave the later one its (oldest) base; the earlier one is neither applied nor resolved
   propBatch(d,items){ const done=new Map((d.posProposalsDone||[]).filter(e=>e&&e.id).map(e=>[e.id,e])), P0=d.products||[], K0=d.categories||[], W={...d,products:P0,categories:K0}, V=this.view(d), res=[], again=[], seen=new Set(), isK=x=>!!x&&x.kind==='category';
-    for(const it of [...items.filter(isK),...items.filter(x=>!isK(x))]){ if(!it||!it.id||seen.has(it.id)) continue; seen.add(it.id); const old=done.get(it.id); if(old){ again.push({id:it.id,state:old.state,result:old.result}); continue; }
+    const gk=x=>!!x&&!!x.id&&!!x.key&&!!x.terminal&&typeof x.terminal.id==='string'&&!!x.terminal.id?x.terminal.id+'\n'+x.key:'', last=new Map();
+    for(const it of items){ const g=gk(it); if(g&&!(Number((last.get(g)||{}).seq)>Number(it.seq))) last.set(g,it); }
+    for(const it of [...items.filter(isK),...items.filter(x=>!isK(x))]){ if(!it||!it.id||seen.has(it.id)) continue; seen.add(it.id); const g=gk(it); if(g&&last.get(g).id!==it.id) continue;
+      const old=done.get(it.id); if(old){ again.push({id:it.id,state:old.state,result:old.result}); continue; }
       const r=it.kind==='product'?this.propProduct(W,V,it):it.kind==='category'?this.propCategory(W,it):{state:'rejected',result:{applied:[],kept:[],reason:'Lloj i panjohur propozimi.'}};
       res.push({id:it.id,kind:it.kind,key:it.key,terminal:it.terminal||null,state:r.state,result:r.result,created:r.created||''}); }
     if(!res.length) return {patch:{},res,again};

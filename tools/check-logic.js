@@ -1532,7 +1532,7 @@ apiBlock.then(async () => {
       if (S.propHold) { const hold = S.propHold(T.id, m + ' ' + p); if (hold) await hold; }
       if (p === '/pos/proposals' && m === 'GET') { if (+q.limit > 200) return json(400, { error: 'validation_error', message: 'limit' });
         const lim = Math.min(+q.limit || 200, T.propCap || 200), aft = q.after && (T.props || []).find(x => x.id === q.after), L = (T.props || []).filter(x => (!q.state || x.state === q.state) && (!aft || x.seq > aft.seq)).sort((a, b) => a.seq - b.seq);
-        return json(200, { items: L.slice(0, lim).map(x => ({ id: x.id, kind: x.kind, key: x.key, terminal: x.terminal, before: x.before, after: x.after, sku: x.sku, createdAt: x.createdAt })), more: L.length > lim }); }
+        return json(200, { items: L.slice(0, lim).map(x => ({ id: x.id, seq: x.seq, kind: x.kind, key: x.key, terminal: x.terminal, before: x.before, after: x.after, sku: x.sku, createdAt: x.createdAt })), more: L.length > lim }); }
       if (p === '/pos/proposals/resolve' && m === 'POST') { if (T.onResolve) { const r = T.onResolve(body); if (r) return r; } const R = body.results || [];
         // strict like the first schema (MAX_PROPOSAL_TEXT = 200 on every string of a result, ≤ 50 fields — the backend cuts them now): the ERP never sends more
         const long = s => s != null && (typeof s !== 'string' || s.length > 200), badRes = x => !!x && (long(x.reason) || long(x.sku) || [x.applied || [], x.kept || []].some(L => !Array.isArray(L) || L.length > 50 || L.some(long)));
@@ -2596,6 +2596,15 @@ apiBlock.then(async () => {
         eq([y.patch, y.res, y.again, x.d.posProposalsDone.map(e => e.id)], [{}, [], x.d.posProposalsDone, ['i2', 'i1']], 'proposals: idempotent — a batch already in posProposalsDone changes nothing and is only resolved again with the stored results');
         Z.PROP_KEEP = 3; const k = apply(x.d, [kr('i3', null, 'A1'), kr('i4', null, 'A2')]), g = apply(k.d, [items[0], kr('i5', null, 'A3')]); Z.PROP_KEEP = 1000;
         eq([k.d.posProposalsDone.map(e => e.id), g.again.map(e => e.id), g.d.posProposalsDone.map(e => e.id)], [['i1', 'i3', 'i4'], ['i1'], ['i4', 'i1', 'i5']], 'proposals: posProposalsDone keeps the last PROP_KEEP — an id of the batch being resolved again moves to the end, never dropped while its verdict is on its way'); }
+      // two proposals of one key of one terminal in one batch (the bar pushed again between two pages the ERP read): only the later one (seq; without
+      // seq the one read later) — merged against the oldest base the server gave it, so the bar's newest value lands; the earlier one is neither
+      // applied nor resolved. The same key of another terminal, or of deleted terminals (id null), is another proposal
+      { const l0 = seen(db0, 'LP'), e1 = pr('e1', { key: 'p:7', sku: 'LP', before: l0, after: { ...l0, gross_t: 12000 }, seq: 11 }), e2 = pr('e2', { key: 'p:7', sku: 'LP', before: l0, after: { ...l0, gross_t: 15000 }, seq: 12 }), ids = o => o.res.map(r => r.id);
+        const x = apply(db0, [e1, kr('e0', null, 'Kokteje'), e2]), y = apply(db0, [e2, e1]), z = apply(db0, [{ ...e1, seq: undefined }, { ...e2, seq: undefined }]), NT = { id: null, name: '', posId: '' };
+        const w = apply(db0, [pr('e3', { key: 'p:7', terminal: { id: 'term-X', name: 'Bar 2', posId: 'X1' }, sku: 'MV', before: seen(db0, 'MV'), after: seen(db0, 'MV', { gross_t: 13000 }), seq: 13 }), e2, pr('n1', { key: 'p:50', terminal: NT, after: { ...nu, name: 'N1' } }), pr('n2', { key: 'p:50', terminal: NT, after: { ...nu, name: 'N2' } })]);
+        eq([ids(x), x.r.e2, prod(x.d, 'LP').gross_t, x.d.posProposalsDone.map(e => e.id), ids(y), prod(y.d, 'LP').gross_t, ids(z), prod(z.d, 'LP').gross_t, ids(w), w.res.map(r => r.state)],
+          [['e0', 'e2'], ['applied', { sku: 'LP', applied: ['gross_t'], kept: [], reason: '' }], 15000, ['e0', 'e2'], ['e2'], 15000, ['e2'], 15000, ['e3', 'e2', 'n1', 'n2'], ['applied', 'applied', 'applied', 'applied']],
+          'proposals: two of one key of one terminal in a batch (the bar pushed between two pages) — only the later one (seq, else read later), merged against the oldest base: the bar\'s newest price lands; the earlier one is neither applied nor resolved; another terminal\'s same key / deleted terminals stay separate'); }
 
       // ── against the mock server: tenant tp on the POS ledger (LIM was sold by a till — its unit is locked by the ledger, not by the book)
       let seq = 0; const TB = { id: 'term-bar', name: 'Arka Bar', posId: 'BAR-1' };
@@ -2702,6 +2711,16 @@ apiBlock.then(async () => {
         for (const k of [602, 603, 604]) propose(TV, { key: 'p:' + k, after: { ...N, name: 'Koktej ' + k } });
         Q.PROP_PAGES = 2; const c0 = TV.commits.length, g0 = calls('tv', /^GET \/pos\/proposals$/).length; await tick(Q); Q.PROP_PAGES = 5;
         eq([st(TV).slice(-3), TV.commits.length - c0, TV.resolves.length, calls('tv', /^GET \/pos\/proposals$/).length - g0], [['p:602:applied', 'p:603:applied', 'p:604:applied'], 2, 3, 3], 'proposals: more than PROP_PAGES pages pending — the first PROP_PAGES in one batch, the rest in the next');
+        Q.logout(); done(Q); }
+      // the bar pushes again while the ERP reads the pages: P1 (page 1) is superseded by P2 (a later page) — one batch holds both; only P2 is applied
+      // and resolved (it carries the oldest base: the bar's newest price lands, no "changed in the ERP"); P1 stays superseded, without a verdict
+      { const TW = mkT('tw', 'Bar Gara SH.P.K.', book(), 'on'), k0 = seen(TW.state, 'KAFE'); TW.propCap = 1; let g = 0;
+        const p1 = propose(TW, { key: 'p:801', sku: 'KAFE', before: k0, after: { ...k0, gross_t: k0.gross_t + 2000 } }); propose(TW, { key: 'p:802', after: { ...N, name: 'Koktej 802' } });
+        S.propHold = (tid, what) => { if (tid === 'tw' && what === 'GET /pos/proposals' && ++g === 2) propose(TW, { key: 'p:801', sku: 'KAFE', before: k0, after: { ...k0, gross_t: k0.gross_t + 5000 } }); };
+        const Q = mk(); await enter(Q, 'mag', 'tw'); await tick(Q); S.propHold = null; const sent = (TW.resolves || []).flatMap(r => r.results.map(x => x.id)), p2 = TW.props.find(x => x.key === 'p:801' && x !== p1) || {};
+        eq([g, [p1.state, p1.result], [p2.state, p2.result], sent.includes(p1.id), TW.state.products.find(x => x.sku === 'KAFE').gross_t, TW.commits.length, Q.state.db.posProposalsDone.some(e => e.id === p1.id), st(TW)],
+          [3, ['superseded', null], ['applied', { sku: 'KAFE', applied: ['gross_t'], kept: [], reason: '' }], false, k0.gross_t + 5000, 1, false, ['p:802:applied', 'p:801:applied']],
+          'proposals: the bar edits again while the ERP reads the pages (P1 on page 1, its successor P2 on page 3) — only P2 applied and resolved, against the oldest base: the bar\'s newest price is in the ERP; P1 is never applied nor resolved');
         Q.logout(); done(Q); }
       // a long reason never blocks the tenant's resolves (the mock refuses a result string > 200 like the first schema): Kafe — the ERP changed its
       // name and price, its unit is locked — gives a 200-character reason; a verdict an older build stored with a 300-character reason is cut when
