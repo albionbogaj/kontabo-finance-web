@@ -1055,6 +1055,78 @@ c.state.db = { ...db(), products: db().products.filter(p => p.sku !== 'OLD') };
 { const all = db(); c.state.db = { ...all, products: all.products.map(p => ({ ...p, pos: false })) }; c.state.toast = null; c._catRefused = null;
   const h = c.posCatalogHash(); eq([c.posCatalogReady(false), c.state.toast, c._catRefused === h], [null, null, true], 'catalogue with zero visible products: refused silently on the timer, hash remembered');
   eq([c.posCatalogReady(true), c.state.toast], [null, c.CAT_EMPTY], 'catalogue with zero visible products: a manual push says why'); c.state.toast = null; c.state.db = all; }
+// ══ Faza B · rishikimi (E-P, P1–P5): a recipe is never bought (P1), Lëvizjet newest by date (P2), recipe restock rounded once per ingredient and
+// cumulatively (P3), purchase returns from the purchase's warehouse (P4), R:Shitje by article nets the cost of credit notes / POS returns (P5) ══
+{ const mkC = () => { const x = new C({}); x.state.db = x.seedDb(); Object.assign(x.state, { dr: null, frm: null, drawer: null, admin: false, pdq: '', fq: '', pFilter: 'Të gjitha', toast: null }); return x; };
+  const blk = (name, f) => { try { f(); } catch (e) { console.log('FAIL ' + name + ' threw: ' + (e && e.stack || e)); process.exitCode = 1; } };
+  const mvR = (x, ref) => x.state.db.movements.filter(m => m.ref === ref).map(m => [m.type, m.sku, m.qm, m.via || '', m.unit_c, m.wh || '']);
+  const il = (x, sku, qty, unit_c = 450) => { const l = x.calcLine({ unit_c, qm: Math.round(qty * 1000), rate: 18, bp: 0 }), p = x.prodOf(x.state.db, sku) || {}; return { name: p.name, sku, unit: p.unit, qty, unit_c, rate: 18, tax: 'E', disc: 0, sub: l.sub, vatc: l.vatc, tot: l.tot }; };
+  const kit = (sku, qty_q) => ({ ...it(sku, sku, Math.round(qty_q / 10), 450), qty_q }), day = { date: '2026-09-20', due: '2026-10-05' }, ret = (x, kind, ref, items) => x.createReturn({ kind, ref, items, date: '2026-09-20', reason: '', account: 'bank1' });
+  // P1 — a product a draft document still expects as stock cannot become a recipe; a recipe line is never received, bought or returned to a supplier
+  blk('P1', () => { const x = mkC(), d = () => x.state.db, sup = d().suppliers[0].name, cu = d().customers[0];
+    for (const p of [P('VOD', 'Vodka', 'l', 7000, 1200), P('MIX', 'Mix', 'gotë', 0, 200), P('MX2', 'Mix 2', 'gotë', 0, 200), P('MX3', 'Mix 3', 'gotë', 0, 200)]) x.addProduct(p);
+    const bl = x.createPurchase({ supplier: sup, items: [il(x, 'MIX', 10, 200)], ...day, note: '', receive: false }), po = x.createPo({ supplier: sup, items: [il(x, 'MX2', 5, 200)], ...day, note: '' });
+    x.issueBatch([{ cust: cu, items: [il(x, 'MX3', 1)], note: '' }], 'draft', day); const fd = d().invoices[0].no;
+    const tryRec = sku => { x.state.toast = null; const r = x.updateProduct(sku, { recipe: [{ sku: 'VOD', qm: 40 }] }); return [r, x.isRecipe(x.prodOf(d(), sku)), (x.state.toast || '').includes('presin (')]; };
+    eq([tryRec('MIX'), tryRec('MX2'), tryRec('MX3'), (x.state.toast || '').includes(fd), d().purchases.find(p => p.no === bl).status], [[false, false, true], [false, false, true], [false, false, true], true, 'Draft'], 'P1: a product on a Draft purchase / an open purchase order / a draft invoice cannot become a recipe (the document is named)');
+    x.state.toast = null; eq([x.unitLocked(d(), x.prodOf(d(), 'MIX')), x.updateProduct('MIX', { unit: 'copë' }), /dokument draft/.test(x.state.toast || '')], [true, false, true], 'P1: the unit of a product on a draft document is locked');
+    x.cancelPo(po); eq([x.unitLocked(d(), x.prodOf(d(), 'MX2')), x.updateProduct('MX2', { recipe: [{ sku: 'VOD', qm: 40 }] }), x.isRecipe(x.prodOf(d(), 'MX2'))], [false, true, true], 'P1: once the purchase order is cancelled the product is free again (unit, recipe)');
+    // older books: a Draft purchase whose product became a recipe before this rule — receiving it is refused (ledger, stock and cost untouched)
+    x.state.db = { ...d(), products: d().products.map(p => p.sku === 'MIX' ? { ...p, recipe: [{ sku: 'VOD', qm: 40 }], cost_c: 0 } : p) };
+    const g0 = x.balances()['1300'].bal, m0 = d().movements.length; x.state.toast = null; x.receivePurchase(bl);
+    eq([d().purchases.find(p => p.no === bl).status, d().movements.length - m0, x.balances()['1300'].bal - g0, x.prodOf(d(), 'MIX').cost_c, /nuk u pranua: MIX është recetë/.test(x.state.toast || '')], ['Draft', 0, 0, 0, true], 'P1: receiving a Draft purchase with a recipe line is refused with a toast — no goods into the ledger without stock, no cost written on the recipe');
+    x.state.toast = null; const n0 = d().purchases.length;
+    eq([x.createPurchase({ supplier: sup, items: [il(x, 'MIX', 2, 200)], ...day, note: '', receive: true }), x.createPurchase({ supplier: sup, items: [il(x, 'MIX', 2, 200)], ...day, note: '', receive: false }), d().purchases.length - n0, /nuk u regjistrua: MIX/.test(x.state.toast || '')], ['', '', 0, true], 'P1: a purchase with a recipe line (received or draft) is refused');
+    // older books: a RECEIVED purchase that carries a product which is a recipe now — its purchase return books no stock of the recipe
+    const bl2 = x.createPurchase({ supplier: sup, items: [il(x, 'VOD', 1, 1200)], ...day, note: '', receive: true });
+    x.state.db = { ...d(), purchases: d().purchases.map(p => p.no === bl2 ? { ...p, items: [...p.items, il(x, 'MIX', 10, 200)], sub: p.sub + 2000, vat: p.vat + 360, total: p.total + 2360 } : p) };
+    const kd = ret(x, 'purchase', bl2, [{ li: 1, qty: 4 }]);
+    eq([/^KD-/.test(kd), mvR(x, kd), x.stockOf('MIX'), x.hasMoves(d(), 'MIX')], [true, [], 0, false], 'P1: a purchase return never books stock of a recipe product (no negative own stock)'); });
+  // P2 — Lëvizjet / Hyrje në stok / Dalje nga stok newest BY DATE: with the POS ledger the derived rows sit after the book's — today's book rows still come first
+  blk('P2', () => { const x = mkC(), d = () => x.state.db, sup = d().suppliers[0].name, rows = new Map();
+    for (let k = 1; k <= 30; k++) for (const t of ['k1', 'k2']) { const date = '2026-08-' + String(k).padStart(2, '0'), id = 'D:' + t + ':' + date;
+      rows.set(id, { id, kind: 'day', no: 'POS-' + t + '-' + date, date, lastTs: date + ' 22:00:00', terminal: { key: t, posId: t, name: t }, totals: { sub_c: 0, vat_c: 0, total_c: 0 }, items: [], payments: [], moves: Array.from({ length: 12 }, () => ({ sku: 'LED-18', qm: -1, cost_c: 510 })) }); }
+    const bl = x.createPurchase({ supplier: sup, items: [{ name: 'Ndriçues LED 18W', sku: 'LED-18', unit: 'copë', qty: 50, unit_c: 500, rate: 18, disc: 0, sub: 25000, vatc: 4500, tot: 29500 }], ...day, note: '', receive: true });
+    x._ledger = { ...x.ledgerFresh(''), loaded: true, rows, ver: 1 }; x.apiAuthed = () => true; x.state.db = { ...d(), posLedgerV: 1 };
+    const refAt = r => (r.cells.find(c => /^(BL|POS)-/.test(c.t)) || {}).t, iso = r => x.toIso(r.cells[0].t), sorted = T => { const L = T.fullRows ? T.fullRows() : T.rows; return L.every((r, i) => !i || iso(L[i - 1]) >= iso(r)); };
+    x.go('stok', 'Lëvizjet'); const t = x.pageTable('Lëvizjet');
+    eq([x.view().movements.length, t.rows.length, t.hasMore, refAt(t.rows[0]), sorted(t)], [d().movements.length + 720, 500, true, bl, true], 'P2: Lëvizjet (ledger mode) — newest by date: today\'s purchase is the first row, not row 721 behind August\'s POS rows');
+    x.go('stok', 'Hyrje në stok'); const th = x.pageTable('Hyrje në stok'); x.go('stok', 'Dalje nga stok'); const tl = x.pageTable('Dalje nga stok'), outs = x.view().movements.filter(m => m.qm < 0).map(m => x.toIso(m.date)).sort();
+    eq([refAt(th.rows[0]), sorted(th), iso(tl.rows[0]), sorted(tl)], [bl, true, outs[outs.length - 1], true], 'P2: Hyrje në stok / Dalje nga stok — newest by date as well');
+    const mv = [{ date: '01.09.2026', ref: 'a' }, { date: '02.09.2026', ref: 'b' }, { date: '01.09.2026', ref: 'c' }], s1 = x.mvNewest(mv), same = x.mvNewest(mv) === s1; mv.push({ date: '02.09.2026', ref: 'd' });
+    eq([s1.map(m => m.ref), same, x.mvNewest(mv).map(m => m.ref)], [['b', 'c', 'a'], true, ['d', 'b', 'c', 'a']], 'P2: mvNewest — by date, ties: the later row first; memoised per array and length (follows a push)'); });
+  // P3 — pro-rata recipe restock (credit notes, partial POS cancels): rounded once per ingredient / warehouse / cost and cumulatively — all of them together give back exactly what went out
+  blk('P3', () => { const x = mkC(), d = () => x.state.db, cu = d().customers[0];
+    x.addProduct(P('RUM', 'Rum', 'l', 7000, 2000)); x.addProduct(P('MOJ', 'Mojito', 'gotë', 0, 0, { price_c: 500, recipe: [{ sku: 'RUM', qm: 45 }] }));
+    x.addProduct(P('SIR', 'Shurup', 'l', 7000, 300)); x.addProduct(P('LMD', 'Limonadë', 'l', 0, 0, { price_c: 500, recipe: [{ sku: 'SIR', qm: 1 }] }));
+    const r0 = x.stockOf('RUM'), [n1] = x.issueBatch([{ cust: cu, items: [il(x, 'MOJ', 1, 500), il(x, 'MOJ', 1, 500)], note: '' }], 'issue', day), k1 = ret(x, 'sale', n1, [{ li: 0, qty: 1 }]), k2 = ret(x, 'sale', n1, [{ li: 1, qty: 1 }]);
+    eq([mvR(x, n1).map(m => m[2]), mvR(x, k1).map(m => m[2]), mvR(x, k2).map(m => m[2]), x.stockOf('RUM') - r0], [[-45, -45], [45], [45], 0], 'P3: the same cocktail on two lines (45 ml each) returned in two notes → 45 + 45 back (one movement per ingredient), net 0 — not 46 + 46');
+    const s0 = x.stockOf('SIR'), [n2] = x.issueBatch([{ cust: cu, items: [il(x, 'LMD', 1.5, 500)], note: '' }], 'issue', day), ks = [0, 1, 2].map(() => ret(x, 'sale', n2, [{ li: 0, qty: 0.5 }]));
+    eq([mvR(x, n2).map(m => m[2]), ks.map(k => mvR(x, k).map(m => m[2])), x.stockOf('SIR') - s0], [[-2], [[1], [], [1]], 0], 'P3: 1.5 l (2 ml of syrup out) returned in three thirds → 1 + 0 + 1 back (cumulative), never 1 + 1 + 1');
+    x.cancelReturn(ks[0]); const k4 = ret(x, 'sale', n2, [{ li: 0, qty: 0.5 }]);
+    eq([mvR(x, k4).map(m => m[2]), x.stockOf('SIR') - s0], [[1], 0], 'P3: a cancelled note no longer counts — the next note brings back what is still out');
+    const s1 = x.stockOf('SIR'); x.importPosSales([rcpt('lm', 'POS-0001/000500', 'final', 'fiscalized_sim', [kit('LMD', 15000)], 797, 0)], []);
+    for (const k of [1, 2, 3]) x.importPosSales([rcpt('lmc' + k, 'POS-0001/00050' + k, 'cancel', 'fiscalized_sim', [kit('LMD', 5000)], 266, 0, { orig_id: 'lm' })], []);
+    eq([mvR(x, 'POS-0001/000500').map(m => m[2]), [1, 2, 3].map(k => mvR(x, 'POS-0001/00050' + k).map(m => [m[0], m[2]])), x.stockOf('SIR') - s1], [[-2], [[['sale_cancel', 1]], [], [['sale_cancel', 1]]], 0], 'P3: three partial POS cancels (0.5 of 1.5 l each) → 1 + 0 + 1 of the 2 ml that went out');
+    const m0 = x.stockOf('RUM'); x.importPosSales([rcpt('mj', 'POS-0001/000510', 'final', 'fiscalized_sim', [kit('MOJ', 10000), kit('MOJ', 10000)], 1000, 0)], []);
+    x.importPosSales([rcpt('mjc', 'POS-0001/000511', 'cancel', 'fiscalized_sim', [kit('MOJ', 10000)], 500, 0, { orig_id: 'mj' })], []); x.importPosSales([rcpt('mjc2', 'POS-0001/000512', 'cancel', 'fiscalized_sim', [kit('MOJ', 10000)], 500, 0, { orig_id: 'mj' })], []);
+    eq([mvR(x, 'POS-0001/000510').map(m => m[2]), mvR(x, 'POS-0001/000511').map(m => m[2]), mvR(x, 'POS-0001/000512').map(m => m[2]), x.stockOf('RUM') - m0], [[-45, -45], [45], [45], 0], 'P3: a POS receipt with the cocktail on two lines cancelled in two parts → 45 + 45 (once per ingredient), net 0'); });
+  // P4 — a purchase return (KD) leaves the warehouse the purchase brought the goods into
+  blk('P4', () => { const x = mkC(), d = () => x.state.db, sup = d().suppliers[0].name;
+    const bl = x.createPurchase({ supplier: sup, items: [{ name: 'Ndriçues LED 18W', sku: 'LED-18', unit: 'copë', qty: 10, unit_c: 500, rate: 18, disc: 0, sub: 5000, vatc: 900, tot: 5900 }], ...day, note: '', receive: true, wh: 'W2' });
+    const w1 = x.stockOfWh('LED-18', 'W1'), w2 = x.stockOfWh('LED-18', 'W2'), kd = ret(x, 'purchase', bl, [{ li: 0, qty: 10 }]);
+    eq([mvR(x, kd), x.stockOfWh('LED-18', 'W1') - w1, x.stockOfWh('LED-18', 'W2') - w2], [[['purchase_return', 'LED-18', -10000, '', 500, 'W2']], 0, -10000], 'P4: the purchase return (KD) leaves W2 — the purchase\'s warehouse — not the main warehouse'); });
+  // P5 — R:Shitje › Sipas artikullit nets the cost of credit notes and of the book's POS returns / cancels exactly as it nets their revenue
+  blk('P5', () => { const x = mkC(), d = () => x.state.db, cu = d().customers[0];
+    for (const p of [P('VOD', 'Vodka', 'l', 7000, 1200), P('LIM', 'Limon', 'copë', 20000, 10), P('KOK', 'Koktej', 'gotë', 0, 0, { recipe: [{ sku: 'VOD', qm: 40 }, { sku: 'LIM', qm: 500 }] }), P('TS1', 'Test 1', 'copë', 10000, 77), P('TS2', 'Test 2', 'copë', 10000, 55)]) x.addProduct(p);
+    const [n] = x.issueBatch([{ cust: cu, items: [il(x, 'VOD', 0.5, 2500), il(x, 'KOK', 3), il(x, 'KOK', 2), il(x, 'VOD', 0.25, 2500)], note: '' }], 'issue', { ...day, wh: 'W2' });
+    const k1 = ret(x, 'sale', n, [{ li: 0, qty: 0.5 }, { li: 2, qty: 2 }]); ret(x, 'sale', n, [{ li: 1, qty: 3 }, { li: 3, qty: 0.25 }]); x.cancelReturn(k1);
+    x.importPosSales([rcpt('p5a', 'POS-0001/000600', 'final', 'fiscalized_sim', [it('TS1', 'Test 1', 2000, 890)], 2100, 0), rcpt('p5b', 'POS-0001/000601', 'return', 'fiscalized_sim', [it('TS1', 'Test 1', -1000, 890)], -1050, 0, { orig_id: 'p5a' })], []);
+    x.importPosSales([rcpt('p5c', 'POS-0001/000602', 'final', 'fiscalized_sim', [it('TS2', 'Test 2', 3000, 145)], 513, 0)], []); x.importPosSales([{ ...rcpt('p5d', 'POS-0001/000603', 'cancel', 'fiscalized_sim', [], 0, 0, { orig_id: 'p5c' }), sub_c: 0, vat_c: 0, total_c: 0 }], []);
+    x.state.rp = 'all'; x.state.rTab = 'Sipas artikullit'; const t = x.pageTable('R:Shitje'), r = sku => (t.rows.find(z => z.cells[1].t === sku) || { cells: [] }).cells.slice(2, 5).map(c => c.t);
+    eq([r('VOD'), r('KOK'), r('TS1'), r('TS2')], [['0.5 l', x.fmt(1250), x.fmt(600)], ['2 gotë', x.fmt(900), x.fmt(106)], ['1 copë', x.fmt(890), x.fmt(77)], ['0 copë', x.fmt(0), x.fmt(0)]], 'P5: by article the cost is netted like the revenue — credit notes (Vodka 0.75 − 0.25 l, Koktej 5 − 3 incl. its ingredients), a POS return, a cancelled POS receipt');
+    eq(t.foot[5].t, t.kpis[2].value, 'P5: the article rows\' gross profit equals the report\'s (every cost of goods netted by its document)'); });
+}
 // local / server sync with stubbed transports: nothing is pushed while nothing is visible, the manual sync names it, the timer stays quiet
 (async () => {
   const off = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' };
@@ -1086,7 +1158,10 @@ apiBlock.then(async () => {
   const RT = ['cursorSrv', 'lastSyncSrv', 'unsyncedSrv', 'catalogHashSrv', 'catalogVersionSrv', 'lastPush', 'lastError'];
   const S = { features: ['posLedger:1'], calls: [], bad: [], noHdr: [], T: {}, gate: null, open: null, timeouts: [] };
   const users = { own: { role: 'Pronar', perms: { fatura_shiko: true }, name: 'Arben Berisha', email: 'arben@abc-ks.com' }, kas: { role: 'Kasier', perms: { fatura_shiko: true, pos: true }, name: 'Fjolla Kastrati', email: 'fjolla@abc-ks.com' }, mag: { role: 'Magazinier', perms: { stok: true, produkte: true }, name: 'Driton Hoxha', email: 'driton@abc-ks.com' } };
-  const mkT = (id, name, state = null, mode = 'off') => (S.T[id] = { id, name, version: state ? 1 : 0, state: state && JSON.parse(JSON.stringify(state)), commits: [], tries: 0, catVersion: 0, catalogs: [], known: new Set(), knownShifts: new Set(), knownCalls: [], activates: [], audit: [], resets: 0, onCommit: null, onActivate: null, notReadyAfterDone: 0, led: { epoch: 'E-' + id, top: 0, mode, notReady: 0, cap: 200, rows: new Map(), shifts: new Map() } });
+  // T.known = receipts the server has booked ('ok'); T.rstate[id] = any other ledger_state of a receipt the server has (null / 'new' / 'dirty' /
+  // 'error' / 'wait_orig' / 'excluded') — POST /pos/receipts/known answers known (ok/new/dirty/null) + states (every id the server has)
+  const mkT = (id, name, state = null, mode = 'off') => (S.T[id] = { id, name, version: state ? 1 : 0, state: state && JSON.parse(JSON.stringify(state)), commits: [], tries: 0, catVersion: 0, catalogs: [], known: new Set(), knownShifts: new Set(), rstate: {}, knownCalls: [], activates: [], audit: [], resets: 0, onCommit: null, onActivate: null, notReadyAfterDone: 0, led: { epoch: 'E-' + id, top: 0, mode, notReady: 0, cap: 200, rows: new Map(), shifts: new Map() } });
+  const stOf = (T, x) => (Object.prototype.hasOwnProperty.call(T.rstate, x) ? T.rstate[x] : T.known.has(x) ? 'ok' : undefined), BOOKS = ['ok', 'new', 'dirty', null];
   const pub = (T, r) => { r.rev = ++T.led.top; T.led.rows.set(r.id, r); return r; }, pubShift = (T, s) => { s.rev = ++T.led.top; T.led.shifts.set(s.id, s); return s; };
   const tomb = (T, id) => { const r = T.led.rows.get(id); pub(T, { id, kind: r.kind, removed: true, date: r.date, terminal: r.terminal }); };
   const whoOf = h => { const x = /^Bearer L-(\w+)-(\w+)$/.exec(h || ''); return x && users[x[1]] ? { ...users[x[1]], key: x[1], tid: x[2] } : null; };
@@ -1122,8 +1197,12 @@ apiBlock.then(async () => {
       const since = +q.since || 0, lim = Math.min(+q.limit || 200, T.led.cap), all = [...[...T.led.rows.values()].map(x => ['r', x]), ...[...T.led.shifts.values()].map(x => ['s', x])].filter(([, x]) => x.rev > since).sort((a, b) => a[1].rev - b[1].rev);
       const page = all.slice(0, lim), more = all.length > lim, ready = !(T.led.notReady > 0 && T.led.notReady--);
       return json(200, { epoch: T.led.epoch, rev: more ? page[page.length - 1][1].rev : T.led.top, mode: T.led.mode, ready, pending: ready ? 0 : 2, rows: page.filter(x => x[0] === 'r').map(x => x[1]), shifts: page.filter(x => x[0] === 's').map(x => x[1]), more }); }
-    if (p === '/pos/receipts/known') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.knownCalls.push(body); if (T.onKnown) T.onKnown(body); const seen = new Set(); return json(200, { known: (body.ids || []).filter(x => T.known.has(x) && !seen.has(x) && seen.add(x)), knownShifts: (body.shiftIds || []).filter(x => T.knownShifts.has(x)) }); }
-    if (p === '/pos/ledger/activate') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.activates.push(body); if (T.onActivate) T.onActivate(body); if (body.done) { T.led.mode = 'on'; T.led.notReady = T.notReadyAfterDone; } return json(200, { updated: (body.receipts || []).filter(r => T.known.has(r.id)).length, mode: T.led.mode }); }
+    if (p === '/pos/receipts/known') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); if ((body.ids || []).length > 2000 || (body.shiftIds || []).length > 2000) return json(400, { error: 'validation_error', message: 'ids' });
+      T.knownCalls.push(body); if (T.onKnown) T.onKnown(body); const seen = new Set(), ids = body.ids || [];
+      return json(200, { known: ids.filter(x => BOOKS.includes(stOf(T, x)) && !seen.has(x) && seen.add(x)), knownShifts: (body.shiftIds || []).filter(x => T.knownShifts.has(x)), states: Object.fromEntries(ids.filter(x => stOf(T, x) !== undefined).map(x => [x, stOf(T, x)])) }); }
+    if (p === '/pos/ledger/activate') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); if ((body.receipts || []).length > 1000 || (body.legacy || []).length > 2000) return json(400, { error: 'validation_error', message: 'activate' });
+      T.activates.push(body); if (T.onActivate) T.onActivate(body); for (const x of body.legacy || []) if (stOf(T, x) !== undefined) T.rstate[x] = 'excluded'; // legacy: excluded for good, never booked
+      if (body.done) { T.led.mode = 'on'; T.led.notReady = T.notReadyAfterDone; } return json(200, { updated: (body.receipts || []).filter(r => BOOKS.includes(stOf(T, r.id))).length, mode: T.led.mode }); }
     if (p === '/pos/ledger/reset') { if (u.role !== 'Pronar') return json(403, { error: 'forbidden', message: 'Vetëm pronari' }); T.resets++; T.led.epoch += '-r' + T.resets; for (const [id, r] of [...T.led.rows]) if (!r.removed) tomb(T, id); for (const s of [...T.led.shifts.values()]) if (!s.removed) pubShift(T, { ...s, removed: true }); return json(200, { epoch: T.led.epoch, resetSeq: 99 }); }
     // receipts one by one (kontabo-backend GET /pos/receipts, /pos/receipts/{id}): any member; filters, newest first, limit/offset, total
     if (S.rcHold && /^\/pos\/receipts(\/|$)/.test(p) && m === 'GET') { const hold = S.rcHold(T.id, path); if (hold) await hold; } // a test holds one answer back (late / out-of-order answers)
@@ -1341,7 +1420,7 @@ apiBlock.then(async () => {
 
   eq(S.bad, [], 'mock server: no commit ever carried `_srv` rows or posSync runtime fields');
   eq(S.noHdr, [], 'mock server: every request carried X-Kontabo-Client: 2');
-  return { S, users, mkT, pub, pubShift, calls, json, mk, enter, done, wait, until, store, mem, book, TERM, line, row, SHIFT, legacyBook }; // for the E-L2 block below
+  return { S, users, mkT, pub, pubShift, tomb, calls, json, jOf, mk, enter, done, wait, until, store, mem, book, TERM, line, row, SHIFT, legacyBook, mig, day17, day20 }; // for the E-L2 block and the review block below
 }).catch(e => { console.log('FAIL POS ledger tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
 // ══ Faza B · E-L2 (API mode, POS ledger): the server's receipts one by one (GET /pos/receipts[/{id}]) on P:Shitje / P:Kthime / the fiscal monitor
 // and in the receipt drawer, the day-summary drawer, the pages derived from the ledger rows, the A4 invoice from a server receipt, the server's
@@ -1718,4 +1797,6 @@ apiBlock.then(async () => {
       const rr = Lc.state.db.posReceipts.find(r => r.id === 'lx'), iv = Lc.state.db.invoices.find(i => i.fromPos === 'lx');
       eq([!!iv, iv && iv.posNo, rr.invoiceNo, iv && iv.no === rr.invoiceNo, S.calls.length - k0], [true, 'BAR-1/0500', iv && iv.no, true, 0], 'local mode: the A4 invoice of a booked receipt as before'); clearTimeout(Lc._t); }
     // @@E-L2-END@@
-  }).catch(e => { console.log('FAIL E-L2 tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+    return H;
+  }).catch(e => { console.log('FAIL E-L2 tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
+// @@REVIEW-L@@
