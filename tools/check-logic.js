@@ -1135,7 +1135,7 @@ apiBlock.then(async () => {
     if (p.startsWith('/pos/receipts/') && m === 'GET') { if (T.rcDeny) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); const id = decodeURIComponent(p.slice('/pos/receipts/'.length)), it = (T.rc || []).find(r => r.id === id);
       if (!it) return json(404, { error: 'not_found', message: 'Kuponi nuk u gjet' }); return json(200, { ...it, related: (T.rc || []).filter(r => r.id !== id && (r.id === it.origId || r.origId === id)) }); }
     // read-only API keys (permission `kompania`; the Pronar always) and terminal token rotation (permission `pos`)
-    if (p === '/api-keys' || p.startsWith('/api-keys/')) { if (u.role !== 'Pronar' && !u.perms.kompania) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.keys = T.keys || [];
+    if (p === '/api-keys' || p.startsWith('/api-keys/')) { if (S.akHold && m === 'GET') await S.akHold.p; if (u.role !== 'Pronar' && !u.perms.kompania) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.keys = T.keys || [];
       if (m === 'GET') return json(200, { apiKeys: T.keys.slice().reverse() });
       if (m === 'POST') { const nm = String(body.name || '').trim(), sc = body.scopes || []; if (!nm || nm.length > 80 || !sc.length || sc.some(x => !['pos:read', 'state:read'].includes(x))) return json(400, { error: 'validation_error', message: 'Të dhënat e kërkesës janë të pavlefshme' });
         const raw = 'kk_' + T.id + 'SECRET' + (T.keys.length + 1) + 'x'.repeat(32), k = { id: 'key-' + (T.keys.length + 1), name: nm, prefix: raw.slice(0, 12), scopes: ['pos:read', 'state:read'].filter(x => sc.includes(x)), createdBy: u.name, createdAt: '2026-09-20T10:00:00Z', lastUsedAt: null, revokedAt: null };
@@ -1341,13 +1341,13 @@ apiBlock.then(async () => {
 
   eq(S.bad, [], 'mock server: no commit ever carried `_srv` rows or posSync runtime fields');
   eq(S.noHdr, [], 'mock server: every request carried X-Kontabo-Client: 2');
-  return { S, users, mkT, pub, pubShift, calls, json, mk, enter, done, wait, until, store, book, TERM, line, row, SHIFT, legacyBook }; // for the E-L2 block below
+  return { S, users, mkT, pub, pubShift, calls, json, mk, enter, done, wait, until, store, mem, book, TERM, line, row, SHIFT, legacyBook }; // for the E-L2 block below
 }).catch(e => { console.log('FAIL POS ledger tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
 // ══ Faza B · E-L2 (API mode, POS ledger): the server's receipts one by one (GET /pos/receipts[/{id}]) on P:Shitje / P:Kthime / the fiscal monitor
 // and in the receipt drawer, the day-summary drawer, the pages derived from the ledger rows, the A4 invoice from a server receipt, the server's
 // API keys and the terminal token rotation; ensurePins stable; feature-off / local mode as before. Runs after the ledger block (same mock server). ══
   .then(async (H) => { if (!H) { console.log('FAIL E-L2 tests skipped: the POS ledger block did not finish'); process.exitCode = 1; return; }
-    const { S, users, mkT, pub, pubShift, calls, mk, enter, done, wait, until, store, book, TERM, line, row, SHIFT, legacyBook } = H;
+    const { S, users, mkT, pub, pubShift, calls, mk, enter, done, wait, until, store, mem, book, TERM, line, row, SHIFT, legacyBook } = H;
     const defer = () => { let open; const p = new Promise(r => (open = r)); return { p, open }; };
     // the runtime calls componentDidUpdate after every state change (batched, after the render): emulated with a microtask per burst
     const mkR = () => { const x = mk(), set = x.setState.bind(x); let q = false; x.setState = u => { set(u); if (!q) { q = true; Promise.resolve().then(() => { q = false; x.componentDidUpdate(); }); } }; return x; };
@@ -1572,5 +1572,85 @@ apiBlock.then(async () => {
       T9.rcDeny = true; R.setState({ posList: null }); await settle(R); v = R.renderVals(); T9.rcDeny = false;
       eq([v.fiscalHasReceipts, v.fiscalReceiptsEmpty, R.state.posList.busy], [false, 'Nuk keni leje për kuponët e POS-it — kërkojini pronarit qasjen.', false], 'fiscal monitor: a refusal is shown in place of the list');
       R.go('dashboard', 'Paneli'); await settle(R); }
+    // ── the A4 invoice from a server receipt (ledger mode): created once in the book, refused inside the commit, never a write to the receipt
+    const writesRc = () => S.calls.filter(x => x.tid === 't9' && x.m !== 'GET' && /^\/pos\/receipts/.test(x.p) && x.p !== '/pos/receipts/known').map(x => x.m + ' ' + x.p);
+    { R.openPosReceipt('s2', I.s2); await settle(R); const n0 = T9.commits.length, mv0 = R.state.db.movements.length, pay0 = R.state.db.payments.length, kafe0 = R.stockOf('KAFE'), cash0 = R.accountBalance('cash2');
+      R.drawerVals().actions.find(a => a.label === 'Gjenero faturë A4 nga kuponi').go(); eq(R.state.confirm.title, 'Faturë A4 për kuponin BAR-1/0012?', 'A4: the drawer asks first');
+      R.state.confirm.ok(); await until(() => R.state.page === 'Fatura' && !(R._pending || []).length && !R._flushing); await settle(R);
+      const last = T9.commits[T9.commits.length - 1] || {}, inv = (last.invoices || [])[0] || {};
+      eq([T9.commits.length - n0, Object.keys(last), inv.kind, inv.no, inv.fromPos, inv.posNo, inv.customer, inv.nui, inv.date, inv.status, inv.sub, inv.vat, inv.total, inv.paid, inv.fiscal, inv.fiscalRef, inv.items.map(i => [i.sku, i.qty, i.tot]), inv.note],
+        [1, ['invoices'], 'Faturë', 'FSH-2026-00001', 's2', 'BAR-1/0012', 'Drini Market SH.P.K.', '811234500', '20.09.2026', 'Paguar', 508, 92, 600, 600, 'Në pritje', '—', [['KAFE', 2, 300], ['UJE', 3, 300]], 'Faturë A4 për kuponin BAR-1/0012 · Arka Bar · Besa'],
+        'A4 (ledger): ONE commit with only the invoice — fromPos = the receipt id, the receipt\'s lines, totals and fiscal state');
+      eq([writesRc(), R.state.db.movements.length - mv0, R.state.db.payments.length - pay0, R.stockOf('KAFE'), R.accountBalance('cash2'), R.salesDocs().filter(r => r.src === 'inv').length, '_srv' in inv, JSON.stringify(last).includes('"_srv"')], [[], 0, 0, kafe0, cash0, 0, false, false], 'A4 (ledger): no write to the server receipt (no PATCH), no second sale / stock / money, nothing `_srv` committed');
+      eq([R.state.section, R.state.page, R.state.drawer, R.state.dr, R.state.toast], ['shitje', 'Fatura', 'FSH-2026-00001', null, 'Fatura FSH-2026-00001 u gjenerua nga kuponi BAR-1/0012'], 'A4: the new invoice opens');
+      const n1 = T9.tries; eq([await R.invoiceFromReceipt('s2', I.s2), R.state.toast, T9.tries - n1, R.state.db.invoices.filter(i => i.fromPos === 's2').length], [null, 'Kuponi ka tashmë faturën A4 FSH-2026-00001 — nuk krijohet e dyta', 0, 1], 'A4: a second one for the same receipt is refused');
+      eq([await R.invoiceFromReceipt('R:s2'), T9.tries - n1], [null, 0], 'A4: also when asked for the ledger row id (R:…)');
+      // another tab's A4 for the same receipt reaches this page while the receipt is still being read → refused INSIDE the commit
+      const h = defer(); S.rcHold = (tid, path) => (path === '/pos/receipts/s5' ? h.p : null); const pr = R.invoiceFromReceipt('s5'); await wait(10);
+      R.setState(s => ({ db: { ...s.db, invoices: [{ kind: 'Faturë', no: 'FSH-2026-00077', fromPos: 's5', posNo: 'BAR-1/0016', customer: 'Klient me shumicë', nui: '—', date: '20.09.2026', due: '20.09.2026', status: 'Paguar', items: [], sub: 100, vat: 0, total: 100, paid: 100 }, ...s.db.invoices] } }));
+      const n2 = T9.tries; S.rcHold = null; h.open(); const res = await pr; await wait(20);
+      eq([res, R.state.toast, T9.tries - n2, R.state.db.invoices.filter(i => i.fromPos === 's5').map(i => i.no)], [null, 'Kuponi BAR-1/0016 ka tashmë faturën A4 FSH-2026-00077 — nuk krijohet e dyta', 0, ['FSH-2026-00077']], 'A4: the refusal is decided inside the commit (an A4 that arrived meanwhile) — no second invoice, nothing sent');
+      R.setState(s => ({ db: { ...s.db, invoices: s.db.invoices.filter(i => i.no !== 'FSH-2026-00077') } }));
+      eq([await R.invoiceFromReceipt('r1', I.r1), R.state.toast], [null, 'Fatura A4 krijohet vetëm nga një kupon i finalizuar (ky është “Kthim”)'], 'A4: only from a Finalizuar receipt (a return is refused)');
+      eq([await R.invoiceFromReceipt('s1'), R.state.toast], [null, 'Fatura A4 krijohet vetëm nga një kupon i finalizuar (ky është “Kthyer”)'], 'A4 by id: the receipt is read from the server first (a returned sale is refused)');
+      eq([await R.invoiceFromReceipt('nope'), R.state.toast, T9.tries - n2], [null, 'Kuponi nuk u lexua nga serveri: Kuponi nuk u gjet', 0], 'A4: a receipt the server does not have → nothing made');
+      // the A4 shows on P:Shitje and in the receipt drawer; the invoice's receipt link opens the receipt through the API
+      R.go('pos', 'Shitje'); R.posFilter({ range: '31', from: '', to: '', terminal: '' }); await settle(R);
+      eq(R.pageTable('P:Shitje').rows.find(r => r.cells[0].t === 'BAR-1/0012').cells[11].t, 'FSH-2026-00001', 'P:Shitje: the "Fatura A4" column (db.invoices fromPos)');
+      R.openPosReceipt('s2'); await settle(R); const D = R.drawerVals(); eq([lab(D.actions), D.history.some(x => x.a === 'Fatura A4 FSH-2026-00001 e lidhur me këtë kupon')], [['Hap faturën FSH-2026-00001', 'Statuset fiskale'], true], 'receipt drawer: "Hap faturën" instead of a second A4');
+      D.actions[0].go(); eq([R.state.page, R.state.drawer, R.state.dr], ['Fatura', 'FSH-2026-00001', null], '"Hap faturën" opens the invoice');
+      const k0 = S.calls.length; R.renderVals().openInvSrc(); await settle(R); eq([R.state.dr, rcOf('t9', k0)], [{ kind: 'posApi', id: 's2' }, ['GET /pos/receipts/s2']], 'invoice drawer: "Kuponi BAR-1/0012" opens the receipt through the API (not in the book)');
+      R.setState({ dr: null, drawer: null }); R.go('dashboard', 'Paneli'); await settle(R); }
+    // ── Cilësime › API with the POS ledger: the server's read-only keys (GET / POST / DELETE /api-keys); the raw key shown once
+    const keysOf = (tid, k0) => S.calls.slice(k0).filter(x => x.tid === tid && /^\/api-keys/.test(x.p)).map(x => x.m + ' ' + x.p);
+    { const h = defer(); S.rcHold = null; const k0 = S.calls.length; const hk = (S.akHold = h);
+      R.go('settings', 'API'); await wait(); let P = R.settingsPage('API');
+      eq([P.cards[0].title, P.cards[0].note], ['Çelësat API', 'Duke ngarkuar çelësat nga serveri…'], 'Cilësime › API (ledger): loading the keys from the server');
+      hk.open(); S.akHold = null; await settle(R); P = R.settingsPage('API');
+      eq([keysOf('t9', k0), P.cards.map(c => c.title), P.cards[0].table.rows, P.cards[0].note, lab(P.cards[0].actions), P.cards.find(c => c.title === 'Dokumentimi').rows[0].v], [['GET /api-keys'], ['Çelësat API', 'Dokumentimi'], [], 'Asnjë çelës ende — krijoni një me “+ Çelës i ri”.', ['+ Çelës i ri', 'Rifresko'], 'http://127.0.0.1:8801/api/v1'], 'Cilësime › API: GET /api-keys once, empty list');
+      R.setState({ x: 5 }); await settle(R); eq(keysOf('t9', k0).length, 1, 'Cilësime › API: not asked again on every update');
+      P.cards[0].actions[0].go(); let F = R.formVals();
+      eq([R.state.frm.kind, F.title, F.fields.map(f => f.key), F.actions.map(a => [a.label, a.disabled]), F.fields[1].opts.map(o => o.on), F.fields[1].hint], ['apiKeySrv', 'Çelës API i ri', ['name', 'scopes'], [['Krijo çelësin', true]], ['1', ''], 'pos:read'], 'new key form: a name and the read-only scopes (pos:read preselected); no name → disabled');
+      R.setF({ name: '  Power BI ' }); F = R.formVals(); eq(F.actions[0].disabled, false, 'new key form: name + a scope → enabled');
+      F.fields[1].opts[0].go(); F = R.formVals(); eq([F.actions[0].disabled, F.fields[1].hint], [true, 'zgjidhni të paktën një'], 'new key form: no scope → disabled');
+      F.fields[1].opts[1].go(); R.formVals().fields[1].opts[0].go(); F = R.formVals(); eq([F.actions[0].disabled, F.fields[1].hint, F.fields[1].opts.map(o => o.on)], [false, 'pos:read, state:read', ['1', '1']], 'new key form: the scopes toggle like checkboxes');
+      R.setF({ name: 'x'.repeat(81) }); F = R.formVals(); eq([F.actions[0].disabled, F.fields[0].err, F.fields[0].hint], [true, '1', 'deri në 80 karaktere'], 'new key form: a name over 80 characters is refused');
+      R.setF({ name: '  Power BI ' }); const k1 = S.calls.length; R.formVals().actions[0].go(); eq([R.formVals().actions[0].label, R.formVals().actions[0].disabled], ['Po krijohet…', true], 'new key form: busy while the server creates it');
+      await until(() => !!R.state.apiSecret); const raw = (T9.rawKeys || [])[0] || '?', post = S.calls.slice(k1).find(x => x.m === 'POST' && x.p === '/api-keys');
+      P = R.settingsPage('API');
+      eq([post && post.body, R.state.frm, R.state.apiSecret, P.cards.map(c => c.title), P.cards[1].rows[0].v, P.cards[1].rows[0].k, lab(P.cards[1].actions), P.cards[0].table.rows.map(cellsT)], [{ name: 'Power BI', scopes: ['pos:read', 'state:read'] }, null, { name: 'Power BI', key: raw, scopes: 'pos:read, state:read' }, ['Çelësat API', 'Çelësi i ri — kopjojeni TANI', 'Dokumentimi'], raw, 'Power BI · pos:read, state:read', ['Kopjo çelësin', 'E ruajta, fshihe'],
+        [['Power BI', raw.slice(0, 12) + '…', 'pos:read · state:read', R.isoStamp('2026-09-20T10:00:00Z'), '—', 'Aktiv', 'Revoko']]], 'POST /api-keys {name (trimmed), scopes} → the raw key shown once (copy + hide), the key in the list with its prefix only');
+      P.cards[1].actions[0].go(); eq(/Kopjimi automatik nuk lejohet/.test(R.state.toast || ''), true, '"Kopjo çelësin" without a clipboard says so (no crash)');
+      P.cards[1].actions[1].go(); P = R.settingsPage('API');
+      eq([R.state.apiSecret, P.cards.map(c => c.title), JSON.stringify(R.state).includes(raw), JSON.stringify(mem).includes(raw), JSON.stringify(T9.state).includes(raw) || JSON.stringify(T9.commits).includes(raw)], [null, ['Çelësat API', 'Dokumentimi'], false, false, false], '"E ruajta, fshihe": the raw key is gone from the page and was never stored (state, localStorage, book)');
+      const k2 = S.calls.length; P.cards[0].actions[1].go(); await settle(R); P = R.settingsPage('API');
+      eq([keysOf('t9', k2), P.cards[0].table.rows.length, JSON.stringify(R.state.apiKeysSrv).includes(raw)], [['GET /api-keys'], 1, false], '"Rifresko": GET /api-keys again — the server never returns the raw key');
+      P.cards[0].table.rows[0].cells[6].go(); eq(R.state.confirm.title, 'Revoko çelësin “Power BI”?', 'revoke asks first'); R.state.confirm.ok(); await until(() => R.state.apiKeysSrv.items[0].revokedAt); P = R.settingsPage('API');
+      eq([keysOf('t9', k2).slice(-1), P.cards[0].table.rows.map(r => [r.cells[5].t, r.cells[5].sub, r.cells[6].t, r.cells[0].color]), R.settingsPage('Integrimet').cards.find(c => c.title === 'API').rows[0]], [['DELETE /api-keys/key-1'], [['Revokuar', R.isoStamp('2026-09-20T11:00:00Z'), '', '#8FA3B8']], { k: 'Çelësa aktivë (në server)', v: '0', font: 'inherit', color: '#10243A' }], 'DELETE /api-keys/{id}: the key stays in the list, revoked (greyed, no action); Integrimet counts the active ones');
+      eq([await R.apiKeyCreate('Y', ['pos:write']), R.state.toast, T9.keys.length], [null, 'Çelësi nuk u krijua: Të dhënat e kërkesës janë të pavlefshme', 1], 'POST /api-keys refused (unknown scope) → a toast, nothing listed');
+      const k3 = S.calls.length; R.apiCommit({ apiKeys: [{ id: 'x' }] }); await wait(10); eq([S.calls.slice(k3).filter(x => x.p === '/state/commit').length, 'apiKeys' in T9.state], [0, false], 'apiKeys is server data (SERVER_KEYS): never committed to the book');
+      R.go('dashboard', 'Paneli'); await settle(R); }
+    // a member without "Kompania": the refusal is shown (no spinner, no retry), creating a key is refused with a toast and the form stays open
+    { const K = mkR(); await enter(K, 'kas', 't9'); const k0 = S.calls.length; K.go('settings', 'API'); await settle(K); K.setState({ x: 1 }); await settle(K); let P = K.settingsPage('API');
+      eq([keysOf('t9', k0), P.cards[0].note, P.cards[0].noteColor, P.cards[0].table.rows], [['GET /api-keys'], 'Nuk keni leje për çelësat API (leja “Kompania”).', '#B91C1C', []], 'Cilësime › API without the "Kompania" permission: 403 shown, asked once');
+      K.openForm('apiKeySrv', { name: 'X', sPos: true, sState: false }); K.formVals().actions[0].go(); await until(() => K.state.frm && !K.state.frm.busy && /Çelësi nuk u krijua/.test(K.state.toast || ''));
+      eq([K.state.frm && K.state.frm.kind, K.state.frm && K.state.frm.busy, K.state.toast, K.state.apiSecret], ['apiKeySrv', false, 'Çelësi nuk u krijua: Nuk keni leje', null], 'POST /api-keys refused (403): the form stays open, no longer busy');
+      K.logout(); done(K); }
+    // ── P:Arkat "Rigjenero tokenin": POST /terminals/{id}/rotate → the new token shown once, never stored
+    { R.go('pos', 'Arkat'); await settle(R); const T = R.pageTable('P:Arkat'), n0 = T9.tries;
+      T.rows[0].cells[11].go(); eq(R.state.confirm.title, 'Rigjenero token-in e “Arka Bar”?', 'rotate asks first'); R.state.confirm.ok(); await until(() => R.state.confirm && /^Token-i i ri/.test(R.state.confirm.title));
+      eq([calls('t9', /^POST \/terminals\/.+\/rotate$/).map(x => x.p), R.state.confirm.title, R.state.confirm.body.endsWith(' kt_new1'), R.state.confirm.body.includes('http://127.0.0.1:8801/api/v1'), /duhet rilidhur/.test(R.state.toast || '')], [['/terminals/' + TERM.id + '/rotate'], 'Token-i i ri i terminalit “Arka Bar” (shfaqet vetëm një herë)', true, true, true], 'POST /terminals/{id}/rotate → the new token shown once with the server address');
+      R.setState({ confirm: null }); eq([JSON.stringify(R.state).includes('kt_new1'), JSON.stringify(mem).includes('kt_new1'), T9.tries - n0], [false, false, 0], 'rotate: the token is shown only in that dialog — never stored, nothing committed');
+      eq([await R.terminalRotate({ id: TERM2.id, name: 'Arka 2' }), await R.terminalRotate({ id: 'nope', name: 'X' }), R.state.toast], ['kt_new2', null, 'Rigjenerimi i token-it dështoi: Terminali nuk u gjet'], 'rotate: a new token each time; an unknown terminal → a toast');
+      R.setState({ confirm: null }); R.go('dashboard', 'Paneli'); await settle(R); }
+    // ── ensurePins: the default PIN's salt is derived from the user → the catalogue (and its hash) is the same on every call / tick
+    { const c0 = new C({}), u0 = { id: 'u9', name: 'Test', email: 't@x', role: 'Kasier', status: 'Aktiv' }, e1 = c0.ensurePins([u0])[0], e2 = c0.ensurePins([{ ...u0 }])[0], set = { ...u0, id: 'u8', pinSalt: 'ffff0000', pinHash: 'h' };
+      eq([e1.pinSalt, e1.pinHash === e2.pinHash, e1.pinHash === c0.pinHash('0000', e1.pinSalt), c0.pinIsDefault(e1), c0.ensurePins([{ ...u0, id: 'u10' }])[0].pinSalt !== e1.pinSalt, c0.ensurePins([set])[0] === set],
+        [c0.sha256('kontabo.pin:u9').slice(0, 8), true, true, true, true, true], 'ensurePins: the default PIN (0000) with a salt derived from the user — the same on every call, different per user; a set PIN is untouched');
+      const L = new C({}); L._api = { url: '', accessToken: '', refreshToken: '', version: 0, tenantId: '', tenantName: '', tenants: [], remember: true, status: '', lastError: '' }; L.state.db = L.seedDb(); L.state.db = { ...L.state.db, users: L.state.db.users.map(({ pinHash, pinSalt, ...u }) => u) }; L.state.session = { name: 'Arben Berisha', role: 'Pronar', userId: 'u1' };
+      const h1 = L.posCatalogHash(), h2 = L.posCatalogHash(), ops = L.posCatalogPayload().operators; const cl = [];
+      L.posFetch = async (path, o = {}) => { cl.push((o.method || 'GET') + ' ' + path.split('?')[0]); if (path === '/health') return { pos_name: 'Arka', pos_id: 'POS-0001', version: '1', pending_sync: 0, fiscal: { pending: 0, mode: 'ATK_ELECTRONIC' } }; if (path.startsWith('/sales')) return { receipts: [], shifts: [], cursor: 0 }; return {}; };
+      await L.posSync(false); await L.posSync(false); await L.posSync(false);
+      eq([h1 === h2, ops.length > 0, ops.every(o => o.pinSalt && o.pinHash === L.pinHash('0000', o.pinSalt)), cl.filter(x => x === 'POST /catalog').length], [true, true, true, 1], 'users without a PIN: the catalogue hash is stable → pushed once, not on every tick'); clearTimeout(L._t); }
     // @@E-L2-END@@
   }).catch(e => { console.log('FAIL E-L2 tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
