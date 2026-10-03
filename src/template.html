@@ -2399,10 +2399,18 @@ class Component extends DCLogic {
   }
   logout(){ const n=this.who(); if(this.apiAuthed()){ this.apiFetch('/audit',{method:'POST',body:{action:'Dalje nga sistemi'}}).catch(()=>{}); this.apiLogout(); } else if(this.apiSignedIn()) this.apiLogout(); else this.logAudit('Dalje nga sistemi'); this.saveSession(null); this.setState({session:null,login:{...this.state.login,pw:'',err:'',...this.signupBlank()},drawer:null,dr:null,frm:null,modal:null,cmdk:false,confirm:null,admin:false,section:'dashboard',page:'Paneli'}); this.toast(n+' doli nga sistemi','#8FA3B8'); }
   setUserPassword(id,pw,by,current){
-    if(this.apiAuthed()){ if(by==='reset'){ this.apiFetch('/users/'+id+'/reset-password',{method:'POST'}).then(r=>{ this.apiRefreshUsers(); this.setState({confirm:{title:'Fjalëkalimi i përkohshëm',body:'Jepjani përdoruesit këtë fjalëkalim (shfaqet vetëm një herë): '+r.tempPassword+' — duhet ta ndryshojë në hyrjen e parë.',color:'#2563EB',ok:()=>{}}}); }).catch(e=>this.toast('Rikthimi dështoi: '+e.message,'#B91C1C')); }
+    if(this.apiAuthed()){ if(by==='reset'){ this.resetUserPassword(id,pw).catch(e=>this.toast('Rivendosja dështoi: '+e.message,'#B91C1C')); }
       else { this.apiFetch('/auth/password',{method:'POST',body:{current:current||'',new:pw}}).then(()=>{ this.toast('Fjalëkalimi u ndryshua'); this.setState(s=>({db:{...s.db,security:{...s.db.security,passwordChanged:this.fmtDate(this.today())}}})); }).catch(e=>this.toast('Ndryshimi dështoi: '+e.message,'#B91C1C')); }
       return; }
-    const s=this.pinSalt(), h=this.pinHash(pw,s); let name=''; this.commit(d=>({users:d.users.map(u=>{ if(u.id!==id) return u; name=u.name; return {...u,pwSalt:s,pwHash:h,pwChangedAt:this.stamp()}; }),...(this.state.session&&this.state.session.userId===id?{security:{...d.security,passwordChanged:this.fmtDate(this.today())}}:{})})); this.logAudit(by==='reset'?'Fjalëkalimi i '+name+' u rikthye në parazgjedhje':'Fjalëkalimi u ndryshua për '+name); }
+    const s=this.pinSalt(), h=this.pinHash(pw,s); let name=''; this.commit(d=>({users:d.users.map(u=>{ if(u.id!==id) return u; name=u.name; return {...u,pwSalt:s,pwHash:h,pwChangedAt:this.stamp()}; }),...(this.state.session&&this.state.session.userId===id?{security:{...d.security,passwordChanged:this.fmtDate(this.today())}}:{})})); this.logAudit(by==='reset'?'Fjalëkalimi i '+name+' u rivendos nga administratori':'Fjalëkalimi u ndryshua për '+name); }
+  // "Rivendos fjalëkalimin" (form resetPw / ownerPw): the administrator TYPES the new password twice — nothing is generated, shown back or kept
+  // (the form closes on success and is emptied on a refusal; no confirm, no book/state/localStorage copy). API: POST /users/{id}/reset-password
+  // {password} → {ok} (the server applies the same policy, revokes the member's sessions and audits it); local: sha256(salt:password) in the book,
+  // exactly like the seed / a changed local password. Returns the request's promise in API mode, null when done locally.
+  PW_MIN = 8; PW_MAX = 200; // the server's policy for every new password (kontabo-backend security.check_new_password; verbatim, 1–200)
+  newPwCheck(pw,pw2){ pw=String(pw||''); pw2=String(pw2||''); const strong=pw.length>=this.PW_MIN&&pw.length<=this.PW_MAX, match=pw===pw2;
+    return {strong,match,ok:strong&&match,msg:pw&&!strong?(pw.length>this.PW_MAX?'Fjalëkalimi mund të ketë deri në '+this.PW_MAX+' karaktere.':'Fjalëkalimi duhet të ketë së paku '+this.PW_MIN+' karaktere.'):pw2&&!match?'Fjalëkalimet nuk përputhen.':''}; }
+  resetUserPassword(id,pw){ if(this.apiAuthed()) return this.apiFetch('/users/'+id+'/reset-password',{method:'POST',body:{password:String(pw)}}); this.setUserPassword(id,String(pw),'reset'); return null; }
 
   /* ───────── API mode: the ERP as a client of kontabo-backend (FastAPI + PostgreSQL/SQLite). With no server URL the page runs
      in local single-file mode (localStorage). Server-owned data (users, roles, audit) is mirrored into db.* so every
@@ -3385,7 +3393,8 @@ class Component extends DCLogic {
       plan:{planKey:'',name:'',price:'',includedUsers:'',extraUser:'',invoiceLimit:'',posLimit:'',modules:'',days:''},
       tenant:{name:'',nui:'',city:'',ownerEmail:'',plan:'trial'},
       tenantPlan:{tenantName:'',plan:''},
-      ownerPw:{tenantName:'',tenantId:'',pw:''},
+      ownerPw:{tenantName:'',tenantId:'',pw:'',pw2:''},
+      resetPw:{userId:'',pw:'',pw2:''},
       adminUser:{name:'',email:'',role:'Support'},
       apiKey:{name:'',scope:'lexo',env:'test'},
       pin:{userId:'',pin:'',pin2:''},
@@ -3656,13 +3665,32 @@ class Component extends DCLogic {
       const ready=isNew?(!!f.name&&!dup&&!!f.plan):(!!f.plan&&f.plan!==t.plan);
       actions=[{label:isNew?'Krijo kompaninë':'Ndrysho planin',primary:true,disabled:!ready,go:()=>{ if(this.apiAdmin()){ this.setState({frm:null}); (isNew?this.apiAdminTenant('POST','',{name:f.name.trim(),nui:f.nui||'',city:f.city||'',plan:f.plan,ownerEmail:f.ownerEmail||''}):this.apiAdminTenant('PATCH',t.id,{plan:f.plan})).then(r=>{ if(r&&r.inviteToken) this.setState({confirm:{title:'Kompania u krijua · ftesa e pronarit',body:'Token-i i ftesës (zhvillim, pa SMTP) për '+(f.ownerEmail||'pronarin')+': '+r.inviteToken,color:'#2563EB',ok:()=>{}}}); else this.toast(isNew?'Kompania u krijua në server':'Plani u ndryshua në server','#22C55E'); }).catch(e=>this.toast('Serveri refuzoi: '+e.message,'#B91C1C')); return; } if(isNew){ const nt={name:f.name.trim(),nui:f.nui||'—',city:f.city||'—',plan:f.plan,status:f.plan==='trial'?'Provë':'Aktiv',users:1,branches:1,mrr_c:mrr,since:this.fmtDate(this.today()),last:'tani',fiscalMode:'UNCONFIGURED',invoicesMonth:0}; this.setAdmin('tenants',list=>[nt,...list]); this.logAudit('Kompania e re “'+nt.name+'” · plani '+p.name+(f.ownerEmail?' · ftesa për '+f.ownerEmail+' kërkon backend':''),true); this.toast('Kompania u krijua'+(f.ownerEmail?' · ftesa e pronarit kërkon backend':''),f.ownerEmail?'#B45309':'#22C55E'); this.setState({frm:null}); this.openDr('tenant',nt.name); } else { this.setAdmin('tenants',list=>list.map(x=>x.name===t.name?{...x,plan:f.plan,mrr_c:mrr,status:f.plan==='trial'?'Provë':x.status==='Provë'?'Aktiv':x.status}:x)); this.logAudit('Kompania “'+t.name+'”: plani '+(db.admin.plans[t.plan]||{name:t.plan}).name+' → '+p.name+' · MRR '+this.fmt(t.mrr_c)+' → '+this.fmt(mrr),true); this.toast('Plani u ndryshua','#2563EB'); this.setState({frm:null}); this.openDr('tenant',t.name); } }}];
     } else if(K==='ownerPw'){
-      // Administratori i platformës ia vendos fjalëkalimin pronarit të kompanisë dhe ia jep në dorë (pa SMTP).
-      const t=db.admin.tenants.find(x=>x.name===f.tenantName)||{name:f.tenantName,id:f.tenantId};
-      const pw=String(f.pw||'').trim(), okPw=pw===''||pw.length>=8;
+      // Administratori i platformës e shkruan vetë (dy herë) fjalëkalimin e pronarit të kompanisë dhe ia jep në dorë (pa SMTP); asgjë nuk
+      // gjenerohet dhe serveri nuk e kthen — forma mbyllet pas suksesit, fushat zbrazen pas një refuzimi
+      const t=db.admin.tenants.find(x=>x.name===f.tenantName)||{name:f.tenantName,id:f.tenantId}, chk=this.newPwCheck(f.pw,f.pw2);
+      const same=()=>{ const g=this.state.frm; return !!g&&g.kind==='ownerPw'&&g.tenantId===f.tenantId; };
       title='Fjalëkalimi i pronarit · '+t.name;
-      sub='Fjalëkalimin ia jepni vetë klientit — nuk dërgohet asnjë email. Llogaria e pronarit krijohet nëse nuk ekziston, ftesa e vjetër mbyllet, sesionet e tij të mëparshme mbyllen dhe bllokimi nga gabimet pastrohet.';
-      fields=[txt('pw','Fjalëkalimi (bosh = gjenerohet)',{secret:true,err:!okPw,hint:okPw?'së paku 8 karaktere':'shumë i shkurtër'}),info('Pronari',(db.admin.users||[]).filter(u=>u.tenant===t.name&&u.role==='Pronar').map(u=>u.email)[0]||'merret nga ftesa e kompanisë',{color:'#526477'})];
-      actions=[{label:'Vendos fjalëkalimin',primary:true,disabled:!okPw,go:()=>{ if(!this.apiAdmin()||!t.id){ this.toast('Kërkon lidhje me serverin','#B45309'); return; } this.setState({frm:null}); this.apiAdminOwnerPassword(t.id,pw).then(r=>{ this.setState({confirm:{title:'Fjalëkalimi i pronarit · '+t.name,body:'Email: '+r.email+' · Fjalëkalimi: '+r.password+' — shfaqet vetëm një herë, jepjani klientit dhe le ta ndryshojë në hyrjen e parë.'+(r.created?' Llogaria u krijua tani.':''),color:'#2563EB',ok:()=>{}}}); }).catch(e=>this.toast('Serveri refuzoi: '+e.message,'#B91C1C')); }}];
+      sub='Fjalëkalimin e shkruani ju dhe ia jepni vetë klientit — nuk gjenerohet, nuk shfaqet më askund dhe nuk dërgohet asnjë email. Llogaria e pronarit krijohet nëse nuk ekziston, ftesa e vjetër mbyllet, sesionet e tij të mëparshme mbyllen dhe bllokimi nga gabimet pastrohet.';
+      fields=[info('Pronari',(db.admin.users||[]).filter(u=>u.tenant===t.name&&u.role==='Pronar').map(u=>u.email)[0]||'merret nga ftesa e kompanisë',{color:'#526477'}),
+        txt('pw','Fjalëkalimi i ri',{half:true,secret:true,err:!!f.pw&&!chk.strong,hint:'së paku '+this.PW_MIN+' karaktere',set:e=>set({pw:e.target.value,err:''})}),txt('pw2','Përsërit fjalëkalimin',{half:true,secret:true,err:!!f.pw2&&!chk.match,hint:f.pw2&&!chk.match?'nuk përputhen':'',set:e=>set({pw2:e.target.value,err:''})})];
+      msg=f.err||chk.msg;
+      actions=[{label:f.busy?'Po vendoset…':'Vendos fjalëkalimin',primary:true,disabled:!!f.busy||!chk.ok,go:()=>{ if(!this.apiAdmin()||!t.id){ this.toast('Kërkon lidhje me serverin','#B45309'); return; } set({busy:true,err:''});
+        this.apiAdminOwnerPassword(t.id,String(f.pw)).then(r=>{ if(same()) this.setState({frm:null}); this.toast('Fjalëkalimi i pronarit '+(r.email||'')+' u vendos'+(r.created?' · llogaria u krijua':'')+' — jepjani klientit vetë','#22C55E'); })
+          .catch(e=>{ const m='Serveri refuzoi: '+e.message; if(same()) this.setF({busy:false,pw:'',pw2:'',err:m}); this.toast(m,'#B91C1C'); }); }}];
+    } else if(K==='resetPw'){
+      // "Rivendos fjalëkalimin": the administrator types the member's new password twice (see resetUserPassword) — never generated or shown back
+      const u0=db.users.find(x=>x.id===f.userId), u=u0||{id:f.userId,name:'?',email:''}, chk=this.newPwCheck(f.pw,f.pw2), api=this.apiAuthed();
+      const same=()=>{ const g=this.state.frm; return !!g&&g.kind==='resetPw'&&g.userId===f.userId; };
+      title='Rivendos fjalëkalimin · '+u.name;
+      sub=api?'E shkruani ju fjalëkalimin e ri dhe ia jepni vetë përdoruesit — nuk gjenerohet, nuk shfaqet më askund dhe nuk dërgohet me email. Kontrollohet nga serveri; të gjitha sesionet e përdoruesit mbyllen dhe veprimi regjistrohet në audit log.':'E shkruani ju fjalëkalimin e ri dhe ia jepni vetë përdoruesit. Ruhet vetëm si hash (sha256 me salt) në këtë shfletues dhe veprimi regjistrohet në audit log.';
+      fields=[info('Përdoruesi',u.name+(u.email?' · '+u.email:''),{color:'#526477'}),
+        txt('pw','Fjalëkalimi i ri',{half:true,secret:true,err:!!f.pw&&!chk.strong,hint:'së paku '+this.PW_MIN+' karaktere',set:e=>set({pw:e.target.value,err:''})}),txt('pw2','Përsërit fjalëkalimin',{half:true,secret:true,err:!!f.pw2&&!chk.match,hint:f.pw2&&!chk.match?'nuk përputhen':'',set:e=>set({pw2:e.target.value,err:''})})];
+      msg=f.err||chk.msg;
+      actions=[{label:f.busy?'Po ruhet…':'Ruaj fjalëkalimin',primary:true,disabled:!!f.busy||!chk.ok||!u0,go:()=>{
+        const p=this.resetUserPassword(u.id,f.pw); if(!p){ close(); this.toast('Fjalëkalimi i '+u.name+' u rivendos — jepjani vetë përdoruesit'); return; }
+        const tid=this.apiCfg().tenantId, here=()=>this.apiAuthed()&&this.apiCfg().tenantId===tid; set({busy:true,err:''});
+        p.then(()=>{ if(same()) this.setState({frm:null}); if(here()) this.toast('Fjalëkalimi i '+u.name+' u rivendos · sesionet e tij u mbyllën'); })
+          .catch(e=>{ const m='Rivendosja dështoi: '+e.message; if(same()) this.setF({busy:false,pw:'',pw2:'',err:m}); if(here()) this.toast(m,'#B91C1C'); }); }}];
     } else if(K==='adminUser'){
       title='Administrator i ri'; sub='Qasje në panelin e platformës. Ftesa kërkon backend; këtu regjistrohet llogaria.';
       const emailOk=/^[^\s@]+@kontabo\.app$/.test(f.email||'');
@@ -3871,7 +3899,7 @@ class Component extends DCLogic {
       if(u.role!=='Pronar'){ if(u.status==='Pezulluar') actions.push({label:'Aktivizo',kind:'primary',go:()=>{ setU({status:'Aktiv'}); this.logAudit('Përdoruesi '+u.email+' u aktivizua'); this.toast('Përdoruesi u aktivizua'); }}); else actions.push({label:'Pezullo',kind:'danger',go:()=>this.setState({confirm:{title:'Pezullo '+u.name+'?',body:'Përdoruesi nuk mund të hyjë më; sesionet e tij mbyllen. Licenca lirohet.',ok:()=>{ setU({status:'Pezulluar'}); this.logAudit('Përdoruesi '+u.email+' u pezullua'); this.toast('Përdoruesi u pezullua','#8FA3B8'); }}})}); }
       if(this.isPosRole(u)) actions.push({label:this.pinIsDefault(u)?'Cakto PIN-in e POS-it (tani 0000)':'Ndrysho PIN-in e POS-it',kind:this.pinIsDefault(u)?'primary':'',go:()=>this.openForm('pin',{userId:u.id})});
       if(this.isPosRole(u)) actions.push({label:'Nr. identifikues për kupon…',kind:'',go:()=>this.openForm('opcode',{userId:u.id,code:u.opCode||''})});
-      if(!this.pwIsDefault(u)) actions.push({label:'Rikthe fjalëkalimin',kind:'',go:()=>this.setState({confirm:{title:'Rikthe fjalëkalimin e '+u.name+'?',body:'Fjalëkalimi bëhet “'+this.DEFAULT_PW+'” (parazgjedhje) dhe përdoruesi duhet ta ndryshojë në hyrjen e parë. Regjistrohet në audit log.',ok:()=>{ this.setUserPassword(u.id,this.DEFAULT_PW,'reset'); this.toast('Fjalëkalimi u rikthye në parazgjedhje','#B45309'); }}})});
+      if(u.role!=='Pronar'||(this.state.session||{}).role==='Pronar') actions.push({label:'Rivendos fjalëkalimin',kind:'',go:()=>this.openForm('resetPw',{userId:u.id})}); // the owner's only by the owner (as on the server)
       if(u.status==='Ftuar') actions.push({label:'Ridërgo ftesën',kind:'',go:()=>this.needsBackend('Ridërgimi i ftesës me email')});
       actions.push({label:'Rolet & lejet',kind:'',go:()=>this.go('kompania','Rolet')});
       return {title:u.name,subtitle:u.email,no:u.id.toUpperCase(),badge:{text:u.status,...this.st(u.status)},actions,close,
@@ -4877,8 +4905,9 @@ class Component extends DCLogic {
     catch(e){ this.toast('Të dhënat e platformës nuk u ngarkuan: '+e.message,'#B91C1C'); } }
   apiAdminTenant(method,id,body){ return this.apiFetch('/admin/tenants'+(id?'/'+id:''),{method,body}).then(async r=>{ await this.apiLoadAdmin(); return r; }); }
   // Fjalëkalimi i pronarit vendoset nga administratori i platformës (serveri ende s'ka SMTP, prandaj linku i ftesës
-  // nuk shkon askund): serveri e krijon llogarinë nëse mungon, e aktivizon anëtarësimin dhe e kthen fjalëkalimin NJË herë.
-  apiAdminOwnerPassword(id,password){ return this.apiFetch('/admin/tenants/'+id+'/owner-password',{method:'POST',body:password?{password}:{}}).then(async r=>{ await this.apiLoadAdmin(); return r; }); }
+  // nuk shkon askund): administratori e shkruan vetë (forma ownerPw, dy herë); serveri e krijon llogarinë nëse mungon dhe e
+  // aktivizon anëtarësimin — nuk gjeneron asgjë dhe fjalëkalimin nuk e kthen ({ email, created, activated }).
+  apiAdminOwnerPassword(id,password){ return this.apiFetch('/admin/tenants/'+id+'/owner-password',{method:'POST',body:{password:String(password)}}).then(async r=>{ await this.apiLoadAdmin(); return r; }); }
   toast(msg,color='#22C55E'){ clearTimeout(this._t); this.setState({toast:msg,toastColor:color}); this._t=setTimeout(()=>this.setState({toast:null}),2800); }
 
   // trial banner: days left from the server's tenant (createdAt + the platform's trial length → trialEndsAt), computed live so it

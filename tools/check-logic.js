@@ -589,7 +589,31 @@ eq([c.pwIsDefault(db().users[0]), db().audit[0].a.includes('Fjalëkalimi u ndrys
 c.logout(); eq([c.state.session, c.renderVals().needsLogin, db().audit[0].a], [null, true, 'Dalje nga sistemi'], 'logout clears the session');
 c.setL({ email: 'arben@abc-ks.com', pw: 'kontabo' }); c.login(); eq(!!c.state.session, false, 'old password no longer works');
 c.setL({ email: 'arben@abc-ks.com', pw: 'Kontabo2026!' }); c.login(); eq(!!c.state.session, true, 'new password works');
-c.openDr('user', 'u2'); c.drawerVals(); c.setUserPassword('u2', c.DEFAULT_PW, 'reset'); eq(c.pwIsDefault(db().users[1]), true, 'admin reset → default password again');
+// "Rivendos fjalëkalimin" (local): the administrator types the new password twice; the book keeps only sha256(salt:password) — nothing is
+// generated, shown back (no dialog) or left in state / localStorage
+{ const mem = {}; ctx.localStorage = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
+  c.state.confirm = null; c.openDr('user', 'u2'); const acts = c.drawerVals().actions.map(x => x.label);
+  eq([acts.includes('Rivendos fjalëkalimin'), acts.some(x => /Rikthe fjalëkalimin/.test(x))], [true, false], 'local reset: the user drawer offers "Rivendos fjalëkalimin" (no reset to the default password any more)');
+  c.drawerVals().actions.find(x => x.label === 'Rivendos fjalëkalimin').go();
+  let f = c.formVals(); eq([c.state.frm.kind, c.state.frm.userId, c.state.dr, f.fields.filter(x => x.isText).map(x => x.key + ':' + x.itype), f.actions[0].disabled, f.msg], ['resetPw', 'u2', null, ['pw:password', 'pw2:password'], true, ''], 'local reset: a small form with the password twice (secret fields), save disabled while empty');
+  c.setF({ pw: 'short12', pw2: 'short12' }); f = c.formVals(); eq([f.actions[0].disabled, f.fields.find(x => x.key === 'pw').err, f.msg], [true, '1', 'Fjalëkalimi duhet të ketë së paku 8 karaktere.'], 'local reset: under 8 characters → the server policy message, save disabled');
+  c.setF({ pw: 'x'.repeat(201), pw2: 'x'.repeat(201) }); f = c.formVals(); eq([f.actions[0].disabled, f.msg], [true, 'Fjalëkalimi mund të ketë deri në 200 karaktere.'], 'local reset: over 200 characters refused');
+  c.setF({ pw: 'Mirjeta-2026!', pw2: 'Mirjeta-2026?' }); f = c.formVals(); const p2 = f.fields.find(x => x.key === 'pw2');
+  eq([f.actions[0].disabled, p2.err, p2.hint, f.msg], [true, '1', 'nuk përputhen', 'Fjalëkalimet nuk përputhen.'], 'local reset: a mismatch is shown and blocks the save');
+  p2.set({ target: { value: 'Mirjeta-2026!' } }); f = c.formVals(); eq([f.actions[0].disabled, f.msg], [false, ''], 'local reset: equal and long enough → enabled');
+  const before = { ...db().users[1] }; f.actions[0].go(); const after = db().users[1];
+  eq([c.state.frm, c.state.confirm, after.pwSalt !== before.pwSalt, after.pwHash === c.pinHash('Mirjeta-2026!', after.pwSalt), c.pwIsDefault(after), db().audit[0].a, /Fjalëkalimi i Mirjeta Krasniqi u rivendos/.test(c.state.toast || '')],
+     [null, null, true, true, false, 'Fjalëkalimi i Mirjeta Krasniqi u rivendos nga administratori', true], 'local reset: hashed like every local password (fresh salt), form closed, audited, success toast — no dialog');
+  const leak = x => JSON.stringify(x).includes('Mirjeta-2026!');
+  eq([leak(c.state), leak(mem), JSON.stringify(mem).includes(after.pwHash)], [false, false, true], 'local reset: the password is nowhere in state, book or localStorage — only its hash');
+  // the owner's password: only by the owner (as on the server)
+  c.openDr('user', 'u1'); const own = () => c.drawerVals().actions.some(x => x.label === 'Rivendos fjalëkalimin'); const s0 = c.state.session;
+  const asOwner = own(); c.state.session = { ...s0, role: 'Financë' }; const asOther = own(); c.state.session = s0; c.state.dr = null;
+  eq([asOwner, asOther], [true, false], 'reset: the owner\'s password is offered only to the owner');
+  // the new password signs in, the old one no longer
+  c.logout(); c.setL({ email: 'mirjeta@abc-ks.com', pw: 'kontabo' }); c.login(); const oldOk = !!c.state.session;
+  c.setL({ email: 'mirjeta@abc-ks.com', pw: 'Mirjeta-2026!' }); c.login(); eq([oldOk, !!c.state.session && c.state.session.email], [false, 'mirjeta@abc-ks.com'], 'local reset: the typed password signs in, the old one is refused');
+  ctx.localStorage = null; }
 c.state.session = null;
 
 // ── API mode (kontabo-backend client) against a mocked server: login, state load/seed, commits with compare-and-set, 409 reload, server-owned mutations ──
@@ -600,7 +624,7 @@ const apiBlock = (async () => {
   const srv = { version: 0, state: null, users: [{ id: 'm1', userId: 'u1', name: 'Arben Berisha', email: 'arben@abc-ks.com', role: 'Pronar', branch: 'Dega Prishtinë', dept: 'Drejtoria', status: 'Aktiv', last: '—', pinSalt: 'a1b2c3d4', pinHash: 'x' }, { id: 'm2', userId: 'u2', name: 'Fjolla Kastrati', email: 'fjolla@abc-ks.com', role: 'Kasier', branch: 'Dega Prizren', dept: 'Shitje', status: 'Aktiv' }], roles: { Pronar: { fatura_shiko: true }, Kasier: { pos: true } }, fiscal: { mode: 'ATK_ELECTRONIC', version: 3, changedAt: '01.03.2026 10:12', changedBy: 'Arben B.', env: 'TEST', settings: { atk: { appId: 'APP-1' }, tremol: {}, flink: {} }, unresolved: 0 }, audit: [{ id: 1, t: '01.09.2026 08:30', u: 'Arben B.', a: 'seed' }], calls: [] };
   const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
   ctx.fetch = async (url, o = {}) => {
-    const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''), m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : {}; srv.calls.push(m + ' ' + path);
+    const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''), m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : {}; srv.calls.push(m + ' ' + path); (srv.raw = srv.raw || []).push({ m, path, body: o.body || '' });
     (srv.hdr = srv.hdr || []).push((o.headers || {})['X-Kontabo-Client']); if (path === '/state/commit' && JSON.stringify(body.patch || {}).includes('"_srv"')) srv.srvCommitted = true;
     const authed = (o.headers || {}).Authorization === 'Bearer acc-1';
     if (path === '/health') return json(200, { ok: true, app: 'Kontabo Backend', version: '0.1.0', db: 'sqlite' });
@@ -617,6 +641,9 @@ const apiBlock = (async () => {
     if (path === '/fiscal/settings') { srv.fiscal.settings = { atk: body.atk, tremol: body.tremol, flink: body.flink }; return json(200, { settings: srv.fiscal.settings, env: 'TEST' }); }
     if (path.startsWith('/audit')) { if (m === 'POST') { srv.audit.unshift({ id: srv.audit.length + 1, t: 'now', u: 'Arben B.', a: body.action }); return json(200, { item: srv.audit[0] }); } return json(200, { items: srv.audit }); }
     if (/^\/users\/m2\/pin$/.test(path)) { srv.users[1] = { ...srv.users[1], pinSalt: 'ffffffff', pinHash: 'pinned', pinChangedAt: 'now' }; return json(200, { user: srv.users[1] }); }
+    // POST /users/{id}/reset-password {password} → {ok}: the server's policy (validation_error / weak_password); 'Serveri-refuzon-1' plays a 403
+    if (/^\/users\/m\d+\/reset-password$/.test(path)) { (srv.resets = srv.resets || []).push({ path, body }); if (typeof body.password !== 'string' || !body.password) return json(400, { error: 'validation_error', message: 'Të dhënat e kërkesës janë të pavlefshme' });
+      if (body.password.length < 8) return json(400, { error: 'weak_password', message: 'Fjalëkalimi duhet të ketë së paku 8 karaktere' }); if (body.password === 'Serveri-refuzon-1') return json(403, { error: 'forbidden', message: 'Nuk mund të rivendosni fjalëkalimin e një përdoruesi me më shumë leje se ju' }); return json(200, { ok: true }); }
     if (/^\/users\/m2$/.test(path) && m === 'PATCH') { srv.users[1] = { ...srv.users[1], ...body }; return json(200, { user: srv.users[1] }); }
     if (path === '/users/invite') { srv.users.push({ id: 'm3', userId: 'u3', name: body.email, email: body.email, role: body.role, branch: body.branch, dept: body.dept, status: 'Ftuar' }); return json(200, { user: srv.users[2], inviteToken: 'inv-123' }); }
     if (path === '/terminals' && m === 'GET') return json(200, { terminals: srv.terminals || [] });
@@ -665,6 +692,26 @@ const apiBlock = (async () => {
   a.openDr('user', 'm2'); a.drawerVals().actions.find(x => x.label === 'Pezullo').go(); a.state.confirm.ok(); a.state.confirm = null; for (let i = 0; i < 30 && a.state.db.users[1].status !== 'Pezulluar'; i++) await wait(); eq(a.state.db.users[1].status, 'Pezulluar', 'api: suspend → PATCH /users/{id}');
   a.openForm('user', { email: 'test@abc-ks.com', role: 'Shitje', branch: 'Dega Prishtinë', dept: '' }); a.formVals().actions[0].go(); for (let i = 0; i < 30 && a.state.db.users.length < 3; i++) await wait(); eq([a.state.db.users[2].status, !!a.state.confirm && /inv-123/.test(a.state.confirm.body)], ['Ftuar', true], 'api: invite → server, dev token shown'); a.state.confirm = null;
   { const t = a.pageTable('Rolet'); t.rows[0].cells[1 + a.ROLES.indexOf('Kasier')].go(); for (let i = 0; i < 30 && !srv.calls.includes('PUT /roles'); i++) await wait(); eq(srv.roles.Kasier.fatura_shiko, true, 'api: roles matrix → PUT /roles'); }
+  // "Rivendos fjalëkalimin" (API): typed twice → POST /users/{id}/reset-password {password} → {ok}; nothing comes back, nothing is kept
+  { a.state.confirm = null; a.openDr('user', 'm2'); a.drawerVals().actions.find(x => x.label === 'Rivendos fjalëkalimin').go();
+    const n0 = srv.calls.length; let f = a.formVals();
+    eq([a.state.frm.kind, a.state.frm.userId, f.actions[0].disabled, /serveri/.test(f.sub), f.fields.filter(x => x.isText).map(x => x.itype)], ['resetPw', 'm2', true, true, ['password', 'password']], 'api reset: the drawer action opens the small form (password twice), no request yet');
+    a.setF({ pw: 'Fjolla-2026!', pw2: 'Fjolla-2026' }); f = a.formVals(); eq([f.actions[0].disabled, f.msg, f.fields.find(x => x.key === 'pw2').hint], [true, 'Fjalëkalimet nuk përputhen.', 'nuk përputhen'], 'api reset: a mismatch is shown and blocks');
+    a.setF({ pw: 'Fjolla1', pw2: 'Fjolla1' }); f = a.formVals(); eq([f.actions[0].disabled, f.msg, srv.calls.length - n0], [true, 'Fjalëkalimi duhet të ketë së paku 8 karaktere.', 0], 'api reset: under 8 characters refused before any request');
+    // the server refuses: its message in the form, the typed passwords dropped from state, the form stays open
+    a.setF({ pw: 'Serveri-refuzon-1', pw2: 'Serveri-refuzon-1' }); a.formVals().actions[0].go(); eq([a.formVals().actions[0].label, a.formVals().actions[0].disabled], ['Po ruhet…', true], 'api reset: busy while the request runs');
+    for (let i = 0; i < 30 && a.state.frm && a.state.frm.busy; i++) await wait();
+    f = a.formVals(); eq([a.state.frm && a.state.frm.kind, a.state.frm && a.state.frm.pw, a.state.frm && a.state.frm.pw2, f && f.msg, /Rivendosja dështoi/.test(a.state.toast || '')], ['resetPw', '', '', 'Rivendosja dështoi: Nuk mund të rivendosni fjalëkalimin e një përdoruesi me më shumë leje se ju', true], 'api reset: a server refusal is shown in the form, the fields are emptied');
+    f.fields.find(x => x.key === 'pw').set({ target: { value: 'Fjolla-2026!' } }); a.setF({ pw2: 'Fjolla-2026!' }); f = a.formVals(); eq([f.actions[0].disabled, f.msg], [false, ''], 'api reset: typing again clears the error');
+    f.actions[0].go(); for (let i = 0; i < 30 && a.state.frm; i++) await wait();
+    const last = srv.resets[srv.resets.length - 1];
+    eq([srv.resets.length, last.path, last.body, a.state.frm, a.state.confirm, a.state.toast], [2, '/users/m2/reset-password', { password: 'Fjolla-2026!' }, null, null, 'Fjalëkalimi i Fjolla Kastrati u rivendos · sesionet e tij u mbyllën'], 'api reset: POST /users/m2/reset-password {password} → form closed, success toast, no dialog');
+    await wait(); const leak = x => JSON.stringify(x).includes('Fjolla-2026!');
+    eq([leak(a.state), leak(mem), leak(a._pending || []), srv.raw.filter(r => r.body.includes('Fjolla-2026!')).map(r => r.m + ' ' + r.path), srv.raw.filter(r => r.m === 'POST' && r.path === '/audit' && /rivendos/.test(r.body)).length],
+       [false, false, false, ['POST /users/m2/reset-password'], 0], 'api reset: the password went ONLY in that request — no commit, state, mirror or localStorage copy; the server writes the audit line');
+    a.openDr('user', 'm1'); const own = () => a.drawerVals().actions.some(x => x.label === 'Rivendos fjalëkalimin'); const s0 = a.state.session;
+    const asOwner = own(); a.state.session = { ...s0, role: 'Kasier' }; const asOther = own(); a.state.session = s0; a.state.dr = null;
+    eq([asOwner, asOther], [true, false], 'api reset: the owner\'s row offers it only to the owner (the server says owner_protected anyway)'); }
   // fiscalization is till-owned: the web must NEVER write fiscal config to the server
   eq(srv.calls.filter(x => /\/fiscal/.test(x)), [], 'api: zero /fiscal calls of any kind from the web (no mode PUT, no settings PUT, no GET)');
   eq(srv.fiscal.mode, 'ATK_ELECTRONIC', 'api: server-side fiscal record untouched by the web');
@@ -691,7 +738,7 @@ const apiBlock = (async () => {
   a.logout(); await wait(); eq([a.state.session, a.apiAuthed(), srv.calls.includes('POST /auth/logout')], [null, false, true], 'api: logout revokes the refresh token and clears tokens');
   // platform admin without a tenant: login must not hang; lands in the admin panel on local demo books
   const loginAdmin = ctx.fetch; ctx.fetch = async (url, o = {}) => { const path = url.replace(/^http:\/\/[^/]+\/api\/v1/, ''); srv.calls.push((o.method || 'GET') + ' ' + path); if (path === '/auth/login') return json(200, { accessToken: 'acc-2', refreshToken: 'ref-2', expiresIn: 3600, user: { id: 'u9', name: 'Admin Kontabo', email: 'admin@kontabo.app', isPlatformAdmin: true }, tenant: null, tenants: [] });
-    if ((o.headers || {}).Authorization === 'Bearer acc-2') { if (path === '/admin/tenants/t1/owner-password') return json(200, { email: 'pronar@abc-ks.com', password: JSON.parse(o.body || '{}').password || 'Gjeneruar123', created: false, activated: true });
+    if ((o.headers || {}).Authorization === 'Bearer acc-2') { if (path === '/admin/tenants/t1/owner-password') { const b = JSON.parse(o.body || '{}'); (srv.ownerPw = srv.ownerPw || []).push(b); if (typeof b.password !== 'string' || !b.password) return json(400, { error: 'validation_error', message: 'Të dhënat e kërkesës janë të pavlefshme' }); if (b.password.length < 8) return json(400, { error: 'weak_password', message: 'Fjalëkalimi duhet të ketë së paku 8 karaktere' }); return json(200, { email: 'pronar@abc-ks.com', created: false, activated: true }); }
       if (path === '/admin/tenants') return json(200, { tenants: [{ id: 't1', name: 'ABC SH.P.K.', nui: '810000001', city: 'Prishtinë', plan: 'pro', status: 'Aktiv', users: 3 }] }); if (path === '/admin/plans') return json(200, { plans: {} }); if (path === '/admin/flags') return json(200, { flags: {} }); if (path.startsWith('/admin/audit')) return json(200, { items: [{ t: 'now', u: 'admin', a: 'login' }] }); if (path === '/admin/users') return json(200, { users: [{ id: 'm1', userId: 'u1', tenantId: 't1', name: 'Arben Berisha', email: 'arben@abc-ks.com', tenant: 'ABC SH.P.K.', role: 'Pronar', status: 'Aktiv', last: '', isPlatformAdmin: false }] }); if (path === '/auth/logout') return json(200, { ok: true }); }
     return loginAdmin(url, o); };
   a.setL({ email: 'admin@kontabo.app', pw: 'x', remember: true }); a.login(); for (let i = 0; i < 40 && a.state.login.busy; i++) await wait(); for (let i = 0; i < 20 && !a.state.db.admin.tenants.length; i++) await wait();
@@ -702,12 +749,13 @@ const apiBlock = (async () => {
   { a.openDr('tenant', 'ABC SH.P.K.'); const acts = a.drawerVals().actions.map(x => x.label);
     eq(acts.includes('Fjalëkalimi i pronarit'), true, 'admin: the tenant drawer offers "Fjalëkalimi i pronarit"');
     a.drawerVals().actions.find(x => x.label === 'Fjalëkalimi i pronarit').go();
-    let f = a.formVals(); eq([a.state.frm.kind, f.actions[0].disabled], ['ownerPw', false], 'admin: the form opens, an empty password is allowed (the server generates one)');
-    a.setF({ pw: 'short' }); f = a.formVals(); eq(f.actions[0].disabled, true, 'admin: a password under 8 characters is refused before the request');
-    a.setF({ pw: 'Fjalekalimi1' }); f = a.formVals(); f.actions[0].go();
-    for (let i = 0; i < 20 && !a.state.confirm; i++) await wait();
-    eq([srv.calls.includes('POST /admin/tenants/t1/owner-password'), /pronar@abc-ks\.com/.test((a.state.confirm || {}).body || ''), /Fjalekalimi1/.test((a.state.confirm || {}).body || '')], [true, true, true],
-       'admin: the password reaches the server and comes back once, with the owner e-mail');
+    let f = a.formVals(); eq([a.state.frm.kind, f.actions[0].disabled, f.fields.filter(x => x.isText).map(x => x.key + ':' + x.itype)], ['ownerPw', true, ['pw:password', 'pw2:password']], 'admin: the form asks for the password twice; empty is refused (the server generates nothing)');
+    a.setF({ pw: 'short', pw2: 'short' }); f = a.formVals(); eq([f.actions[0].disabled, f.msg], [true, 'Fjalëkalimi duhet të ketë së paku 8 karaktere.'], 'admin: a password under 8 characters is refused before the request');
+    a.setF({ pw: ' Fjalekalimi1', pw2: 'Fjalekalimi1' }); f = a.formVals(); eq([f.actions[0].disabled, f.msg], [true, 'Fjalëkalimet nuk përputhen.'], 'admin: a mismatch (spaces count — kept verbatim like the server) blocks');
+    a.setF({ pw: 'Fjalekalimi1' }); f = a.formVals(); eq(f.actions[0].disabled, false, 'admin: equal and long enough → enabled'); f.actions[0].go();
+    for (let i = 0; i < 20 && a.state.frm; i++) await wait();
+    eq([srv.calls.includes('POST /admin/tenants/t1/owner-password'), srv.ownerPw, a.state.frm, a.state.confirm, /pronar@abc-ks\.com u vendos/.test(a.state.toast || ''), JSON.stringify(a.state).includes('Fjalekalimi1')], [true, [{ password: 'Fjalekalimi1' }], null, null, true, false],
+       'admin: the typed password reaches the server; success toast with the owner e-mail — nothing shown back, nothing kept in state');
     a.state.confirm = null; a.state.dr = null; }
   a.exitAdmin(); eq(a.state.admin, true, 'api: platform admin cannot enter a company ERP');
   a.logout(); await wait(); eq(a.state.session, null, 'api: platform admin logout');
