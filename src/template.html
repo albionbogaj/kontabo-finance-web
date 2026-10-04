@@ -2859,9 +2859,11 @@ class Component extends DCLogic {
   // found → created (barKey + barTerm; the bar's SKU when PROP_SKU and free, else BAR-<n>) when `before` is null, else rejected.
   // → {state, result:{sku (the SKU used / found), applied, kept, reason}, created}
   // A category this batch renamed (W.renamed: its old name → the new one) is read under its new name on both sides (a proposal queued before the
-  // rename still carries the old name — it is the same category, not a new one). A change of an existing product never creates a category: the bar
-  // sends every new / renamed category as its own proposal (applied first), so a name the ERP does not have after them is the bar's stale name (an
-  // intermediate rename, a rename undone) — the product keeps its category; so does a product whose move is only a rename this batch refused
+  // rename still carries the old name — it is the same category, not a new one). A change of an existing product to a category the ERP does not have
+  // creates it, like the product form (a bar category never proposed: a link before 1.11.3, the demo menu) — unless this batch renamed / undid /
+  // refused a rename of the category the product was in, from the same terminal (W.touched): then the name is the bar's stale one (the product was
+  // saved between two renames: an intermediate name, a rename undone) — the product keeps its category; so does a product whose move is only a
+  // rename its own bar sent and this batch refused (W.refused). A new product still creates its category (by name alone a stale one is not told apart)
   propProduct(W,V,it){ const key=String(it.key||''), A=it.after&&typeof it.after==='object'?it.after:null, B=it.before&&typeof it.before==='object'?it.before:null, sku=typeof it.sku==='string'?it.sku.trim():'', P=W.products, L=this.PROP_LBL, tid=it.terminal&&typeof it.terminal==='object'&&typeof it.terminal.id==='string'?it.terminal.id:'';
     const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason:this.propCut(reason)}}), rn=x=>{ const t=x.cat!==undefined&&W.renamed&&W.renamed.get(this.norm(x.cat)); if(t) x.cat=t; return x; };
     if(!A) return no('Propozimi nuk ka të dhënat e produktit.');
@@ -2879,12 +2881,12 @@ class Component extends DCLogic {
       if(ev!=null&&this.propEq(f,av,ev)){ applied.push(f); continue; } // the ERP already has the bar's value
       if(bv===undefined||!this.propEq(f,ev,bv)){ kept.push(f); erp.push(f); continue; } // changed in the ERP since the bar saw it (or no base): the ERP wins
       if(f==='unit'){ const e=this.productError(V,{...p,unit:av},p,{unit:av}); if(e){ kept.push(f); why.push(e); continue; } } // the unit lock (opening / movements incl. the POS ledger / recipe / draft) and the pack rule
-      if(f==='cat'){ const rf=!!W.refused&&W.refused.get(this.norm(bv))===this.norm(av); if(rf||!this.findCategory(W.categories,av)){ kept.push(f); why.push((rf?'riemërimi i kategorisë “'+bv+'” u refuzua':'kategoria “'+av+'” nuk është në ERP (emër i vjetër nga arka)')+' — mbetet “'+ev+'”'); continue; } }
+      if(f==='cat'){ const tk=tid+'\n'+this.norm(bv), rf=!!W.refused&&W.refused.get(tk)===this.norm(av); if(rf||(!this.findCategory(W.categories,av)&&!!W.touched&&W.touched.has(tk))){ kept.push(f); why.push((rf?'riemërimi i kategorisë “'+bv+'” u refuzua':'kategoria “'+av+'” nuk është në ERP (emër i vjetër nga arka)')+' — mbetet “'+ev+'”'); continue; } }
       set[f]=av; applied.push(f); }
     const q=byName&&key&&tid&&!p.barKey?{barKey:key,barTerm:tid}:{}; // found by the name: bound to the bar's key (and terminal) from now on
     if(Object.keys(set).length||q.barKey){
       if('name' in set) q.name=set.name; if('unit' in set) q.unit=set.unit; if('active' in set) q.pos=set.active;
-      if('cat' in set) q.cat=this.canonCat(W,set.cat); // a category the ERP has (never created here)
+      if('cat' in set){ q.cat=this.canonCat(W,set.cat); W.categories=this.withCategory(W,set.cat); } // a bar category the ERP does not have yet is created
       // the gross the till prints stays verbatim; the net (price_t / price_c, the books' base) is derived from it at the (new) letter's effective rate
       if('gross_t' in set||'tax' in set){ const tax=set.tax||p.tax, G='gross_t' in set?set.gross_t:cur.gross_t, pt=this.netOfT(G,this.effRate(tax,W)); Object.assign(q,{tax,gross_t:G,price_t:pt,price_c:this.cOfT(pt)}); }
       const np={...p,...q}; W.products=W.products.map(x=>x===p?np:x); }
@@ -2892,14 +2894,16 @@ class Component extends DCLogic {
     return {state:!kept.length?'applied':applied.length?'partial':'rejected',result:{sku:p.sku,applied,kept,reason:this.propCut(reason)}}; }
   // a category proposal: rename when the ERP still has the `before` name unchanged (the category and every product's `cat`); a `before` name the
   // ERP no longer has (renamed / removed there) is the ERP's change — refused, nothing created, unless the ERP has exactly the `after` name already;
-  // create only without a `before` name, when no category has the `after` name; else the ERP wins (rejected; nothing to do when it has that name)
+  // create only without a `before` name, when no category has the `after` name; else the ERP wins (rejected; nothing to do when it has that name).
+  // A rename found (applied, undone or refused) is noted per terminal for that bar's product proposals (W.touched: the category's name now; W.refused)
   propCategory(W,it){ const A=it.after&&typeof it.after==='object'?it.after:{}, nm=typeof A.name==='string'?A.name.trim():'', bn=it.before&&typeof it.before==='object'&&typeof it.before.name==='string'?it.before.name.trim():'', K=W.categories;
+    const tk=n=>(it.terminal&&typeof it.terminal==='object'&&typeof it.terminal.id==='string'?it.terminal.id:'')+'\n'+this.norm(n), touch=n=>(W.touched||(W.touched=new Set())).add(tk(n));
     const R=(state,reason,on)=>({state,result:{applied:state==='applied'&&on?['name']:[],kept:state==='rejected'?['name']:[],reason:this.propCut(reason)}});
     if(!nm||nm.length>200) return R('rejected','Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.');
     const cur=bn?K.find(c=>String(c.name||'').trim()===bn)||null:null, ex=this.findCategory(K,nm);
     if(bn&&!cur) return ex&&ex.name===nm?R('applied','',false):R('rejected','Kategoria “'+bn+'” nuk është më në ERP (u riemërua ose u fshi atje) — fiton ERP-ja; “'+nm+'” nuk krijohet.');
-    if(cur){ if(cur.name===nm) return R('applied','',false); if(ex&&ex!==cur){ (W.refused||(W.refused=new Map())).set(this.norm(bn),this.norm(nm)); return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.'); } // W.refused: a product moved by this rename stays
-      W.categories=K.map(c=>c===cur?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); (W.renamed||(W.renamed=new Map())).set(this.norm(cur.name),nm); return R('applied','',true); }
+    if(cur){ if(cur.name===nm){ touch(nm); return R('applied','',false); } if(ex&&ex!==cur){ touch(bn); (W.refused||(W.refused=new Map())).set(tk(bn),this.norm(nm)); return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.'); } // W.refused: a product moved by this rename stays
+      W.categories=K.map(c=>c===cur?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); (W.renamed||(W.renamed=new Map())).set(this.norm(cur.name),nm); touch(nm); return R('applied','',true); }
     if(!ex){ W.categories=[...K,this.newCategory(nm,K)]; if(W.renamed) W.renamed.delete(this.norm(nm)); return R('applied','',true); }
     if(ex.name===nm) return R('applied','',true);
     return R('rejected','Kategoria ekziston në ERP si “'+ex.name+'”.'); }

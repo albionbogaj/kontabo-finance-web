@@ -2574,19 +2574,32 @@ apiBlock.then(async () => {
         eq([[x.r.m1[0], x.r.m1[1].sku], [m.barKey, m.barTerm, m.gross_t], [x.r.m2[1].sku, r.barKey, r.barTerm], [y.r.m3[0], y.r.m3[1].sku, y.d.products.length], [z.r.m4, prod(z.d, 'MOJ').gross_t]],
           [['partial', 'MOJ'], ['p:33', 'tb', 30000], ['RUM', 'p:9', 'term-X'], ['partial', 'MOJ', 7], [['applied', { sku: 'MOJ', applied: ['gross_t'], kept: [], reason: '' }], 32000]],
           'proposals: a new product found by its name is bound to the bar (barKey + barTerm) — the bar\'s next proposal of that key finds it (a rename without `before` creates no second product; a price change with `before` is merged, not refused); one bound to another key keeps it'); }
-      // a product's `after.cat` is the bar's category name when it was saved — after a later rename / undo on the bar a name the ERP never gets: a change
-      // of a product never creates a category (every new / renamed bar category is its own proposal, applied first) — the product keeps its category;
-      // a move that is only a rename this batch refused does not happen either; a real move to an existing category does; a new product creates its own
+      // a product's `after.cat` is the bar's category name when it was saved — after a later rename / undo on the bar a name the ERP never gets: when
+      // this batch renamed / undid / refused a rename of the product's category (same terminal), a name the ERP does not have is that stale name — the
+      // product keeps its category, no stray category; a move that is only a rename this batch refused does not happen either; a real move does
       { const P = sku => ({ ...Pp(sku, sku), cat: 'Pije' }), dc = { ...db0, products: [P('COLA'), P('FANTA')], categories: [{ id: 'K-pije', name: 'Pije', note: '' }, { id: 'K-alk', name: 'Pije Alkoholike', note: '' }] };
         const c0 = seen(dc, 'COLA'), up = (id, cat) => pr(id, { key: 'p:12', sku: 'COLA', before: c0, after: { ...c0, cat, gross_t: 26000 } }), cats = d => d.categories.map(c => c.name), where = d => d.products.map(p => p.cat);
         const b1 = apply(dc, [up('b1', 'Pijet'), kr('b2', 'Pije', 'Pije freskuese')]), b2 = apply(dc, [up('b3', 'Pijet'), kr('b4', 'Pije', 'Pije')]), b3 = apply(dc, [kr('b5', 'Pije', 'Pije Alkoholike'), up('b6', 'Pije Alkoholike')]);
-        const b4 = apply(dc, [up('b7', 'Snacks')]), b5 = apply(dc, [up('b8', 'pije alkoholike')]), b6 = apply(dc, [pr('b9', { key: 'p:13', after: { ...nu, cat: 'Snacks' } })]);
-        eq([[b1.r.b1, cats(b1.d), where(b1.d), prod(b1.d, 'COLA').gross_t], [b2.r.b3[0], cats(b2.d), where(b2.d)], [b3.r.b5[0], b3.r.b6, where(b3.d)], [b4.r.b7[0], cats(b4.d)], [b5.r.b8, where(b5.d)], [b6.r.b9[0], cats(b6.d)]],
+        const b5 = apply(dc, [up('b8', 'pije alkoholike')]), b6 = apply(dc, [pr('b9', { key: 'p:13', after: { ...nu, cat: 'Snacks' } })]);
+        eq([[b1.r.b1, cats(b1.d), where(b1.d), prod(b1.d, 'COLA').gross_t], [b2.r.b3[0], cats(b2.d), where(b2.d)], [b3.r.b5[0], b3.r.b6, where(b3.d)], [b5.r.b8, where(b5.d)], [b6.r.b9[0], cats(b6.d)]],
           [[['partial', { sku: 'COLA', applied: ['gross_t'], kept: ['cat'], reason: 'kategoria “Pijet” nuk është në ERP (emër i vjetër nga arka) — mbetet “Pije freskuese”' }], ['Pije freskuese', 'Pije Alkoholike'], ['Pije freskuese', 'Pije freskuese'], 26000],
             ['partial', ['Pije', 'Pije Alkoholike'], ['Pije', 'Pije']],
             ['rejected', ['partial', { sku: 'COLA', applied: ['gross_t'], kept: ['cat'], reason: 'riemërimi i kategorisë “Pije” u refuzua — mbetet “Pije”' }], ['Pije', 'Pije']],
-            ['partial', ['Pije', 'Pije Alkoholike']], [['applied', { sku: 'COLA', applied: ['cat', 'gross_t'], kept: [], reason: '' }], ['Pije Alkoholike', 'Pije']], ['applied', ['Pije', 'Pije Alkoholike', 'Snacks']]],
-          'proposals, a stale category name (rename Pije → Pijet → Pije freskuese, or undone back to Pije, with a product edited in between; a name the ERP never had): the product keeps its category, no stray category; a rename refused (the ERP has that name) moves no product; a real move to an existing category is applied; a new product still creates its category'); }
+            [['applied', { sku: 'COLA', applied: ['cat', 'gross_t'], kept: [], reason: '' }], ['Pije Alkoholike', 'Pije']], ['applied', ['Pije', 'Pije Alkoholike', 'Snacks']]],
+          'proposals, a stale category name (rename Pije → Pijet → Pije freskuese, or undone back to Pije, with a product edited in between; a name the ERP never had): the product keeps its category, no stray category; a rename refused (the ERP has that name) moves no product; a real move to an existing category is applied; a new product still creates its category');
+        // a move to a bar category the ERP never received (finance_emri NULL — a link before 1.11.3, the demo menu: the bar sends no proposal of it): the
+        // category is created and the product moved, like the product form — also when another terminal renamed / undid / refused a rename of the
+        // product's category, or the same terminal renamed another category, in this batch (neither makes the name stale)
+        const TX = { id: 'term-X', name: 'Bar 2', posId: 'X1' }, kx = (id, before, name) => ({ ...kr(id, before, name), terminal: TX }), ok = { sku: 'COLA', applied: ['cat', 'gross_t'], kept: [], reason: '' };
+        const m1 = apply(dc, [up('m1', 'Pije joalkoolike')]), m2 = apply(dc, [kx('m2', 'Pije', 'Pije'), up('m3', 'Pije joalkoolike')]), m3 = apply(dc, [kr('m4', 'Pije Alkoholike', 'Alkool'), up('m5', 'Snacks')]);
+        const m4 = apply(dc, [kx('m6', 'Pije', 'Pije Alkoholike'), up('m7', 'Pije Alkoholike')]), m5 = apply(dc, [kx('m8', 'Pije', 'Pije freskuese'), up('m9', 'Pijet')]);
+        eq([[m1.r.m1, cats(m1.d), where(m1.d)], [m2.r.m3, cats(m2.d), where(m2.d)], [m3.r.m4[0], m3.r.m5, cats(m3.d), where(m3.d)], [m4.r.m6[0], m4.r.m7, where(m4.d)], [m5.r.m9, cats(m5.d), where(m5.d)]],
+          [[['applied', ok], ['Pije', 'Pije Alkoholike', 'Pije joalkoolike'], ['Pije joalkoolike', 'Pije']],
+            [['applied', ok], ['Pije', 'Pije Alkoholike', 'Pije joalkoolike'], ['Pije joalkoolike', 'Pije']],
+            ['applied', ['applied', ok], ['Pije', 'Alkool', 'Snacks'], ['Snacks', 'Pije']],
+            ['rejected', ['applied', ok], ['Pije Alkoholike', 'Pije']],
+            [['applied', ok], ['Pije freskuese', 'Pije Alkoholike', 'Pijet'], ['Pijet', 'Pije freskuese']]],
+          'proposals, a move to a bar category the ERP never received (no proposal of it — a link before 1.11.3, the demo menu): the category is created and the product moved (not refused as a stale name) — also when ANOTHER terminal renamed / undid / refused a rename of that category, or the same terminal renamed another one, in the batch'); }
       { const x = apply(db0, [kr('k1', null, 'Kokteje'), kr('k2', null, 'Pije'), kr('k3', null, 'pije'), kr('k4', 'Ushqim', 'Ëmbëlsira'), kr('k5', 'Snacks', 'Snacks të kripura'), kr('k6', null, '  '), kr('k7', 'Snacks', 'Kokteje')]), ok1 = { applied: ['name'], kept: [], reason: '' };
         eq([x.r.k1, x.r.k2, x.r.k3, x.r.k4, x.r.k5, x.r.k6, x.r.k7, x.d.categories.map(c => c.id + ':' + c.name)],
           [['applied', ok1], ['applied', ok1], ['rejected', { applied: [], kept: ['name'], reason: 'Kategoria ekziston në ERP si “Pije”.' }], ['rejected', { applied: [], kept: ['name'], reason: 'Kategoria “Ëmbëlsira” ekziston tashmë në ERP.' }], ['rejected', { applied: [], kept: ['name'], reason: 'Kategoria “Snacks” nuk është më në ERP (u riemërua ose u fshi atje) — fiton ERP-ja; “Snacks të kripura” nuk krijohet.' }], ['rejected', { applied: [], kept: ['name'], reason: 'Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.' }], ['applied', { applied: [], kept: [], reason: '' }],
