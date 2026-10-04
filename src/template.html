@@ -1127,6 +1127,11 @@ input,select{font-family:inherit}
         </sc-if>
 
         <sc-if value="{{ fiscalQueue }}" hint-placeholder-val="{{ false }}">
+          <div style="margin-bottom:14px;padding:12px 14px;border-radius:12px;background:rgba(37,99,235,.05);border:1px solid rgba(37,99,235,.14);font-size:12.5px;color:#3C5268;line-height:1.5">
+            <b style="color:#10243A">Çfarë fiskalizohet vërtet.</b> Kuponët fiskalizohen <b>në vetë arkën</b> (certifikata e ATK-së rri atje) — këtu shihet vetëm gjendja e tyre.
+            <b>Faturat e lëshuara në ERP nuk kalojnë nëpër pajisje fiskale:</b> ato deklarohen te Librat e TVSH-së › Libri i shitjes dhe te deklarata.
+            Fiskalizimi elektronik i vetë faturës do të jetë i mundur kur ATK-ja të japë specifikimin e saj (SEF) — deri atëherë ERP-ja nuk premton asgjë që nuk e bën.
+          </div>
           <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px">
             <sc-for list="{{ queueStats }}" as="s" hint-placeholder-count="5">
               <div style="padding:12px 14px;border-radius:12px;background:rgba(255,255,255,.72);border:1px solid rgba(16,36,58,.07);display:flex;justify-content:space-between;align-items:center"><span style="font-size:12.5px;font-weight:600;color:{{ s.c }}">{{ s.label }}</span><b style="font-size:18px">{{ s.n }}</b></div>
@@ -1907,7 +1912,7 @@ class Component extends DCLogic {
     rp:'', rTab:'', admin:false, aq:'', aTab:'Të gjitha', secret:null,
     // POS ledger (API mode): the receipt list of P:Shitje / P:Kthime / fiscal "Kuponët" (GET /pos/receipts), its filters and pages, the
     // receipt drawer (GET /pos/receipts/{id}), the server's API keys and the raw key shown once after creating it
-    posList:null, posF:null, posPages:null, posRc:null, apiKeysSrv:null, apiSecret:null,
+    posList:null, posF:null, posPages:null, posRc:null, apiKeysSrv:null, apiSecret:null, srvWatch:null,
     // list tools: invoice selection (checkboxes), sort/filter of the Fatura, Klientë and Produktet lists
     isel:{}, psel:{}, invSort:'date_desc', invKind:'Të gjitha', cSort:'name', cFilter:'Të gjitha', pSort:'name', pFilter:'Të gjitha',
     // login: the signed-in user (null = login screen) and the login form
@@ -1918,6 +1923,16 @@ class Component extends DCLogic {
   TAX = { A:{name:'E liruar nga TVSH',rate:0}, C:{name:'Norma 0%',rate:0}, D:{name:'Norma e reduktuar (8%)',rate:8}, E:{name:'Norma standarde (18%)',rate:18} };
   // One-time migration from the pre-ATK letter map (C was 8%, D was 18%, E was "out of scope" 0%): letters move by their OLD rate, rates never change. db.taxV===2 marks migrated books.
   TAX_MIGRATE = { A:'A', C:'D', D:'E', E:'C' };
+  /* Databazat e krijuara para 04.10.2026 mbajnë fatura e nota me `fiscal: 'Në pritje'` — pritje për një agjent që
+     nuk ekzistoi kurrë. Ato kalojnë NJË HERË te statusi i vërtetë; dokumentet që i ka fiskalizuar vërtet arka
+     (kopjet A4 të kuponëve, që mbajnë „Fiskalizuar" ose rrjedhin nga `fromPos`) nuk preken. */
+  migrateFiscal(d){
+    if(!d||d.fiscalV===2) return d;
+    const fix=r=>r&&r.fiscal==='Në pritje'&&!r.fromPos?{...r,fiscal:this.ERP_FISCAL}:r;
+    return {...d,fiscalV:2,
+      ...(Array.isArray(d.invoices)?{invoices:d.invoices.map(fix)}:{}),
+      ...(Array.isArray(d.returns)?{returns:d.returns.map(fix)}:{})};
+  }
   migrateTax(d){
     if(!d||d.taxV===2) return d;
     const fix=t=>this.TAX_MIGRATE[t]||'E';
@@ -1991,10 +2006,19 @@ class Component extends DCLogic {
     {id:'a_audit',label:'Audit',icon:'kontab',items:['Audit log']},
     {id:'a_platform',label:'Platforma',icon:'settings',items:['Cilësimet e platformës','Statusi i sistemit']}
   ];
+  /* Fiskalizimi i dokumenteve të ERP-së — gjendja e vërtetë, jo një agjent i trilluar.
+     Kuponët fiskalizohen NË VETË ARKËN (certifikata e ATK-së rri atje — rregull i pronarit), kurse faturat që
+     lëshohen këtu nuk kalojnë nëpër asnjë pajisje fiskale: ato deklarohen te Libri i shitjes dhe te deklarata e
+     TVSH-së. Deri tani ERP-ja shkruante „në radhë te Fiscal Agent Prishtinë" — një agjent që nuk ekziston — dhe
+     fatura mbetej „Në pritje" përgjithmonë, çka lexohej si një fiskalizim që do të vinte. Kur ATK-ja të japë
+     specifikimin e faturës elektronike (SEF), rruga ndërtohet dhe ky status ndryshon; deri atëherë teksti thotë
+     saktësisht çfarë ndodh. */
+  ERP_FISCAL = 'Deklarohet në libër';
+  ERP_FISCAL_NOTE = 'Fatura nuk kalon nëpër pajisje fiskale — deklarohet te Libri i shitjes dhe te deklarata e TVSH-së';
   ST = {
     'Draft':{bg:'rgba(16,36,58,.06)',fg:'#3C5268'},'Lëshuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Paguar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     'Pjesërisht':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Vonuar':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Anuluar':{bg:'rgba(16,36,58,.06)',fg:'#8FA3B8'},'Kthyer':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},
-    'Fiskalizuar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Në pritje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Dështoi':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Ritentim':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pa fiskalizim':{bg:'rgba(16,36,58,.06)',fg:'#526477'},'Fiskalizuar (TEST)':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Në proces':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'E suksesshme':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
+    'Fiskalizuar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Në pritje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Dështoi':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Ritentim':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pa fiskalizim':{bg:'rgba(16,36,58,.06)',fg:'#526477'},'Deklarohet në libër':{bg:'rgba(37,99,235,.07)',fg:'#3C5268'},'Fiskalizuar (TEST)':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Në proces':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'E suksesshme':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     'Aktiv':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Ftuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pezulluar':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'—':{bg:'transparent',fg:'#8FA3B8'},'Vëmendje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Në rregull':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     // purchases, stock, finance, accounting
     'Pranuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Hyrje':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Dalje':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Blerje':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Shitje':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Rregullim':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Hapje':{bg:'rgba(16,36,58,.06)',fg:'#3C5268'},'Anulim shitje':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},'Anulim blerje':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},
@@ -2065,7 +2089,7 @@ class Component extends DCLogic {
 
   /* ───────── local persistence (single-file build: browser storage stands in for the backend) ───────── */
   persist(db){ try{ localStorage.setItem(this.KEY,JSON.stringify({...(db||this.state.db),savedAt:Date.now()})); this.setState({saved:true}); }catch(e){ /* storage unavailable (sandbox / private mode) */ } }
-  load(){ try{ const d=JSON.parse(localStorage.getItem(this.KEY)||'null'); if(!(d&&d.v===2&&Array.isArray(d.invoices))) return null; const x=this.seedExtras(); for(const k in x) if(d[k]===undefined) d[k]=x[k]; d.users=this.ensurePasswords(this.ensurePins(d.users)); return this.migrateCats(this.migrateTax(d)); }catch(e){ return null; } }
+  load(){ try{ const d=JSON.parse(localStorage.getItem(this.KEY)||'null'); if(!(d&&d.v===2&&Array.isArray(d.invoices))) return null; const x=this.seedExtras(); for(const k in x) if(d[k]===undefined) d[k]=x[k]; d.users=this.ensurePasswords(this.ensurePins(d.users)); return this.migrateFiscal(this.migrateCats(this.migrateTax(d))); }catch(e){ return null; } }
   // permissions used by the roles matrix and the invite form
   PERMS = [['fatura_shiko','Shiko fatura'],['fatura_krijo','Krijo & lësho fatura'],['pagesa','Menaxho pagesat'],['blerje','Blerje & furnitorë'],['stok','Stok & inventar'],['produkte','Produkte & çmime'],['finance','Shiko financën'],['raporte','Raporte'],['kontab','Kontabilitet'],['pos','POS & arka'],['hr','HR'],['perdorues','Menaxho përdoruesit'],['abonimi','Ndrysho abonimin'],['fiskal','Cilësimet e fiskalizimit'],['kompania','Të dhënat e kompanisë']];
   ROLES = ['Pronar','Admin','Financë','Kontabilist','Shitje','Kasier','Magazinier','HR','Prodhim','Punëtor'];
@@ -2847,18 +2871,20 @@ class Component extends DCLogic {
       const upd={...inv,status:'Anuluar',fiscal:wasFiscal?'Fiskalizuar':'—',history:[...inv.history,{t:this.stamp(),a:'Fatura u anulua'+(inv.status!=='Draft'&&inv.kind!=='Profaturë'?' · stoku u kthye':'')+(wasFiscal?' · anulimi fiskal në radhë':pending?' · kërkesa fiskale u tërhoq':''),u:this.who()}]};
       // a fiscalised invoice needs a fiscal cancellation; one still queued/failed is simply withdrawn — nothing to cancel at ATK
       let queue=d.queue;
-      if(wasFiscal) queue=[{ref:inv.no,kind:'Anulim',pos:'ERP · Fiscal Agent Prishtinë',time:'sot '+new Date().toTimeString().slice(0,5),status:'Në pritje',reason:'Anulim fature · në radhë',attempts:0},...d.queue];
-      else if(pending) queue=d.queue.map(q=>q.ref===inv.no&&q.kind==='Faturë'?{...q,status:'Anuluar',reason:'Fatura u anulua para fiskalizimit'}:q);
+      // një faturë A4 e një kuponi mban „Fiskalizuar" nga vetë kuponi: anulimin fiskal e bën ARKA (Historia › Anulo kuponin),
+      // prandaj këtu nuk vendoset asnjë kërkesë në radhë — do të ishte premtim i rremë
+      // një rresht i vjetër i radhës (nga databazat para kësaj ndreqjeje) mbyllet si i tërhequr
+      if(pending) queue=d.queue.map(q=>q.ref===inv.no&&q.kind==='Faturë'?{...q,status:'Anuluar',reason:'Fatura u anulua para fiskalizimit'}:q);
       return {invoices:d.invoices.map(r=>r.no===no?upd:r),movements:nd.movements,queue}; },'Fatura u anulua.'+(inv.status!=='Draft'&&inv.kind!=='Profaturë'?' Stoku u kthye.':'')+(inv.fiscal==='Fiskalizuar'?' Anulimi fiskal u vendos në radhë.':''),'#8FA3B8');
   }
   // issuing a saved draft: stock out, receivable, fiscal queue — the same effects as issuing from the form, dated today
   issueDraft(no){
     const db=this.state.db, inv=db.invoices.find(r=>r.no===no); if(!inv||inv.status!=='Draft'||inv.kind!=='Faturë') return;
     const date=this.fmtDate(this.today()), due=this.addDays(this.today(),Math.max(0,this.daysBetween(this.toIso(inv.date),this.toIso(inv.due)))), hhmm=new Date().toTimeString().slice(0,5), st=this.stamp();
-    this.commit(d=>{ const upd={...inv,date,due:this.fmtDate(due),status:'Lëshuar',fiscal:'Në pritje',history:[...inv.history,{t:st,a:'Fatura u lëshua (nga drafti)',u:this.who()},{t:st,a:'Fiskalizimi: në radhë te Fiscal Agent',u:'Sistemi'}]};
+    this.commit(d=>{ const upd={...inv,date,due:this.fmtDate(due),status:'Lëshuar',fiscal:this.ERP_FISCAL,history:[...inv.history,{t:st,a:'Fatura u lëshua (nga drafti)',u:this.who()},{t:st,a:this.ERP_FISCAL_NOTE,u:'Sistemi'}]};
       const nd={...d,movements:[...d.movements]}; this._pushMovements(nd,upd,'sale');
       const link={...(inv.fromOrder?this._linkSource(d,'order',inv.fromOrder,inv.no):{}),...(inv.fromQuote&&!inv.fromOrder?this._linkSource(d,'quote',inv.fromQuote,inv.no):{})};
-      return {invoices:d.invoices.map(r=>r.no===no?upd:r),movements:nd.movements,queue:[{ref:no,kind:'Faturë',pos:'ERP · Fiscal Agent Prishtinë',time:'sot '+hhmm,status:'Në pritje',reason:'Në radhë',attempts:0},...d.queue],...link}; },'Fatura '+no+' u lëshua · në radhën e fiskalizimit');
+      return {invoices:d.invoices.map(r=>r.no===no?upd:r),movements:nd.movements,...link}; },'Fatura '+no+' u lëshua · në radhën e fiskalizimit');
   }
   // receiving a purchase (Draft -> Pranuar) books the goods into stock and the amount into payables
   // a line whose product is a recipe (a draft made before it became one) is refused: the goods would reach the ledger but never the stock
@@ -3045,7 +3071,7 @@ class Component extends DCLogic {
       const stamp=this.stamp();
       const fiscalised=isSale&&/Fiskalizuar/.test(doc.fiscal||'');
       const ret={kind:isSale?'Kthim shitje':'Kthim blerje',no,ref,...(isSale?{customer:doc.customer}:{supplier:doc.supplier}),nui:doc.nui,fiscalNo:doc.fiscalNo,address:doc.address,date:this.fmtDate(date),due:this.fmtDate(date),status:'Lëshuar',items:its,sub,vat,total,paid:0,applied,refund,account:refund?acc.id:'',reason:reason||'',
-        fiscal:fiscalised?'Në pritje':'—',fiscalRef:'—',history:[{t:stamp,a:(isSale?'Nota e kreditit':'Kthimi i blerjes')+' u lëshua për '+ref+(applied?' · '+this.fmt(applied)+' ul detyrimin':'')+(refund?' · '+this.fmt(refund)+' rimbursim nga '+acc.name:''),u:this.who()},...(fiscalised?[{t:stamp,a:'Fiskalizimi: në radhë te Fiscal Agent (notë krediti)',u:'Sistemi'}]:[])]};
+        fiscal:fiscalised?this.ERP_FISCAL:'—',fiscalRef:'—',history:[{t:stamp,a:(isSale?'Nota e kreditit':'Kthimi i blerjes')+' u lëshua për '+ref+(applied?' · '+this.fmt(applied)+' ul detyrimin':'')+(refund?' · '+this.fmt(refund)+' rimbursim nga '+acc.name:''),u:this.who()},...(fiscalised?[{t:stamp,a:'Fiskalizimi: në radhë te Fiscal Agent (notë krediti)',u:'Sistemi'}]:[])]};
       // stock: sales returns MIRROR the invoice's own movements (back into the warehouse they left, at the cost they left with; a recipe line
       // brings back its ingredients pro rata to the returned quantity — as they left, never the current recipe — rounded once per ingredient /
       // warehouse / cost and cumulatively with the earlier notes still standing, so all the notes together never bring back more than went out);
@@ -3061,8 +3087,8 @@ class Component extends DCLogic {
         movements.push({...base,type:isSale?'sale_return':'purchase_return',sku:i.sku,qm:isSale?qm:-qm,...(wh?{wh}:{}),unit_c:isSale?(orig?orig.unit_c:this.avgCost(d,i.sku)):i.unit_c}); }
       const payments=refund?[{no:this.nextNo('PAG')(1),date:ret.date,dir:isSale?'out':'in',kind:'refund',ref:no,party:isSale?doc.customer:doc.supplier,amount_c:refund,account:acc.id,method:acc.type,note:(isSale?'Rimbursim · ':'Rimbursim nga furnitori · ')+ref,user:this.who()},...d.payments]:d.payments;
       const upd={...doc,credited:(doc.credited||0)+total,creditApplied:(doc.creditApplied||0)+applied,history:[...doc.history,{t:stamp,a:(isSale?'Notë krediti ':'Kthim ')+no+' · '+this.fmt(total)+(refund?' (rimbursim '+this.fmt(refund)+')':''),u:this.who()}]}; upd.status=this.settleStatus(upd,doc.status);
-      const queue=fiscalised?[{ref:no,kind:'Notë krediti',pos:'ERP · Fiscal Agent Prishtinë',time:'sot '+new Date().toTimeString().slice(0,5),status:'Në pritje',reason:'Në radhë · kthim për '+ref,attempts:0},...d.queue]:d.queue;
-      return {returns:[ret,...(d.returns||[])],[isSale?'invoices':'purchases']:(isSale?d.invoices:d.purchases).map(x=>x.no===ref?upd:x),movements,payments,queue};
+      
+      return {returns:[ret,...(d.returns||[])],[isSale?'invoices':'purchases']:(isSale?d.invoices:d.purchases).map(x=>x.no===ref?upd:x),movements,payments};
     },(isSale?'Nota e kreditit ':'Kthimi ')+no+' u lëshua');
     return no;
   }
@@ -3076,7 +3102,7 @@ class Component extends DCLogic {
       const payments=d.payments.filter(p=>!(p.kind==='refund'&&p.ref===no));
       const upd=doc?{...doc,credited:Math.max(0,(doc.credited||0)-ret.total),creditApplied:Math.max(0,(doc.creditApplied||0)-(ret.applied||0)),history:[...doc.history,{t:this.stamp(),a:(isSale?'Nota e kreditit ':'Kthimi ')+no+' u anulua',u:this.who()}]}:null; if(upd) upd.status=this.settleStatus(upd,isSale?'Lëshuar':'Pranuar');
       const wasFiscal=ret.fiscal==='Fiskalizuar', pending=ret.fiscal==='Në pritje';
-      let queue=d.queue; if(wasFiscal) queue=[{ref:no,kind:'Anulim',pos:'ERP · Fiscal Agent Prishtinë',time:'sot '+new Date().toTimeString().slice(0,5),status:'Në pritje',reason:'Anulim note krediti',attempts:0},...d.queue]; else if(pending) queue=d.queue.map(q=>q.ref===no?{...q,status:'Anuluar',reason:'Nota u anulua para fiskalizimit'}:q);
+      let queue=d.queue; if(pending) queue=d.queue.map(q=>q.ref===no?{...q,status:'Anuluar',reason:'Nota u anulua para fiskalizimit'}:q);
       const r2={...ret,status:'Anuluar',fiscal:wasFiscal?'Fiskalizuar':'—',history:[...ret.history,{t:this.stamp(),a:'U anulua · stoku dhe shumat u rikthyen'+(wasFiscal?' · anulimi fiskal në radhë':''),u:this.who()}]};
       return {returns:d.returns.map(r=>r.no===no?r2:r),movements,payments,queue,...(upd?{[isSale?'invoices':'purchases']:(isSale?d.invoices:d.purchases).map(x=>x.no===ret.ref?upd:x)}:{})};
     },(isSale?'Nota e kreditit ':'Kthimi ')+no+' u anulua','#8FA3B8');
@@ -3202,7 +3228,7 @@ class Component extends DCLogic {
     const x=this.seedEmpty({name:this.apiCfg().tenantName}); for(const k in x) if(state[k]===undefined&&!this.SERVER_KEYS.includes(k)&&!this.LEDGER_KEYS.includes(k)) state[k]=x[k];
     const m=await this.apiLoadMirrors();
     const needsTaxMig=state.taxV!==2;
-    const db=this.migrateCats(this.migrateTax({...state,...m,...this.apiSessionExtras(sess)}));
+    const db=this.migrateFiscal(this.migrateCats(this.migrateTax({...state,...m,...this.apiSessionExtras(sess)})));
     this._ledger=feat?this.ledgerFresh(this.apiCfg().tenantId):null; if(feat) this.posRtLoad();
     this.saveApi({version}); this.setState({db,saved:false});
     if(needsTaxMig) this.apiCommit({products:db.products,taxSettings:db.taxSettings,taxV:2}); // persist the ATK letter migration on the server
@@ -3986,7 +4012,7 @@ class Component extends DCLogic {
     catch(e){ return false; } // a failed silent re-read (any page) changes nothing (the rows stay; "Rifresko" shows the error)
     finally{ this._plRef=false; } }
   posListMore(w){ const cur=this.state.posList; if(!w||!cur||cur.busy) return; this.setState({posPages:{base:w.base,n:(w.pages||1)+1}}); }
-  componentDidUpdate(){ this.posListSync(); this.apiKeysSync(); }
+  componentDidUpdate(){ this.posListSync(); this.apiKeysSync(); this.watchSync(); }
   // the ledger rows in memory (never an API call): today's / this month's terminal-days, fiscal failures
   ledgerRows(pred){ const L=this._ledger; if(!L||!L.loaded) return []; const out=[]; for(const r of L.rows.values()) if(!pred||pred(r)) out.push(r); return out; }
   ledgerFiscalFails(){ const L=this._ledger; if(!L||!L.loaded) return {n:0,first:null}; const x=this._lff; if(x&&x.gen===L.gen&&x.ver===L.ver) return x.out;
@@ -3994,6 +4020,21 @@ class Component extends DCLogic {
     const out={n,first}; this._lff={gen:L.gen,ver:L.ver,out}; return out; }
   /* ── the server's read-only API keys (Cilësime › API, server with the POS ledger feature) and terminal token rotation ── */
   apiKeysOn(){ return this.ledgerOn(); } // the backend that serves posLedger:1 also serves /api-keys and POST /terminals/{id}/rotate
+  /* Roja e serverit (deploy/onprem/watch.sh → GET /system/watch): shërbimet, baza, disku dhe kopja rezervë.
+     E marrim te paneli, jo më shpesh se një herë në 5 minuta, dhe VETËM në mënyrën me server — një problem i
+     serverit duhet ta gjejë pronarin aty ku ai punon, jo te journald-i i një kompjuteri ku nuk hyn kurrë.
+     Një gabim rrjeti nuk shfaqet fare (do të ishte alarm i rremë sa herë ndërpritet lidhja); vetëm një përgjigje
+     e vërtetë e serverit që thotë „nuk jam mirë" bëhet njoftim. */
+  WATCH_EVERY = 300000;
+  watchSync(force){ const s=this.state;
+    if(!s.db||s.admin||!s.session||!this.apiAuthed()||s.page!=='Paneli') return null;
+    const w=s.srvWatch; if(!force&&w&&Date.now()-w.at<this.WATCH_EVERY) return null;
+    if(this._watchBusy) return null; this._watchBusy=true;
+    return this.apiFetch('/system/watch')
+      .then(j=>{ this.setState({srvWatch:{at:Date.now(),installed:!!j.installed,ok:j.ok!==false,ts:j.ts||'',failures:Array.isArray(j.failures)?j.failures:[]}}); return true; })
+      .catch(()=>{ this.setState({srvWatch:{at:Date.now(),installed:false,ok:true,ts:'',failures:[]}}); return false; })
+      .finally(()=>{ this._watchBusy=false; });
+  }
   apiKeysSync(force){ const s=this.state; if(!s.db||s.admin||!s.session||s.page!=='API'||!this.apiKeysOn()) return null; if(!force&&s.apiKeysSrv) return null; return this.apiKeysLoad(); }
   async apiKeysLoad(){ const tid=this.apiCfg().tenantId; this.setState(s=>({apiKeysSrv:{items:[],...(s.apiKeysSrv||{}),busy:true,err:''}}));
     try{ const j=await this.apiFetch('/api-keys'); if(this.apiCfg().tenantId!==tid) return false; this.setState({apiKeysSrv:{busy:false,err:'',items:Array.isArray(j.apiKeys)?j.apiKeys:[]}}); return true; }
@@ -4871,7 +4912,10 @@ class Component extends DCLogic {
       if(orig) actions.push({label:'Kuponi origjinal '+orig.no,kind:'',go:()=>this.openDr('pos',orig.id)});
       if(ret) actions.push({label:'Kthimi '+ret.no,kind:'',go:()=>this.openDr('pos',ret.id)});
       if(canc) actions.push({label:'Anulimi '+canc.no,kind:'',go:()=>this.openDr('pos',canc.id)});
-      actions.push({label:'Radha fiskale',kind:'',go:()=>this.setState({dr:null,section:'settings',page:'Fiskalizimi',fiscalTab:'Radha'})});
+      // dokumenti i ERP-së shkon te libri i shitjes; vetëm ai që e ka fiskalizuar arka ka kuptim te radha fiskale
+      actions.push(r.fiscal===this.ERP_FISCAL
+        ? {label:'Libri i shitjes',kind:'',go:()=>this.setState({dr:null,section:'librat',page:'Libri i shitjes'})}
+        : {label:'Radha fiskale',kind:'',go:()=>this.setState({dr:null,section:'settings',page:'Fiskalizimi',fiscalTab:'Radha'})});
       const fsColor=this.simFiscal(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':'#B91C1C';
       return {title:r.customer,subtitle:(r.status==='Kthim'?'Kupon kthimi':r.status==='Anulim'?'Anulim i kuponit '+(r.origNo||'—')+' (ATK CANCEL)':r.status==='Anuluar'?'Kupon POS · anuluar'+(r.cancelNo?' me '+r.cancelNo:''):'Kupon POS')+(r.source==='block'?' · '+this.posBlockLabel(r):'')+' · '+r.posName+' · '+r.branch+' · '+r.operator,no:r.no,badge:{text:this.posBadge(r.status),...this.st(this.posBadge(r.status))},actions,close,
         meta:[{k:'Data / ora',v:r.date+' '+r.time},...(r.source==='block'?[{k:'Blloku tatimor',v:'nr. '+(r.blockNo||'—')+(r.blockCode?' · kodi '+r.blockCode:'')+(r.blockTs?' · lëshuar '+r.blockTs:''),color:'#B45309'}]:[]),...(r.cancelReason?[{k:'Arsyeja e anulimit',v:r.cancelReason,color:'#B91C1C'}]:[]),{k:'Fiskalizimi',v:r.fiscal,color:fsColor},{k:'Referenca fiskale',v:r.fiscalRef,mono:true},{k:'Konfigurimi fiskal',v:(r.fiscalMode||'—')+' · v'+(r.fiscalVersion||0),mono:true},{k:'Para',v:this.fmt(r.cash_c)+(r.change_c?' (kusur '+this.fmt(r.change_c)+')':'')},{k:'Kartë',v:this.fmt(r.card_c)},{k:'Ndërrimi',v:r.shift||'—',mono:true},...(r.atkTx?[{k:'Transaksioni ATK',v:r.atkTx,mono:true}]:[]),{k:'Importuar',v:r.importedAt}],
@@ -6063,9 +6107,9 @@ class Component extends DCLogic {
         const sub=b.items.reduce((a,x)=>a+x.sub,0), vat=b.items.reduce((a,x)=>a+x.vatc,0);
         const history=[{t:stamp,a:single?'Fatura u krijua':'Krijuar nga faturimi masiv · '+batchId+' ('+batch.length+' dokumente)',u:user}];
         if(mode!=='draft') history.push({t:stamp,a:(mode==='proforma'?'Profatura':'Fatura')+' u lëshua',u:user});
-        if(mode==='issue') history.push({t:stamp,a:'Fiskalizimi: në radhë te Fiscal Agent',u:'Sistemi'});
+        if(mode==='issue') history.push({t:stamp,a:this.ERP_FISCAL_NOTE,u:'Sistemi'});
         return {no:no(i+1),kind:mode==='proforma'?'Profaturë':'Faturë',customer:b.cust.name,nui:b.cust.nui,fiscalNo:b.cust.fiscal,address:b.cust.address,date,due,
-          status:mode==='draft'?'Draft':'Lëshuar',fiscal:mode==='issue'?'Në pritje':'—',items:b.items,sub,vat,total:sub+vat,paid:0,fiscalRef:'—',note:b.note||'',batch:single?'':batchId,wh:(single&&opts.wh)||this.mainWh(s.db),
+          status:mode==='draft'?'Draft':'Lëshuar',fiscal:mode==='issue'?this.ERP_FISCAL:'—',items:b.items,sub,vat,total:sub+vat,paid:0,fiscalRef:'—',note:b.note||'',batch:single?'':batchId,wh:(single&&opts.wh)||this.mainWh(s.db),
           docType:(single&&opts.docType)||'mall',
           ...(single&&opts.fromOrder?{fromOrder:opts.fromOrder}:{}),...(single&&opts.fromQuote?{fromQuote:opts.fromQuote}:{}),...(single&&opts.fromProforma?{fromProforma:opts.fromProforma}:{}),history};
       });
@@ -6076,12 +6120,12 @@ class Component extends DCLogic {
       this.commit(d=>{
         const nd={...d,movements:[...d.movements]};
         if(mode==='issue') created.forEach(r=>this._pushMovements(nd,r,'sale')); // issued invoices leave the warehouse now
-        const queue=mode==='issue'?created.map(r=>({ref:r.no,kind:'Faturë',pos:'ERP · Fiscal Agent Prishtinë',time:'sot '+hhmm,status:'Në pritje',reason:single?'Në radhë':'Në radhë · '+batchId,attempts:0})).reverse().concat(d.queue):d.queue;
+        
         // an invoice created from a sales order / quote closes the source (drafts keep it open until issued)
         const link=single&&mode!=='draft'?{...(opts.fromOrder?this._linkSource(d,'order',opts.fromOrder,created[0].no):{}),...(opts.fromQuote&&!opts.fromOrder?this._linkSource(d,'quote',opts.fromQuote,created[0].no):{})}:{};
         let invoices=[...created].reverse().concat(d.invoices);
         if(single&&mode!=='draft'&&opts.fromProforma) invoices=invoices.map(r=>r.no===opts.fromProforma?{...r,status:'Faturuar',invoiceNo:created[0].no,history:[...r.history,{t:stamp,a:'Profatura u kthye në faturën '+created[0].no,u:user}]}:r);
-        return {invoices,movements:nd.movements,queue,...link};
+        return {invoices,movements:nd.movements,...link};
       });
       if(!single) this.setM({sel:{},result,xlRows:xl?null:m.xlRows,xlText:xl?'':m.xlText,xlName:xl?'':m.xlName,xlError:''});
       this.toast(single?(mode==='draft'?'Drafti ':mode==='proforma'?'Profatura ':'Fatura ')+created[0].no+' u '+(mode==='draft'?'ruajt':'lëshua')+' · '+this.fmt(total):created.length+' '+word+' u '+(mode==='draft'?'ruajtën':'lëshuan')+' · '+this.fmt(total),mode==='draft'?'#8FA3B8':'#22C55E');
@@ -6303,6 +6347,8 @@ class Component extends DCLogic {
       ...(latePo.length?[{t:plural(latePo.length,'porosi blerjeje e vonuar','porosi blerjeje të vonuara'),s:latePo.map(o=>o.supplier.split(' ')[0]).slice(0,3).join(' · '),c:'#B45309',go:()=>{ this.setState({pTab:'Hapur'}); this.go('blerje','Porosi blerjeje'); }}]:[]),
       ...(expiringQ.length?[{t:plural(expiringQ.length,'ofertë skadon së shpejti','oferta skadojnë së shpejti'),s:expiringQ.map(q=>q.customer.split(' ')[0]+' · '+q.due).slice(0,2).join(' · '),c:'#D97706',go:()=>{ this.setState({pTab:'Dërguar'}); this.go('shitje','Oferta'); }}]:[]),
       ...(lowStock.length?[{t:'Stok i ulët: '+plural(lowStock.length,'artikull','artikuj'),s:lowStock.map(p=>p.name.split(' ').slice(0,2).join(' ')).join(' · '),c:'#D97706',go:()=>this.go('stok','Gjendja')}]:[]),
+      ...((s.srvWatch&&s.srvWatch.installed&&!s.srvWatch.ok&&(s.srvWatch.failures||[]).length)
+        ? [{t:'Serveri raporton problem',s:s.srvWatch.failures.slice(0,2).join(' · '),c:'#DC2626',go:()=>this.go('settings','Siguria')}] : []),
       ...(subM.next?[{t:'Pagesa e abonimit',s:money(subM.amt)+' faturohet më '+subM.next,c:'#2563EB',go:()=>this.go('settings','Abonimi')}]:[])];
     const notifRead=db.notifRead||{};
     const alerts=alertsRaw.map(a=>{ const key=a.t+'|'+a.s; const read=!!notifRead[key]; return {...a,key,read,op:read?'.5':'1'}; });
@@ -6378,7 +6424,7 @@ class Component extends DCLogic {
       ?{n:plural(mBatch.length,'faturë','fatura'),detail:'nga '+plural(xlOk.length,'rresht i vlefshëm','rreshta të vlefshëm'),total:this.fmt(mTotal),hasSkip:xlOk.length<xlRows.length,skip:plural(xlRows.length-xlOk.length,'rresht me gabim anashkalohet','rreshta me gabime anashkalohen')}
       :{n:plural(mBatch.length,'faturë','fatura'),detail:mOneDetail(),total:this.fmt(mTotal),hasSkip:false,skip:''};
     const mRes=m.result?{title:m.result.count+' '+m.result.word+' u '+(m.result.mode==='draft'?'ruajtën':'lëshuan')+' · '+m.result.from+(m.result.count>1?' – '+m.result.to:''),
-      sub:'Gjithsej '+this.fmt(m.result.total)+(m.result.mode==='issue'?' · fiskalizimi është në radhë te Fiscal Agent — statusi përditësohet te Cilësime › Fiskalizimi':m.result.mode==='proforma'?' · profaturat nuk fiskalizohen; kthehen në faturë kur pranohen':' · draftet nuk kanë numër fiskal dhe mund të redaktohen'),
+      sub:'Gjithsej '+this.fmt(m.result.total)+(m.result.mode==='issue'?' · faturat deklarohen te Libri i shitjes (TVSH) — nuk kalojnë nëpër pajisje fiskale':m.result.mode==='proforma'?' · profaturat nuk fiskalizohen; kthehen në faturë kur pranohen':' · draftet nuk kanë numër fiskal dhe mund të redaktohen'),
       bg:m.result.mode==='draft'?'rgba(16,36,58,.05)':'rgba(21,128,61,.08)',line:m.result.mode==='draft'?'rgba(16,36,58,.10)':'rgba(21,128,61,.22)',iconBg:m.result.mode==='draft'?'#3C5268':'#15803D'}:null;
     const mColsDef=[['Klienti','emri (ose NUI)'],['NUI','opsionale, ka përparësi'],['Artikulli','emri (ose SKU)'],['SKU','opsionale, ka përparësi'],['Sasia','bosh = 1'],['Çmimi','pa TVSH · bosh = katalogu'],['Zbritja','% · bosh = 0'],['Shënim','opsionale']].map(([h,d])=>({h,d}));
     const mIssue=mode=>this.issueBatch(mBatch,mode);

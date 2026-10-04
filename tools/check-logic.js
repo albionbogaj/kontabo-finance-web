@@ -157,8 +157,10 @@ const before = stock('BJ-015');
 c.cancelInvoice('FSH-2026-00121'); // unpaid, issued, fiscalisation had FAILED: stock back, failed queue entry withdrawn, no fiscal cancel
 eq([db().invoices.find(r => r.no === 'FSH-2026-00121').status, stock('BJ-015') - before, db().queue.find(q => q.ref === 'FSH-2026-00121').status, db().queue[0].kind !== 'Anulim'], ['Anuluar', 30, 'Anuluar', true], 'cancelInvoice (failed fiscal): reverses stock, withdraws the queued request');
 const lm = stock('LM-008');
-c.cancelInvoice('FSH-2026-00122'); // unpaid, fiscalised → fiscal cancellation queued
-eq([stock('LM-008') - lm, db().queue[0].kind, db().queue[0].ref], [85, 'Anulim', 'FSH-2026-00122'], 'cancelInvoice (fiscalised): reverses stock + queues Anulim');
+c.cancelInvoice('FSH-2026-00122'); // unpaid, fiscalised (an A4 copy of a till receipt): stock back, NOTHING queued
+const qLen0 = db().queue.length;
+eq([stock('LM-008') - lm, db().queue.length, db().invoices.find(r => r.no === 'FSH-2026-00122').status], [85, qLen0, 'Anuluar'],
+   'cancelInvoice (e fiskalizuar): kthen stokun dhe NUK premton asnjë anulim fiskal — kuponin e anulon vetë arka');
 c.cancelInvoice('FSH-2026-00125'); // paid → refused
 eq(db().invoices.find(r => r.no === 'FSH-2026-00125').status, 'Paguar', 'cancelInvoice: paid invoice cannot be cancelled');
 const vdBefore = stock('VD-450'), apBefore = c.balances()['2200'].bal;
@@ -173,7 +175,8 @@ eq([db().expenses[0].total, cashBefore - c.accountBalance('cash1'), db().payment
 c.adjustStock({ sku: 'LED-18', counted_qm: 23000, note: 'numërim', date: '2026-09-12' });
 eq([stock('LED-18'), db().movements[db().movements.length - 1].type], [23, 'adjust'], 'adjustStock: books the difference as an adjustment');
 const nos = c.issueBatch([{ cust: db().customers[0], items: [{ name: 'Panel sanduiç 50mm', sku: 'PS-050', unit: 'm²', qty: 2, unit_c: 1850, rate: 18, disc: 0, sub: 3700, vatc: 666, tot: 4366 }], note: '' }], 'issue', { date: '2026-09-12', due: '2026-09-27' });
-eq([nos, db().invoices[0].fiscal, stock('PS-050')], [['FSH-2026-00126'], 'Në pritje', 638], 'issueBatch (single form): numbered, queued, stock out');
+eq([nos, db().invoices[0].fiscal, stock('PS-050')], [['FSH-2026-00126'], c.ERP_FISCAL, 638],
+   'issueBatch (një faturë): e numëruar, me statusin e vërtetë fiskal, stoku jashtë');
 const J2 = c.journal(); eq(J2.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J2.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true, 'journal still balanced after all operations');
 eq(c.pageTable('Bilanci').kpis[3].value, 'Balancuar ✓', 'Bilanci page: balanced');
 for (const p of ['Blerje', 'Furnitorë', 'Hyrje', 'Dalje', 'Shpenzime', 'Pagesa', 'Llogari bankare', 'Arkë', 'TVSH', 'Raporte financiare', 'Gjendja', 'Lëvizjet', 'Hyrje në stok', 'Dalje nga stok', 'Inventar', 'Kategoritë', 'Çmimet', 'Ditari', 'Kontot', 'Fitim / Humbje', 'Hyrjet kontabël']) {
@@ -200,8 +203,16 @@ for (const p of ['Të dhënat e kompanisë', 'Llogaria', 'Pagesat', 'Siguria', '
 { const t = c.pageTable('Rolet'); const cell = t.rows[0].cells[1 + c.ROLES.indexOf('Kasier')]; const before = cell.on; cell.go(); eq(!!db().roles.Kasier.fatura_shiko, !before, 'roles: toggling a permission persists'); eq(db().audit[0].a.includes('Roli Kasier'), true, 'roles: change is audited'); }
 // ── fiscalization is till-owned: the web has NO mode config, NO env switch, and never gates issuing ──
 eq([typeof c.changeFiscalMode, typeof c.setFiscalEnv, typeof c.apiFiscal, typeof c.fiscalConfigured, typeof c.apiFiscalToDb], ['undefined', 'undefined', 'undefined', 'undefined', 'undefined'], 'fiscal: no web-side mode/env/config functions exist at all');
+const qBefore = db().queue.length;
 eq(c.issueBatch([{ cust: db().customers[0], items: [{ name: 'x', sku: 'PS-050', unit: 'm²', qty: 1, unit_c: 1850, rate: 18, disc: 0, sub: 1850, vatc: 333, tot: 2183 }], note: '' }], 'issue', { date: '2026-09-12', due: '2026-09-27' }).length, 1, 'fiscal: invoices issue normally with no web fiscal config (no UNCONFIGURED gate)');
-eq(db().queue[0].kind, 'Faturë', 'fiscal: the issued invoice still enters the read-only queue');
+/* E VERTETA e fiskalizimit (ndreqje 04.10.2026): ERP-ja nuk ka as pajisje as agjent — kuponet i fiskalizon VETE
+   arka, kurse fatura e leshuar ketu deklarohet te Libri i shitjes. Me pare ERP-ja shkruante nje rresht radhe te
+   „Fiscal Agent Prishtine" (agjent qe nuk ekziston) dhe fatura mbetej „Ne pritje" pergjithmone — lexohej si nje
+   fiskalizim qe do te vinte. Tani: asnje rresht i ri, statusi e thote te verteten dhe historia e shpjegon. */
+eq([db().queue.length, db().invoices[0].fiscal, c.ERP_FISCAL, /pajisje fiskale/.test(c.ERP_FISCAL_NOTE),
+    db().invoices[0].history.some(h => h.a === c.ERP_FISCAL_NOTE), !!c.ST[c.ERP_FISCAL]],
+   [qBefore, 'Deklarohet në libër', 'Deklarohet në libër', true, true, true],
+   'fiskalizimi: fatura e leshuar NUK shpik asnje radhe te nje agjent — statusi „Deklarohet ne liber" + shenimi ne histori');
 // ── ATK Kosovo tax letters (VAT law 03/L-146 + certified SEF coupons): A = exempt, C = 0%, D = 8%, E = 18% ──
 eq(Object.fromEntries(Object.entries(c.TAX).map(([k, t]) => [k, t.rate])), { A: 0, C: 0, D: 8, E: 18 }, 'ATK letters: A=0% C=0% D=8% E=18%');
 eq([/liruar/i.test(c.TAX.A.name), /redukt/i.test(c.TAX.D.name), /standard/i.test(c.TAX.E.name)], [true, true, true], 'ATK letters: A e liruar, D e reduktuar, E standarde');
@@ -377,8 +388,8 @@ eq(c.returnable('sale').map(x => x.doc.no).sort(), ['FSH-2026-00120', 'FSH-2026-
 const ps0 = stock('PS-050'), recv0 = c.balances()['1200'].bal;
 const kr1 = c.createReturn({ kind: 'sale', ref: 'FSH-2026-00125', items: [{ li: 0, qty: 20 }], date: '2026-09-13', reason: 'dëmtim', account: 'bank1' });
 let ret1 = db().returns[0];
-eq([kr1, ret1.kind, ret1.sub, ret1.vat, ret1.total, ret1.applied, ret1.refund, ret1.fiscal], ['KR-2026-00001', 'Kthim shitje', 37000, 6660, 43660, 43660, 0, 'Në pritje'], 'credit note: 20 m² × 18.50 @18%, applied to the unpaid invoice, fiscalisation queued');
-eq([invOf('FSH-2026-00125').credited, invOf('FSH-2026-00125').status, c.rem(invOf('FSH-2026-00125')), stock('PS-050') - ps0, db().queue[0].kind, db().movements[db().movements.length - 1].type], [43660, 'Pjesërisht', 277064 - 43660, 20, 'Notë krediti', 'sale_return'], 'credit note: invoice credited, stock back, queue entry');
+eq([kr1, ret1.kind, ret1.sub, ret1.vat, ret1.total, ret1.applied, ret1.refund, ret1.fiscal], ['KR-2026-00001', 'Kthim shitje', 37000, 6660, 43660, 43660, 0, 'Deklarohet në libër'], 'nota e kreditit: 20 m² × 18.50 @18%, ul detyrimin e faturës së papaguar, me statusin e vërtetë fiskal');
+eq([invOf('FSH-2026-00125').credited, invOf('FSH-2026-00125').status, c.rem(invOf('FSH-2026-00125')), stock('PS-050') - ps0, db().movements[db().movements.length - 1].type], [43660, 'Pjesërisht', 277064 - 43660, 20, 'sale_return'], 'nota e kreditit: fatura kreditohet, stoku kthehet — pa asnjë radhë fiktive');
 eq(recv0 - c.balances()['1200'].bal, 43660, 'credit note: receivables down by the note');
 eq(c.returnable('sale').find(x => x.doc.no === 'FSH-2026-00125').lines[0].left, 100, 'returnable: 100 m² left on the line');
 c.createReturn({ kind: 'sale', ref: 'FSH-2026-00125', items: [{ li: 0, qty: 101 }], date: '2026-09-13' }); eq(db().returns.length, 1, 'credit note: more than the remaining qty is refused');
@@ -420,7 +431,9 @@ for (const p of ['Oferta', 'Porosi', 'Porosi blerjeje']) { const t = c.pageTable
 c.openDr('quote', of1); eq(c.drawerVals().actions.some(a => a.label === 'Porosia PS-2026-00001'), true, 'quote drawer links the order');
 // draft → issue, proforma → invoice
 const drNo = c.issueBatch([{ cust: db().customers[1], items: items1, note: '' }], 'draft', { date: '2026-09-13', due: '2026-09-28' })[0];
-c.issueDraft(drNo); eq([invOf(drNo).status, invOf(drNo).fiscal, db().queue[0].ref, stock('PS-050')], ['Lëshuar', 'Në pritje', drNo, 620], 'issueDraft: draft issued, queued, stock out');
+{ const qd = db().queue.length; c.issueDraft(drNo);
+  eq([invOf(drNo).status, invOf(drNo).fiscal, db().queue.length, stock('PS-050')], ['Lëshuar', c.ERP_FISCAL, qd, 620],
+     'issueDraft: drafti lëshohet, stoku del dhe asnjë kërkesë nuk i premtohet një agjenti që nuk ekziston'); }
 const proNo = c.issueBatch([{ cust: db().customers[1], items: items1, note: '' }], 'proforma', { date: '2026-09-13', due: '2026-09-28' })[0];
 c.openForm('invoice', { customer: db().customers[1].name, customerQ: db().customers[1].name, lines: c.linesFrom(items1), fromProforma: proNo }); c.formVals().actions[2].go();
 eq([invOf(proNo).status, invOf(proNo).invoiceNo, db().invoices[0].fromProforma], ['Faturuar', db().invoices[0].no, proNo], 'proforma converted: marked Faturuar and linked');
@@ -3226,6 +3239,35 @@ apiBlock.then(async () => {
       eq([S.bad.slice(bad0), S.noHdr, TP.commits.every(c => Object.keys(c).every(k => ['products', 'categories', 'posProposalsDone'].includes(k)))], [[], [], true], 'mock server (proposals): no commit carried `_srv` rows or posSync runtime fields — only products / categories / posProposalsDone; every call had X-Kontabo-Client: 2');
     } finally { S.features = feat0; }
   }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+
+// ── roja e serverit te paneli: nje server i semure e gjen pronarin aty ku punon ──
+// Rregulli: vetem nje pergjigje e VERTETE e serverit („jam i instaluar dhe nuk jam mire") behet njoftim.
+// Mungesa e rojes ose nje gabim rrjeti nuk shfaqet fare — perndryshe cdo nderprerje linje do te dukej si alarm.
+{
+  c.state.section = 'dashboard'; c.state.page = 'Paneli';
+  const has = () => c.renderVals().alerts.some(a => a.t === 'Serveri raporton problem');
+  c.state.srvWatch = null; const none = has();
+  c.state.srvWatch = { at: Date.now(), installed: false, ok: true, ts: '', failures: [] }; const notInstalled = has();
+  c.state.srvWatch = { at: Date.now(), installed: true, ok: true, ts: 'x', failures: [] }; const healthy = has();
+  c.state.srvWatch = { at: Date.now(), installed: true, ok: false, ts: 'x',
+                       failures: ['Shërbimi kontabo-finance nuk është aktiv', 'Disku / ka vetëm 4% të lirë'] };
+  const sick = c.renderVals().alerts.find(a => a.t === 'Serveri raporton problem');
+  eq([none, notInstalled, healthy, !!sick, sick && sick.s, sick && sick.c],
+     [false, false, false, true,
+      'Shërbimi kontabo-finance nuk është aktiv · Disku / ka vetëm 4% të lirë', '#DC2626'],
+     'roja: vetem nje server i instaluar qe raporton deshtim behet njoftim te paneli');
+  c.state.srvWatch = null;
+}
+
+// ── migrimi i statusit fiskal: databazat e vjetra nuk mbesin „Në pritje" përgjithmonë ──
+{
+  const old = { v: 2, invoices: [{ no: 'A', fiscal: 'Në pritje' }, { no: 'B', fiscal: 'Fiskalizuar' }, { no: 'C', fiscal: 'Në pritje', fromPos: 'r-9' }],
+                returns: [{ no: 'K', fiscal: 'Në pritje' }] };
+  const got = c.migrateFiscal(old);
+  eq([got.invoices.map(r => r.fiscal), got.returns[0].fiscal, got.fiscalV, c.migrateFiscal(got) === got],
+     [['Deklarohet në libër', 'Fiskalizuar', 'Në pritje'], 'Deklarohet në libër', 2, true],
+     'migrimi fiskal: faturat e vjetra „Në pritje" marrin statusin e vërtetë, kopja e kuponit (fromPos) dhe e fiskalizuara nuk preken, dhe migrimi bëhet vetëm një herë');
+}
 
 // ── artikulli: Aktiv, arkat ku shitet, kontot e shitjes/blerjes dhe tabela e Produkteve ──
 // Kërkesa e pronarit: tabela e artikujve si mostra e tij (Emri · Tipi · Kodi · Njësia matëse · Norma e TVSH ·
