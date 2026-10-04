@@ -198,7 +198,7 @@ c.state.rTab = 'Të arkëtueshme (aging)'; { const t = c.pageTable('R:Financë')
 c.state.rTab = 'Libri i shitjes'; { const t = c.pageTable('R:TVSH'); eq(t.rows.length, db().invoices.filter(r => r.kind !== 'Profaturë' && r.status !== 'Draft' && r.status !== 'Anuluar' && c.monthOf(r.date) === c.today().slice(0, 7)).length, 'VAT sales book lists this month\'s issued invoices'); }
 c.state.rTab = '';
 for (const p of ['Degët', 'Rolet', 'A:Kompanitë', 'A:Abonimet', 'A:Faturat e platformës', 'A:Planet & çmimet', 'A:Përdoruesit e platformës', 'A:Administratorët', 'A:Agjentët', 'A:Radha globale', 'A:Audit log']) { const t = c.pageTable(p); eq(!!t && t.rows.length > 0, true, 'table page: ' + p + ' (' + (t ? t.rows.length : 0) + ' rows)'); }
-for (const p of ['Të dhënat e kompanisë', 'Llogaria', 'Pagesat', 'Siguria', 'Njoftimet', 'POS', 'Faturat', 'Tatimet', 'Email', 'Integrimet', 'API', 'R:HR', 'R:Prodhim', 'A:Përmbledhje', 'A:Modulet & flags', 'A:Cilësimet e platformës', 'A:Statusi i sistemit']) { const g = c.settingsPage(p); eq(!!g && g.cards.length > 0, true, 'settings page: ' + p + ' (' + (g ? g.cards.length : 0) + ' cards)'); }
+for (const p of ['Të dhënat e kompanisë', 'Llogaria', 'Pagesat', 'Siguria', 'Njoftimet', 'POS', 'Faturat', 'Tatimet', 'Email', 'Integrimet', 'API', 'R:Prodhim', 'A:Përmbledhje', 'A:Modulet & flags', 'A:Cilësimet e platformës', 'A:Statusi i sistemit']) { const g = c.settingsPage(p); eq(!!g && g.cards.length > 0, true, 'settings page: ' + p + ' (' + (g ? g.cards.length : 0) + ' cards)'); }
 // roles matrix toggle
 { const t = c.pageTable('Rolet'); const cell = t.rows[0].cells[1 + c.ROLES.indexOf('Kasier')]; const before = cell.on; cell.go(); eq(!!db().roles.Kasier.fatura_shiko, !before, 'roles: toggling a permission persists'); eq(db().audit[0].a.includes('Roli Kasier'), true, 'roles: change is audited'); }
 // ── fiscalization is till-owned: the web has NO mode config, NO env switch, and never gates issuing ──
@@ -3239,6 +3239,127 @@ apiBlock.then(async () => {
       eq([S.bad.slice(bad0), S.noHdr, TP.commits.every(c => Object.keys(c).every(k => ['products', 'categories', 'posProposalsDone'].includes(k)))], [[], [], true], 'mock server (proposals): no commit carried `_srv` rows or posSync runtime fields — only products / categories / posProposalsDone; every call had X-Kontabo-Client: 2');
     } finally { S.features = feat0; }
   }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+
+// ── Pagat: tatimi progresiv mbi te ardhurat nga paga + kontributet pensionale (Kosove) ──
+// Normat jane PARAMETRA (Cilesime > Tatimet > Pagat), jo numra te ngulitur. Keto prova mbrojne RRUGEN e
+// llogaritjes: kontributi i punemarresit zbritet para tatimit, cdo shkalle tatohet vetem per pjesen e saj,
+// dhe kontributi i punedhenesit nuk i zbritet punetorit por i kushton kompanise.
+{
+  const set = c.hrSet();
+  eq([set.b1, set.p1, set.b2, set.p2, set.b3, set.p3, set.p4, set.pensionEmp, set.pensionEr],
+     [8000, 0, 25000, 4, 45000, 8, 10, 5, 5],
+     'pagat: parazgjedhjet — 0 % deri 80 €, 4 % deri 250 €, 8 % deri 450 €, 10 % mbi; pensioni 5 % + 5 %');
+
+  // tatimi shkalle per shkalle: 80 € te paret pa tatim, pastaj 4 %, 8 %, 10 %
+  eq([c.incomeTax(0), c.incomeTax(8000), c.incomeTax(10000), c.incomeTax(25000), c.incomeTax(45000), c.incomeTax(100000)],
+     [0, 0, 80, 680, 2280, 7780],
+     'incomeTax: 0 €→0 · 80 €→0 · 100 €→0,80 · 250 €→6,80 · 450 €→22,80 · 1000 €→77,80');
+
+  // nje page 500 € bruto: pensioni 25 €, baza 475 €, tatimi 0+6,80+16+2,50 = 25,30 → neto 449,70
+  const p = c.payrollOf({ gross_c: 50000 });
+  eq([p.gross, p.pensionEmp, p.base, p.tax, p.net, p.pensionEr, p.cost],
+     [50000, 2500, 47500, 2530, 44970, 2500, 52500],
+     'payrollOf 500 €: pensioni 25 € zbritet PARA tatimit, tatimi 25,30 €, neto 449,70 €, kostoja e kompanise 525 €');
+
+  // paga minimale nen pragun e tatimit: vetem pensioni
+  const low = c.payrollOf({ gross_c: 8000 });
+  eq([low.tax, low.pensionEmp, low.net], [0, 400, 7600], 'payrollOf 80 €: pa tatim (baza bie nen pragun), vetem kontributi');
+
+  // kontribut vullnetar shtese i punetorit dhe i punedhenesit
+  const vol = c.payrollOf({ gross_c: 50000, volEmp: 5, volEr: 5 });
+  eq([vol.pensionEmp, vol.base, vol.pensionEr, vol.cost], [5000, 45000, 5000, 55000],
+     'payrollOf: kontributi vullnetar rrit zbritjen e tij dhe ul bazen e tatimit');
+
+  // normat jane te ndryshueshme: nje ndryshim te Cilesimet rillogarit gjithcka
+  c.setIn('hrSettings', { p4: 20 });
+  eq(c.payrollOf({ gross_c: 100000 }).tax, c.incomeTax(95000, c.hrBrackets(c.hrSet())), 'pagat: ndryshimi i normes te cilesimet hyn menjehere ne llogaritje');
+  eq(c.payrollOf({ gross_c: 100000 }).tax > p.tax, true, 'pagat: norma me e larte jep tatim me te madh (parametri lexohet vertet)');
+  c.setIn('hrSettings', {});
+  c.commit(d => ({ hrSettings: {} }));
+  eq(c.hrSet().p4, 10, 'pagat: pa cilesime te kompanise kthehen parazgjedhjet');
+  eq(!!c.COA.find(a => a.code === '2300'), true, 'plani i kontove: 2300 Detyrime nga pagat');
+}
+
+// ── HR: nga punesimi te lista e pages, pagesa dhe ditari ──
+{
+  const emp = (name, gross, extra) => { c.openForm('employee', {}); c.setF({ name, gross: (gross / 100).toFixed(2), ...(extra || {}) });
+    c.formVals().actions.find(a => /Shto pun/.test(a.label)).go(); return db().employees.find(e => e.name === name); };
+  const e1 = emp('Blerim Krasniqi', 50000, { position: 'Kamarier', dept: 'Shitje' });
+  const e2 = emp('Vlora Gashi', 30000, { position: 'Kasiere', dept: 'Shitje' });
+  eq([db().employees.length, e1.no, e2.no, e1.gross_c, e1.status, e1.days, e1.hours],
+     [2, 'PUN-001', 'PUN-002', 50000, 'Aktiv', 5, 8], 'HR: punetori merr numer rendor, paga ruhet bruto, orari ka parazgjedhje');
+
+  // faqja e punetoreve numeron koston e vertete te kompanise
+  c.state.section = 'hr'; c.state.page = 'Pun\u00ebtor\u00ebt';
+  const T = c.pageTable('Pun\u00ebtor\u00ebt');
+  eq([T.rows.length, T.kpis[0].value, T.kpis[1].value, T.kpis[3].value],
+     [2, '2', c.fmt(80000), c.fmt(c.payrollOf(e1).cost + c.payrollOf(e2).cost)],
+     'HR > Punetoret: bruto dhe kostoja e kompanise (bruto + kontributi i punedhenesit)');
+
+  // pushimi hyn te prezenca e muajit
+  c.openForm('leave', { empId: e1.id, empIdQ: e1.name });
+  c.setF({ from: c.today(), to: c.addDays(c.today(), 2), lkind: 'Sëmurë' });
+  // celesi i llojit te forma e pushimit NUK quhet `kind`: ai eshte lloji i VETE formes dhe do ta linte formen bosh
+  eq([c.formVals().fields.length > 0, c.state.frm.kind], [true, 'leave'], 'forma e pushimit: `lkind` nuk e prish llojin e formes');
+  c.formVals().actions.find(a => /Ruaj pushimin/.test(a.label)).go();
+  const pr = c.pageTable('Prezenca');
+  const row1 = pr.rows.find(r => r.cells[0].t === e1.name);
+  eq([db().leaves.length, db().leaves[0].kind, Number(row1.cells[3].t) >= 1, Number(row1.cells[2].t) + Number(row1.cells[3].t) === c.workDays(c.today().slice(0, 7))],
+     [1, 'S\u00ebmur\u00eb', true, true], 'HR: pushimi zbritet nga ditet e punes se muajit te Prezenca');
+
+  // lista e pagave: shumat ngrihen, paratë dalin, ditari balancon
+  const ym = c.today().slice(0, 7), bank0 = c.accountBalance('bank1'), nPay = db().payments.length;
+  const run = c.payrollRun(ym, 'bank1');
+  const sumOf = k => [e1, e2].reduce((a, e) => a + c.payrollOf(e)[k], 0);
+  eq([run.no, run.lines.length, run.gross, run.net, run.tax, run.cost, run.rates.pensionEmp],
+     ['LP-' + ym.replace('-', ''), 2, sumOf('gross'), sumOf('net'), sumOf('tax'), sumOf('cost'), 5],
+     'lista e pagave: nje dokument per muaj, me shumat dhe NORMAT e ngrira brenda tij');
+  eq([bank0 - c.accountBalance('bank1'), db().payments.length - nPay, db().payments[0].kind, db().payments[0].ref],
+     [run.net, 1, 'payroll', run.no], 'lista e pagave: nga llogaria dalin saktesisht paratë neto, me nje pagese te vetme');
+  eq(c.payrollRun(ym, 'bank1'), null, 'lista e pagave: nje muaj nuk gjenerohet dy here');
+
+  // ditari: kostoja te shpenzimet, detyrimi te 2300, neto nga banka — dhe asgje e dyfishuar nga pagesa
+  const B1 = c.balances();
+  eq([B1['2300'].bal, B1['2300'].bal === run.tax + run.pensionEmp + run.pensionEr], [run.tax + run.pensionEmp + run.pensionEr, true],
+     'ditari: tatimi dhe te dy kontributet rrine si detyrim te 2300 derisa te paguhen');
+  const J = c.journal();
+  eq(J.reduce((a, x) => a + x.lines.reduce((y, l) => y + l[1], 0), 0) === J.reduce((a, x) => a + x.lines.reduce((y, l) => y + l[2], 0), 0), true,
+     'ditari mbetet i balancuar me listen e pagave');
+  eq(c.pageTable('Bilanci').kpis[3].value, 'Balancuar \u2713', 'Bilanci balancon me pagat');
+  eq(J.filter(x => x.ref === run.no).length, 1, 'ditari: pagesa e pagave nuk postohet dy here (nje hyrje e vetme per listen)');
+
+  // faqja e pagave tregon listen e ngrire pasi gjenerohet
+  c.state.prYm = ym;
+  const P2 = c.pageTable('Pagat');
+  eq([P2.rows.length, P2.actions.some(a => /Gjenero/.test(a.label)), P2.kpis[1].value], [2, false, c.fmt(run.net)],
+     'HR > Pagat: pas gjenerimit shfaqet lista e ngrire dhe butoni i gjenerimit zhduket');
+
+  // kartela e punetorit
+  const dr = c.empDrawer(e1.id);
+  eq([dr.title, dr.sections[0].title, dr.sections.some(x => x.title === 'Pushimet'), dr.sections.some(x => x.title === 'Listat e pagave')],
+     ['Blerim Krasniqi', 'Paga e muajit', true, true], 'kartela e punetorit: paga e ndare, pushimet dhe listat ku ka dalur');
+
+  // fletepagesa: zberthimi bruto → neto, normat e ngrira dhe vendi i firmes
+  { const h = c.payslipHtml(run);
+    const l1 = run.lines.find(l => l.name === 'Blerim Krasniqi');
+    eq([(h.match(/class="slip"/g) || []).length, h.includes('FLET\u00cbPAGES\u00cb'), h.includes('Blerim Krasniqi'),
+        h.includes(c.fmtEu(l1.net)), h.includes(c.fmtEu(-l1.tax)), h.includes('Punëtori'), h.includes(c.monthLabel(run.month))],
+       [2, true, true, true, true, true, true],
+       'fletepagesa: nje per punetor, me neto-n, tatimin e zbritur dhe vendin e firmes');
+    eq([h.includes('5 % + 5 %'), h.includes(String(run.rates.p4))], [true, true], 'fletepagesa shkruan normat qe u zbatuan (ato te dokumentit, jo te sotmet)'); }
+
+  // raporti HR mbushet nga listat
+  { const R = c.pageTable('R:HR');
+    eq([R.title, R.rows.length, R.rows[0].cells[0].t, R.foot.length > 0, R.kpis[2].value],
+       ['Raporti · Pagat', 1, run.no, true, c.fmt(run.gross)], 'raporti HR: cdo liste e gjeneruar me zberthimin e saj'); }
+
+  // nje punetor qe ka dale ne liste pagash nuk fshihet
+  c.openForm('employee', { edit: e1.id, name: e1.name, gross: '500.00' });
+  eq(c.formVals().actions.some(a => a.label === 'Fshi'), false, 'HR: punetori qe ka dale ne nje liste pagash nuk fshihet (historia mbetet)');
+  c.state.frm = null;
+  c.commit(d => ({ employees: [], leaves: [], payrolls: [], payments: d.payments.filter(p => p.kind !== 'payroll') }));
+  c.state.prYm = ''; c.state.section = 'dashboard'; c.state.page = 'Paneli';
+}
 
 // ── Importi bankar: pasqyra e bankes behet pagesa, por vetem ato qe i zgjedh pronari ──
 // Rregulli qe mbron para: nje rresht pa perputhje te sigurt nuk regjistrohet kurre vetvetiu.

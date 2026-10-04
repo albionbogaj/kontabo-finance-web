@@ -1961,8 +1961,43 @@ class Component extends DCLogic {
   cashAccountFor(posId,db){ const A=this.accountsOf(db); return (A.find(a=>a.type==='Arkë'&&a.detail===posId)||A.find(a=>a.type==='Arkë')||A[0]||{id:'cash1',type:'Arkë'}).id; }
   bankAccount(db){ const A=this.accountsOf(db); return (A.find(a=>a.type==='Bankë')||A[0]||{id:'bank1',type:'Bankë'}).id; }
   EXPENSE_CATS = ['Qira','Paga','Energji','Ujë & komunali','Karburant','Telefon & internet','Mirëmbajtje','Marketing','Zyra','Tjetër'];
+  /* ───────── Pagat (Kosovë) ─────────
+     Normat NUK janë ngulitur si të vërteta të pandryshueshme: janë parametra te Cilësime › Tatimet › „Pagat",
+     që pronari ose kontabilisti i konfirmon dhe i ndryshon kur ndryshon ligji. Parazgjedhjet janë ato që
+     zbatohen sot: tatimi në të ardhura nga paga me shkallë mujore 0 % deri 80 €, 4 % deri 250 €, 8 % deri 450 €
+     dhe 10 % mbi të (Ligji 05/L-028), dhe kontributi pensional 5 % punëmarrësi + 5 % punëdhënësi, i detyrueshëm
+     (Ligji 04/L-101), me mundësi kontributi vullnetar shtesë për secilin.
+     Radha e llogaritjes: kontributi i punëmarrësit zbritet NGA BRUTO, dhe tatimi llogaritet mbi atë që mbetet. */
+  HR_DEF = {b1:8000,p1:0,b2:25000,p2:4,b3:45000,p3:8,p4:10,pensionEmp:5,pensionEr:5,payDay:'10'};
+  hrSet(db){ const d=((db||this.view()).hrSettings)||{}; const o={...this.HR_DEF}; for(const k in o){ const v=d[k]; if(v!==undefined&&v!==''&&!(typeof v==='number'&&isNaN(v))) o[k]=v; } return o; }
+  hrBrackets(set){ const x=set||this.hrSet(); const num=v=>Number(v)||0;
+    return [{upTo:num(x.b1),pct:num(x.p1)},{upTo:num(x.b2),pct:num(x.p2)},{upTo:num(x.b3),pct:num(x.p3)},{upTo:null,pct:num(x.p4)}]; }
+  // tatimi progresiv: çdo shkallë tatohet vetëm për pjesën e saj (jo e gjithë paga me normën e fundit)
+  incomeTax(base_c,brackets){ let tax=0, prev=0;
+    for(const b of (brackets||this.hrBrackets())){ const cap=b.upTo==null?Infinity:b.upTo;
+      const part=Math.min(base_c,cap)-prev; if(part>0) tax+=part*b.pct/100;   // vetëm pjesa që bie te kjo shkallë
+      if(base_c<=cap) break; prev=cap; }
+    return Math.round(tax); }   // rrumbullakimi një herë në fund, jo shkallë për shkallë
+  /* Paga e një punëtori për një muaj: bruto → kontributi i tij → baza → tatimi → neto; veç tyre kontributi i
+     punëdhënësit, që nuk i zbritet punëtorit por i kushton kompanisë. */
+  payrollOf(emp,set){ const x=set||this.hrSet(), gross=Math.max(0,Math.round(emp.gross_c||0));
+    const pe=Math.round(gross*((Number(x.pensionEmp)||0)+(Number(emp.volEmp)||0))/100);
+    const base=Math.max(0,gross-pe), tax=this.incomeTax(base,this.hrBrackets(x));
+    const per=Math.round(gross*((Number(x.pensionEr)||0)+(Number(emp.volEr)||0))/100);
+    return {gross,pensionEmp:pe,base,tax,net:gross-pe-tax,pensionEr:per,cost:gross+per}; }
+  CONTRACTS = ['I pacaktuar','I caktuar','Me orë','Praktikë'];
+  LEAVE_KINDS = ['Pushim vjetor','Sëmurë','Pa pagesë','Lindje','Festë zyrtare'];
+  employeesOf(db){ return ((db||this.view()).employees)||[]; }
+  empActive(e){ return !!e&&e.status!=='Larguar'; }
+  nextEmpNo(db){ const list=this.employeesOf(db); let m=0; for(const e of list){ const k=parseInt(String(e.no||'').replace(/\D/g,''),10); if(k>m) m=k; } return 'PUN-'+String(m+1).padStart(3,'0'); }
+  empOf(db,id){ return this.employeesOf(db).find(e=>e.id===id)||null; }
+  // sa ditë pune ka një muaj (e hënë–e premte) — baza e prezencës dhe e pushimeve
+  workDays(ym){ const [y,m]=String(ym).split('-').map(Number); const last=new Date(y,m,0).getDate(); let d=0;
+    for(let i=1;i<=last;i++){ const w=new Date(y,m-1,i).getDay(); if(w!==0&&w!==6) d++; } return d; }
+  leavesOf(db,id,ym){ return (((db||this.view()).leaves)||[]).filter(l=>(!id||l.empId===id)&&(!ym||this.toIso(l.from).slice(0,7)===ym||this.toIso(l.to).slice(0,7)===ym)); }
+  leaveDays(l){ const a=this.toIso(l.from), b=this.toIso(l.to); const d=this.daysBetween(a,b); return Math.max(1,d+1); }
   // chart of accounts (simplified Kosovo plan); every document posts balanced entries here — see journal()
-  COA = [['1000','Arka','A'],['1010','Banka','A'],['1200','Kërkesa nga klientët','A'],['1300','Stoku i mallit','A'],['1500','Mjete themelore','A'],['2200','Detyrime ndaj furnitorëve','L'],['2400','TVSH e mbledhur','L'],['2410','TVSH e zbritshme','A'],['3000','Kapitali','E'],['4000','Të hyra nga shitja','R'],['4010','Të hyra nga shërbimet','R'],['5000','Kosto e mallit të shitur','X'],['6000','Shpenzime operative','X']].map(a=>({code:a[0],name:a[1],kind:a[2]}));
+  COA = [['1000','Arka','A'],['1010','Banka','A'],['1200','Kërkesa nga klientët','A'],['1300','Stoku i mallit','A'],['1500','Mjete themelore','A'],['2200','Detyrime ndaj furnitorëve','L'],['2300','Detyrime nga pagat','L'],['2400','TVSH e mbledhur','L'],['2410','TVSH e zbritshme','A'],['3000','Kapitali','E'],['4000','Të hyra nga shitja','R'],['4010','Të hyra nga shërbimet','R'],['5000','Kosto e mallit të shitur','X'],['6000','Shpenzime operative','X']].map(a=>({code:a[0],name:a[1],kind:a[2]}));
 
   I = {
     dashboard:'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
@@ -2118,6 +2153,8 @@ class Component extends DCLogic {
       subscription:{plan:'pro',cycle:'m',users:4,nextBilling:'01.10.2026',since:'01.03.2026',status:'Aktiv',card:'Visa •••• 4242',cardExp:'08/28'},
       billing:[{no:'PLT-2026-0912',date:'01.09.2026',status:'Paguar',amount_c:5400},{no:'PLT-2026-0811',date:'01.08.2026',status:'Paguar',amount_c:5400},{no:'PLT-2026-0710',date:'01.07.2026',status:'Paguar',amount_c:4700},{no:'PLT-2026-0609',date:'01.06.2026',status:'Paguar',amount_c:4000}],
       accounts:this.seedAccounts(),terminals:[],
+      // HR: punëtorët, pushimet, prezenca dhe listat e pagave. Bosh në fillim — një biznes i shton vetë njerëzit e vet.
+      employees:[],leaves:[],attendance:[],payrolls:[],hrSettings:{},
       posReceipts:[],posShifts:[],posSync:{url:'http://127.0.0.1:8899',token:'kontabo-local',auto:true,interval:'15',cursor:0,lastSync:'',lastPush:'',lastError:'',status:'unknown',health:null,catalogHash:'',cursorSrv:0,catalogHashSrv:'',lastSyncSrv:''},
       // sales/purchase returns (credit & debit notes), quotes, sales orders, purchase orders, stock transfers, warehouses, read notifications
       returns:[],quotes:[],orders:[],purchaseOrders:[],transfers:[],warehouses:[{id:'W1',name:'Depo Prishtinë',branch:'Dega Prishtinë',main:true},{id:'W2',name:'Depo Prizren',branch:'Dega Prizren',main:false}],notifRead:{},
@@ -2885,6 +2922,31 @@ class Component extends DCLogic {
       const nd={...d,movements:[...d.movements]}; this._pushMovements(nd,upd,'sale');
       const link={...(inv.fromOrder?this._linkSource(d,'order',inv.fromOrder,inv.no):{}),...(inv.fromQuote&&!inv.fromOrder?this._linkSource(d,'quote',inv.fromQuote,inv.no):{})};
       return {invoices:d.invoices.map(r=>r.no===no?upd:r),movements:nd.movements,...link}; },'Fatura '+no+' u lëshua · në radhën e fiskalizimit');
+  }
+  /* Gjenerimi i listës së pagave për një muaj. Çfarë ndodh njëherësh dhe asnjëherë gjysmë:
+       · shumat e secilit NGRIHEN te dokumenti (një ndryshim i mëvonshëm i pagës nuk e prek muajin e mbyllur),
+       · del një pagesë nga llogaria e zgjedhur për NETO-n (aq dalin vërtet paratë),
+       · ditari e mban të plotë: kostoja (bruto + kontributi i punëdhënësit) te shpenzimet, detyrimi ndaj shtetit
+         dhe fondit te 2300, dhe neto-ja nga arka/banka.
+     Një muaj i gjeneruar nuk gjenerohet dy herë. */
+  payrollRun(ym,account,date){
+    const db=this.view(), set=this.hrSet(db);
+    if((db.payrolls||[]).some(p=>p.month===ym)) return null;
+    const emps=this.employeesOf(db).filter(e=>this.empActive(e)&&(e.gross_c||0)>0);
+    if(!emps.length) return null;
+    const acc=this.accountsOf(db).find(a=>a.id===account)||this.accountsOf(db)[0]; if(!acc) return null;
+    const lines=emps.map(e=>{ const p=this.payrollOf(e,set); return {empId:e.id,no:e.no,name:e.name,pid:e.pid||'',iban:e.iban||'',position:e.position||'',...p}; });
+    const T=k=>lines.reduce((a,l)=>a+l[k],0);
+    const no='LP-'+ym.replace('-','');
+    const rec={no,month:ym,date:this.fmtDate(date||this.today()),account:acc.id,accountName:acc.name,
+      rates:{p1:set.p1,p2:set.p2,p3:set.p3,p4:set.p4,b1:set.b1,b2:set.b2,b3:set.b3,pensionEmp:set.pensionEmp,pensionEr:set.pensionEr},
+      lines,gross:T('gross'),pensionEmp:T('pensionEmp'),base:T('base'),tax:T('tax'),net:T('net'),pensionEr:T('pensionEr'),cost:T('cost'),
+      user:this.who(),history:[{t:this.stamp(),a:'Lista u gjenerua për '+lines.length+' punëtorë',u:this.who()}]};
+    this.commit(d=>({payrolls:[rec,...((d.payrolls)||[])],
+      payments:[{no:this.nextNo('PAG')(1),date:rec.date,dir:'out',kind:'payroll',ref:no,party:'Pagat · '+this.monthLabel(ym),amount_c:rec.net,account:acc.id,method:acc.type,note:lines.length+' punëtorë',user:this.who()},...d.payments]}),
+      'Lista e pagave '+no+' u gjenerua · neto '+this.fmt(rec.net));
+    this.logAudit('Lista e pagave '+no+' ('+lines.length+' punëtorë, neto '+this.fmt(rec.net)+') u gjenerua');
+    return rec;
   }
   // receiving a purchase (Draft -> Pranuar) books the goods into stock and the amount into payables
   // a line whose product is a recipe (a draft made before it became one) is refused: the goods would reach the ledger but never the stock
@@ -4039,6 +4101,26 @@ class Component extends DCLogic {
   async apiKeysLoad(){ const tid=this.apiCfg().tenantId; this.setState(s=>({apiKeysSrv:{items:[],...(s.apiKeysSrv||{}),busy:true,err:''}}));
     try{ const j=await this.apiFetch('/api-keys'); if(this.apiCfg().tenantId!==tid) return false; this.setState({apiKeysSrv:{busy:false,err:'',items:Array.isArray(j.apiKeys)?j.apiKeys:[]}}); return true; }
     catch(e){ if(this.apiCfg().tenantId!==tid) return false; this.setState(s=>({apiKeysSrv:{items:[],...(s.apiKeysSrv||{}),busy:false,err:e.status===403?'Nuk keni leje për çelësat API (leja “Kompania”).':'Çelësat API nuk u ngarkuan: '+(e.message||e)}})); return false; } }
+  // kartela e punëtorit: paga e ndarë copë-copë, pushimet dhe listat ku ka dalë
+  empDrawer(id){
+    const db=this.view(), e=this.empOf(db,id); if(!e) return null;
+    const p=this.payrollOf(e,this.hrSet(db)), C=(t,o)=>this.cell(t,o), M=(c,o)=>this.moneyCell(c,o);
+    const ls=this.leavesOf(db,e.id), runs=(db.payrolls||[]).filter(r=>(r.lines||[]).some(l=>l.empId===e.id));
+    return {title:e.name,subtitle:e.position+' · '+e.dept+' · '+e.branch,badge:e.status||'Aktiv',
+      meta:[{k:'Numri',v:e.no,mono:true},{k:'Numri personal',v:e.pid||'—',mono:true},{k:'Kontrata',v:e.contract},{k:'Filloi',v:e.hired},
+        {k:'Orari',v:(Number(e.days)||5)+' ditë × '+(Number(e.hours)||8)+' orë'},{k:'IBAN',v:e.iban||'—',mono:true}],
+      sections:[{title:'Paga e muajit',cols:[{label:'Zëri'},{label:'Shuma',align:'right'}],
+        rows:[['Bruto',p.gross],['Kontributi pensional i tij',-p.pensionEmp],['Baza e tatimit',p.base],['Tatimi në të ardhura',-p.tax],['Neto për në dorë',p.net],
+          ['Kontributi i kompanisë',p.pensionEr],['Kostoja e kompanisë',p.cost]].map(([k,v])=>({cells:[C(k,{b:k==='Neto për në dorë'}),M(v,{b:k==='Neto për në dorë'||k==='Kostoja e kompanisë'})]}))},
+        ...(ls.length?[{title:'Pushimet',cols:[{label:'Lloji'},{label:'Nga'},{label:'Deri'},{label:'Ditë',align:'right'}],
+          rows:ls.slice(0,10).map(l=>({cells:[C(l.kind),C(l.from,{color:'#526477'}),C(l.to,{color:'#526477'}),C(String(this.leaveDays(l)),{align:'right'})]}))}]:[]),
+        ...(runs.length?[{title:'Listat e pagave',cols:[{label:'Lista'},{label:'Muaji'},{label:'Neto',align:'right'}],
+          rows:runs.slice(0,12).map(r=>{ const l=(r.lines||[]).find(x=>x.empId===e.id)||{net:0}; return {cells:[C(r.no,{mono:true}),C(this.monthLabel(r.month)),M(l.net)]}; })}]:[])],
+      actions:[{label:'Redakto',kind:'primary',go:()=>this.openForm('employee',{edit:e.id,name:e.name,pid:e.pid||'',position:e.position,positionQ:e.position,dept:e.dept,deptQ:e.dept,branch:e.branch,
+        contract:e.contract,hired:this.toIso(e.hired),gross:this.fromC(e.gross_c||0),days:String(e.days||5),hours:String(e.hours||8),volEmp:String(e.volEmp||0),volEr:String(e.volEr||0),iban:e.iban||'',status:e.status||'Aktiv'})},
+        {label:'+ Pushim',kind:'',go:()=>this.openForm('leave',{empId:e.id,empIdQ:e.name})}],
+      history:e.history||[]};
+  }
   // (each answer belongs to the company it was asked for: after a company switch it is dropped — never a key / token of A shown on B)
   apiKeyCreate(name,scopes){ const tid=this.apiCfg().tenantId, here=()=>this.apiAuthed()&&this.apiCfg().tenantId===tid; return this.apiFetch('/api-keys',{method:'POST',body:{name,scopes}}).then(j=>{ if(!here()) return null; const k=j.apiKey||{}, nm=k.name||name;
       this.setState(s=>({frm:null,apiSecret:{name:nm,key:j.key,scopes:(k.scopes||scopes).join(', ')},apiKeysSrv:{busy:false,err:'',...(s.apiKeysSrv||{}),items:[k,...(((s.apiKeysSrv||{}).items)||[]).filter(x=>x.id!==k.id)]}}));
@@ -4084,7 +4166,11 @@ class Component extends DCLogic {
       if(r.kind==='Kthim shitje'){ E(r.date,r.no,'Notë krediti · '+r.customer+' · '+r.ref,[...this.splitByAcc(d,r,r.sub,p=>this.prodAccSale(p)).map(([c,v])=>[c,v,0]),['2400',r.vat,0],...(r.applied?[['1200',0,r.applied]]:[]),...(r.refund?[[cashAcc,0,r.refund]]:[])]); if(cost) E(r.date,r.no,'Kthim malli · '+r.customer,[['1300',cost,0],['5000',0,cost]]); }
       else { E(r.date,r.no,'Kthim blerje · '+r.supplier+' · '+r.ref,[...(r.applied?[['2200',r.applied,0]]:[]),...(r.refund?[[cashAcc,r.refund,0]]:[]),...this.splitByAcc(d,r,r.sub,x=>this.prodAccPur(x)).map(([c,v])=>[c,0,v]),['2410',0,r.vat]]); } }
     for(const e of d.expenses){ E(e.date,e.no,e.category+' · '+e.desc,[['6000',e.net,0],...(e.vat?[['2410',e.vat,0]]:[]),[ACC.find(a=>a.id===e.account).type==='Bankë'?'1010':'1000',0,e.total]]); }
-    for(const p of d.payments){ if(p.kind==='expense'||p.kind==='pos'||p.kind==='refund') continue; const cash=ACC.find(a=>a.id===p.account).type==='Bankë'?'1010':'1000';
+    // pagat: kostoja te shpenzimet, detyrimi ndaj shtetit/fondit te 2300, neto-ja nga arka/banka (pagesa e saj
+    // nuk postohet më poshtë si pagesë furnitori — do ta dyfishonte daljen e parave)
+    for(const r of (d.payrolls||[])){ const cash=(ACC.find(a=>a.id===r.account)||{}).type==='Bankë'?'1010':'1000';
+      E(r.date,r.no,'Pagat · '+this.monthLabel(r.month),[['6000',r.cost,0],['2300',0,r.tax+r.pensionEmp+r.pensionEr],[cash,0,r.net]]); }
+    for(const p of d.payments){ if(p.kind==='expense'||p.kind==='pos'||p.kind==='refund'||p.kind==='payroll') continue; const cash=ACC.find(a=>a.id===p.account).type==='Bankë'?'1010':'1000';
       E(p.date,p.no,(p.dir==='in'?'Arkëtim · ':'Pagesë · ')+p.party+' · '+p.ref,p.dir==='in'?[[cash,p.amount_c,0],['1200',0,p.amount_c]]:[['2200',p.amount_c,0],[cash,0,p.amount_c]]); }
     J.sort((a,b)=>this.toIso(a.date).localeCompare(this.toIso(b.date))||a.ref.localeCompare(b.ref));
     return J;
@@ -4374,6 +4460,10 @@ class Component extends DCLogic {
       purchase:{supplier:'',supplierQ:'',supplierOpen:false,due,lines:[{...this.newLine(),fresh:false,artOpen:false}],receive:true},
       payment:{amount:'',account:this.bankAccount()},
       expense:{category:'',categoryQ:'',categoryOpen:false,vendor:'',desc:'',net:'',rate:this.defaultTax(),account:this.bankAccount()},
+      payrun:{ym:'',account:'',date:this.today()},
+      employee:{name:'',pid:'',position:'',positionQ:'',positionOpen:false,dept:'',deptQ:'',deptOpen:false,branch:'',contract:'I pacaktuar',hired:this.today(),gross:'',days:'5',hours:'8',volEmp:'0',volEr:'0',iban:'',status:'Aktiv'},
+      // KUJDES: çelësi i llojit NUK mund të quhet `kind` — ai është lloji i VETË formës (si te produkti: `pkind`)
+      leave:{empId:'',empIdQ:'',empIdOpen:false,lkind:'Pushim vjetor',from:this.today(),to:this.today(),note:''},
       product:{name:'',barcode:'',cat:'',catQ:'',catOpen:false,unit:'copë',unitQ:'copë',unitOpen:false,tax:this.defaultTax(),price:'',priceG:'',cost:'',costG:'',opening:'0',minStock:'0',pos:true,active:true,pkind:'mall',accSale:'4000',accSaleQ:'4000 · Të hyra nga shitja',accSaleOpen:false,accPur:'1300',accPurQ:'1300 · Stoku i mallit',accPurOpen:false,rec:false,lines:[{...this.newLine(),fresh:false,artOpen:false}],packUnit:'',packUnitQ:'',packUnitOpen:false,packQty:''},
       category:{name:'',note:''},
       adjust:{sku:'',artQ:'',artOpen:false,counted:'',pk:false},
@@ -4551,6 +4641,59 @@ class Component extends DCLogic {
       const ready=!!f.name.trim()&&!dup&&opening!==null;
       actions=[{label:edit?'Ruaj':'Shto llogarinë',primary:true,disabled:!ready,go:()=>{ const id=edit||((f.type==='Arkë'?'cash':'bank')+Date.now().toString(36)); const rec={id,name:f.name.trim(),type:f.type,detail:(f.detail||'').trim()||'—',opening_c:opening||0}; this.commit(d=>({accounts:edit?d.accounts.map(a=>a.id===edit?{...a,...rec}:a):[...(d.accounts||[]),rec]}),edit?'Llogaria u përditësua':'Llogaria u shtua'); this.logAudit((edit?'Llogaria u përditësua: ':'Llogari e re: ')+rec.name); close(); }}];
       if(edit&&!db.payments.some(p=>p.account===edit)&&this.ACCOUNTS.length>1) actions.unshift({label:'Fshi',go:()=>this.setState({confirm:{title:'Fshi llogarinë?',body:'Llogaria nuk ka pagesa; hiqet nga lista.',ok:()=>{ this.commit(d=>({accounts:d.accounts.filter(a=>a.id!==edit)}),'Llogaria u fshi','#8FA3B8'); close(); }}})});
+    } else if(K==='payrun'){
+      const ym=f.ym||this.today().slice(0,7), set=this.hrSet(db);
+      const emps=this.employeesOf(db).filter(e=>this.empActive(e)&&(e.gross_c||0)>0);
+      const lines=emps.map(e=>this.payrollOf(e,set)), T=k=>lines.reduce((a,l)=>a+l[k],0);
+      const acc=this.accountsOf(db).find(a=>a.id===f.account)||this.accountsOf(db).find(a=>a.type==='Bankë')||this.accountsOf(db)[0];
+      const bal=acc?this.accountBalance(acc.id):0, short=acc&&bal<T('net');
+      title='Gjenero listën e pagave · '+this.monthLabel(ym);
+      sub='Shumat ngrihen te dokumenti: një ndryshim i mëvonshëm i pagës nuk e prek këtë muaj. Lista nuk gjenerohet dy herë.';
+      fields=[info('Punëtorë',String(emps.length)+' me pagë',{half:true}),info('Bruto',this.fmt(T('gross')),{half:true}),
+        info('Tatimi',this.fmt(T('tax')),{half:true,color:'#B45309'}),info('Kontributet (ai + kompania)',this.fmt(T('pensionEmp')+T('pensionEr')),{half:true,color:'#B45309'}),
+        info('Neto për pagesë',this.fmt(T('net')),{half:true,color:'#15803D'}),info('Kostoja e kompanisë',this.fmt(T('cost')),{half:true}),
+        accSeg('account'),date('date','Data e pagesës',{half:true}),
+        info('Gjendja e llogarisë',acc?this.fmt(bal)+(short?' · nuk mbulon neto-n':''):'—',{half:true,color:short?'#B91C1C':'#526477'})];
+      msg=short?'Llogaria nuk e mbulon neto-n — lista gjenerohet njësoj, por gjendja do të dalë negative.':'';
+      actions=[{label:'Gjenero listën',primary:true,disabled:!emps.length,go:()=>{ const r=this.payrollRun(ym,f.account,f.date); if(r) this.setState({prYm:ym}); close(); }}];
+    } else if(K==='employee'){
+      /* Punëtori: të dhënat që i duhen listës së pagave dhe kontratës. Paga mbahet BRUTO (ashtu shkruhet kontrata
+         dhe ashtu e kërkon deklarata); neto-ja llogaritet dhe shfaqet këtu që të mos ketë keqkuptim me punëtorin. */
+      const edit=f.edit||'', orig=edit?this.empOf(db,edit):null;
+      const gross=this.toC(f.gross), grossErr=f.gross!==''&&(gross===null||gross<0);
+      const vE=f.volEmp===''?0:Number(f.volEmp), vR=f.volEr===''?0:Number(f.volEr);
+      const volErr=[vE,vR].some(v=>isNaN(v)||v<0||v>15);
+      const pay=gross!==null?this.payrollOf({gross_c:gross,volEmp:vE,volEr:vR}):null;
+      const depts=[...new Set([...this.employeesOf(db).map(e=>e.dept),...(db.branches||[]).map(()=>null)].filter(Boolean))].map(x=>({id:x,label:x}));
+      const poss=[...new Set(this.employeesOf(db).map(e=>e.position).filter(Boolean))].map(x=>({id:x,label:x}));
+      title=edit?'Redakto punëtorin':'Punëtor i ri'; sub='Paga shkruhet BRUTO. Nga ajo zbriten kontributi pensional dhe tatimi; kompanisë i kushton bruto plus kontributi i punëdhënësit.';
+      fields=[txt('name','Emri dhe mbiemri',{half:true,ph:'p.sh. Arben Berisha'}),txt('pid','Numri personal',{half:true,ph:'10 shifra',hint:'shkruhet te lista e pagave dhe te deklarata'}),
+        combo('position','Pozita',poss,{free:true,half:true,ph:'p.sh. Kamarier'}),combo('dept','Departamenti',depts,{free:true,half:true,ph:'p.sh. Shitje'}),
+        seg('branch','Dega',(db.branches||[]).map(b=>[b.name,b.name]),{half:true}),seg('contract','Kontrata',this.CONTRACTS.map(c2=>[c2,c2]),{half:true}),
+        date('hired','Data e fillimit',{half:true}),txt('gross','Paga bruto (€/muaj)',{half:true,decimal:true,err:grossErr}),
+        txt('days','Ditë pune / javë',{half:true,decimal:true}),txt('hours','Orë / ditë',{half:true,decimal:true}),
+        txt('volEmp','Kontribut vullnetar i punëtorit (%)',{half:true,decimal:true,err:volErr,ph:'0'}),txt('volEr','Kontribut vullnetar i kompanisë (%)',{half:true,decimal:true,err:volErr,ph:'0'}),
+        txt('iban','Llogaria bankare (IBAN)',{ph:'opsionale — për listën e transferit'}),
+        info('Neto për në dorë',pay?this.fmt(pay.net)+' · tatimi '+this.fmt(pay.tax)+' · kontributi i tij '+this.fmt(pay.pensionEmp):'—',{half:true,color:'#15803D'}),
+        info('Kostoja e kompanisë',pay?this.fmt(pay.cost)+' · kontributi i kompanisë '+this.fmt(pay.pensionEr):'—',{half:true,color:'#526477'}),
+        ...(edit?[seg('status','Statusi',[['Aktiv','Aktiv'],['Pushim','Me pushim'],['Larguar','Larguar']],{half:true})]:[])];
+      const ready=!!f.name.trim()&&gross!==null&&!grossErr&&!volErr;
+      const rec=()=>({name:f.name.trim(),pid:(f.pid||'').trim(),position:(f.position||'').trim()||'—',dept:(f.dept||'').trim()||'—',branch:f.branch||((db.branches||[])[0]||{}).name||'—',
+        contract:f.contract||this.CONTRACTS[0],hired:this.fmtDate(f.hired),gross_c:gross,days:Number(f.days)||5,hours:Number(f.hours)||8,volEmp:vE,volEr:vR,iban:(f.iban||'').trim(),status:f.status||'Aktiv'});
+      actions=[{label:edit?'Ruaj':'Shto punëtorin',primary:true,disabled:!ready,go:()=>{
+        if(edit){ this.commit(d=>({employees:this.employeesOf(d).map(e=>e.id===edit?{...e,...rec()}:e)}),'Punëtori u përditësua'); this.logAudit('Punëtori '+rec().name+' u përditësua'); }
+        else { const id='e'+Date.now().toString(36); this.commit(d=>({employees:[...this.employeesOf(d),{id,no:this.nextEmpNo(d),...rec(),history:[{t:this.stamp(),a:'U regjistrua',u:this.who()}]}]}),'Punëtori u shtua'); this.logAudit('Punëtori '+rec().name+' u regjistrua'); }
+        close(); }}];
+      if(orig&&!((db.payrolls||[]).some(p=>(p.lines||[]).some(l=>l.empId===orig.id)))) actions.unshift({label:'Fshi',go:()=>this.setState({confirm:{title:'Fshi punëtorin?',body:orig.name+' nuk ka asnjë listë page — hiqet plotësisht.',ok:()=>{ this.commit(d=>({employees:this.employeesOf(d).filter(e=>e.id!==orig.id)}),'Punëtori u fshi','#8FA3B8'); close(); }}})});
+    } else if(K==='leave'){
+      const emps=this.employeesOf(db).filter(e=>this.empActive(e));
+      const emp=emps.find(e=>e.id===f.empId), dayErr=f.from&&f.to&&this.daysBetween(this.toIso(f.from),this.toIso(f.to))<0;
+      title='Pushim / mungesë'; sub='Hyn te prezenca e muajit dhe te kartela e punëtorit. Nuk e ndryshon pagën bruto — pushimi pa pagesë shënohet si i tillë.';
+      fields=[combo('empId','Punëtori',emps.map(e=>({id:e.id,label:e.name,sub:e.position+' · '+e.dept})),{max:emps.length||1,ph:'zgjidhni punëtorin'}),
+        seg('lkind','Lloji',this.LEAVE_KINDS.map(k=>[k,k])),date('from','Nga',{half:true}),date('to','Deri',{half:true,err:dayErr}),txt('note','Shënim',{ph:'opsional'})];
+      const ready=!!emp&&!!f.from&&!!f.to&&!dayErr;
+      actions=[{label:'Ruaj pushimin',primary:true,disabled:!ready,go:()=>{ const rec={id:'l'+Date.now().toString(36),empId:emp.id,name:emp.name,kind:f.lkind||this.LEAVE_KINDS[0],from:this.fmtDate(f.from),to:this.fmtDate(f.to),note:f.note||'',u:this.who()};
+        this.commit(d=>({leaves:[rec,...((d.leaves)||[])]}),'Pushimi u regjistrua'); close(); }}];
     } else if(K==='warehouse'){
       const dup=!!f.name.trim()&&(db.warehouses||[]).some(w=>this.norm(w.name)===this.norm(f.name));
       title='Depo e re'; sub='Depoja merr ID rendore (W…); transferimet, blerjet dhe faturat mund t’i caktohen.';
@@ -4856,6 +4999,7 @@ class Component extends DCLogic {
         sections:[],totals:[],note:q.reason&&q.reason!=='—'?q.reason:'',hasNote:!!(q.reason&&q.reason!=='—'),
         history:[{t:q.time,a:'Kërkesa hyri në radhë ('+q.kind+')',u:'Sistemi'},...(q.status==='E suksesshme'?[{t:q.time,a:'Fiskalizimi u krye',u:'Fiscal Agent'}]:q.status==='Dështoi'?[{t:q.time,a:'Dështoi: '+q.reason,u:'Fiscal Agent'}]:[{t:'—',a:'Asnjë ekzekutim ende — Fiscal Agent nuk është i lidhur; kërkesa pret në radhë',u:'Sistemi'}])]};
     }
+    if(d.kind==='employee') return this.empDrawer(d.id);
     if(d.kind==='customer'||d.kind==='supplier'){
       const isC=d.kind==='customer', party=(isC?db.customers:db.suppliers).find(x=>x.name===d.id); if(!party) return null;
       const docs=(isC?db.invoices.filter(r=>r.customer===party.name&&!r.fromPos):db.purchases.filter(p=>p.supplier===party.name)).map(x=>({...x,status:this.docStatus(x)}));
@@ -5147,6 +5291,19 @@ class Component extends DCLogic {
         P.cards=[card('Regjistrimi për TVSH',{toggles:[tx.tog('vatRegistered','Kompania është e regjistruar për TVSH','Nëse jo, faturat lëshohen pa TVSH (grupi A)')],fields:[co.txt('vat','Numri i TVSH-së',{half:true,dis:!db.taxSettings.vatRegistered}),tx.seg('period','Periudha e deklarimit',[['Mujore','Mujore'],['Tremujore','Tremujore']],{half:true}),tx.seg('defaultGroup','Grupi i parazgjedhur për produkte të reja',Object.entries(this.TAX).map(([c,t])=>[c,c+' · '+t.rate+'%']))]}),
           card('Periudha e parazgjedhur e raporteve',{note:'Me këtë zgjedhje hapen raportet, librat e TVSH-së dhe deklarata — pa e ndryshuar çdo herë me dorë. Vlen për këtë kompani.',
             fields:[tx.seg('defaultPeriod','Hapi raportet te',this.PERIODS)]}),
+          /* Normat e pagës: parametra, jo numra të ngulitur te kodi. Çdo listë page e gjeneruar i ngrin normat e
+             veta te dokumenti, prandaj një ndryshim këtu nuk i prek muajt e mbyllur. */
+          (()=>{ const hr=bind(()=>this.hrSet(db),p=>this.setIn('hrSettings',p)), x=this.hrSet(db);
+            const ex=g=>{ const p=this.payrollOf({gross_c:g}); return this.fmt(g)+' bruto → '+this.fmt(p.net)+' neto · tatimi '+this.fmt(p.tax)+' · kompanisë i kushton '+this.fmt(p.cost); };
+            return card('Pagat — tatimi dhe kontributet',{wide:true,
+              sub:'Tatimi në të ardhura nga paga llogaritet shkallë për shkallë, dhe kontributi pensional i punëtorit zbritet PARA tatimit.',
+              fields:[hr.txt('b1','Pa tatim deri në (€)',{half:true,decimal:true,hint:'parazgjedhja 80 €'}),hr.txt('p2','Norma deri te kufiri i dytë (%)',{half:true,decimal:true}),
+                hr.txt('b2','Kufiri i dytë (€)',{half:true,decimal:true,hint:'parazgjedhja 250 €'}),hr.txt('p3','Norma deri te kufiri i tretë (%)',{half:true,decimal:true}),
+                hr.txt('b3','Kufiri i tretë (€)',{half:true,decimal:true,hint:'parazgjedhja 450 €'}),hr.txt('p4','Norma mbi kufirin e tretë (%)',{half:true,decimal:true}),
+                hr.txt('pensionEmp','Kontributi pensional i punëtorit (%)',{half:true,decimal:true}),hr.txt('pensionEr','Kontributi pensional i kompanisë (%)',{half:true,decimal:true}),
+                hr.info('Kontroll · pagë 300 €',ex(30000),{color:'#526477'}),hr.info('Kontroll · pagë 600 €',ex(60000),{color:'#526477'})],
+              note:'Shkruar te vlerat që zbatohen sot në Kosovë (tatimi 0/4/8/10 % sipas shkallëve mujore, pensioni 5 % + 5 %). Konfirmojini me kontabilistin para listës së parë — ERP-ja i përdor pikërisht ashtu siç rrinë këtu.',
+              noteColor:'#B45309'}); })(),
           card('Grupet tatimore',{wide:true,table:{cols:[{label:'Kodi'},{label:'Emri'},{label:'Norma',align:'right'},{label:'Produkte',align:'right'},{label:'Kodi ATK'}],rows:Object.entries(this.TAX).map(([c,t])=>({cells:[C(c,{mono:true,b:true}),C(t.name,{b:true}),C(t.rate+'%',{align:'right',b:true}),C(String(db.products.filter(p=>p.tax===c).length),{align:'right',color:'#526477'}),C(ac[c]||'—',{mono:true,color:ac[c]?'#10243A':'#8FA3B8'})]}))},fields:Object.keys(this.TAX).map(c=>({label:'Kodi ATK për grupin '+c,isText:true,value:ac[c]||'',set:e=>this.setIn('taxSettings',{atkCodes:{...ac,[c]:e.target.value}}),ph:'verifikohet me ATK',err:'',span:'auto',mode:'text',hint:''})),note:'Normat (0% / 8% / 18%) nuk ndryshohen nga përdoruesi; ndryshimet ligjore vijnë me përditësim të platformës.'})];
         break; }
       case 'Email': {
@@ -5188,7 +5345,7 @@ class Component extends DCLogic {
           card('Si punon lidhja',{rows:[{k:'1. Katalogu',v:'ERP → POS: produktet me stokun aktual dhe letrat tatimore (A/C/D/E), klientët, të dhënat e kompanisë (koka e kuponit), rregullat e POS-it — asnjë konfigurim fiskal'},{k:'2. Shitjet',v:'POS → ERP: kuponët dhe ndërrimet me kursor — dërgimi i përsëritur nuk dyfishon asgjë (id i kuponit)'},{k:'3. Në ERP',v:'çdo kupon zbret stokun (kosto mesatare), hyn në arkë/bankë, në ditar dhe në radhën fiskale; kthimet e kthejnë'},{k:'4. Offline',v:'POS-i shet pa lidhje; kuponët presin në POS dhe sinkronizohen kur ERP-ja hapet sërish'},{k:'Siguria',v:'API-ja dëgjon vetëm në 127.0.0.1 dhe kërkon token (i njëjti në të dyja anët)'}]}),
           card('Instalimi në arkë',{rows:[{k:'Kërkesa',v:'Windows 10/11 · Python 3.10+ (me Tkinter, si instalimi standard)'},{k:'Nisja',v:'run-pos.bat (dy klikime) ose python kontabo_pos.py',mono:true},{k:'Testet',v:'python kontabo_pos.py --check',mono:true},{k:'Të dhënat',v:'kontabo-pos/data/pos.sqlite · kuponët te kontabo-pos/receipts/'},{k:'Printeri',v:'pajisje printimi (Cilësimet e POS-it) — nuk është mënyrë fiskalizimi'}]})];
         break; }
-      case 'R:HR': case 'R:Prodhim': {
+      case 'R:Prodhim': {
         const mod=key==='R:HR'?'hr':'prodhim', on=s.modules[mod], label=key==='R:HR'?'HR':'Prodhim';
         P.title='Raporti · '+label; P.sub=on?'Moduli është aktiv, por nuk ka ende të dhëna të lidhura.':'Moduli '+label+' nuk është aktiv për këtë kompani.';
         P.cards=[card(on?'Pa të dhëna':'Moduli nuk është aktiv',{wide:true,rows:[{k:'Statusi',v:on?'Aktiv · pa të dhëna':'Jo aktiv',color:on?'#B45309':'#8FA3B8'},{k:'Përfshin',v:key==='R:HR'?'Punëtorët, prezenca, pushimet, pagat sipas muajve dhe degëve':'Urdhrat e punës, konsumi i materialeve, kosto e prodhimit'}],actions:on?[{label:'Modulet',go:()=>this.go('settings','Abonimi')}]:[{label:'Aktivizo modulin '+label,primary:true,go:()=>{ this.setState({modules:{...s.modules,[mod]:true}}); this.toast('Moduli '+label+' u aktivizua — të dhënat regjistrohen te seksioni '+label,'#22C55E'); }},{label:'Modulet',go:()=>this.go('settings','Abonimi')}],note:'Ky raport lidhet kur moduli të ketë të dhëna (nuk simulohet).'})];
@@ -5289,6 +5446,39 @@ class Component extends DCLogic {
     return '<article class="doc rep">'+head+cont+'<table class="items">'+th+'<tbody>'+body+'</tbody></table>'
       +'<div class="tail">'+(o.note?'<div class="note">'+e(o.note)+'</div>':'')+'</div>'
       +'<div class="foot">'+brand+'<div>'+e(co.name)+'</div><div class="pg"></div></div></article>';
+  }
+  /* Fletëpagesa e secilit punëtor për një muaj: dy në faqe A4, me zbërthimin bruto → neto dhe vendin e firmës.
+     Printohet nga lista e NGRIRË (dokumenti), prandaj një ndryshim i mëvonshëm i pagës nuk e ndryshon atë që u dha. */
+  payslipHtml(run){
+    const db=this.view(), co=db.company, E=x=>this.esc(x), F=c=>this.fmtEu(c);
+    const row=(k,v,b)=>'<div class="l'+(b?' b':'')+'"><span>'+E(k)+'</span><span>'+F(v)+'</span></div>';
+    const one=l=>'<section class="slip"><div class="hd"><div><div class="co">'+E(co.name)+'</div><div class="mut">'+E(co.address+', '+co.city)+' · NUI '+E(co.nui)+'</div></div>'
+      +'<div class="ttl">FLETËPAGESË<div class="mut">'+E(this.monthLabel(run.month))+'</div></div></div>'
+      +'<div class="who"><div><b>'+E(l.name)+'</b><div class="mut">'+E((l.position||'—')+' · nr. '+(l.no||'—')+(l.pid?' · numri personal '+l.pid:''))+'</div></div>'
+      +'<div class="mut">Lista '+E(run.no)+' · '+E(run.date)+'</div></div>'
+      +'<div class="tbl">'+row('Paga bruto',l.gross)+row('Kontributi pensional (i punëtorit)',-l.pensionEmp)+row('Baza e tatueshme',l.base)
+      +row('Tatimi në të ardhura',-l.tax)+row('NETO PËR NË DORË',l.net,true)+'</div>'
+      +'<div class="tbl mut2">'+row('Kontributi pensional (i punëdhënësit)',l.pensionEr)+row('Kostoja totale për kompaninë',l.cost)+'</div>'
+      +'<div class="sig"><div><div class="ln"></div>Punëdhënësi</div><div><div class="ln"></div>Punëtori</div></div>'
+      +'<div class="mut foot">Normat e zbatuara: tatimi '+E(run.rates.p1+'/'+run.rates.p2+'/'+run.rates.p3+'/'+run.rates.p4)+' % sipas shkallëve · kontributi pensional '
+      +E(run.rates.pensionEmp+' % + '+run.rates.pensionEr+' %')+(l.iban?' · pagesa te '+E(l.iban):'')+'</div></section>';
+    return (run.lines||[]).map(one).join('');
+  }
+  printPayslips(run){
+    if(!run||!(run.lines||[]).length){ this.toast('Asnjë fletëpagesë për të printuar','#8FA3B8'); return; }
+    const css='@page{size:A4;margin:12mm}body{font-family:\'IBM Plex Sans\',system-ui,Arial,sans-serif;font-size:10pt;color:#152536;margin:0}'
+      +'.slip{border:.3mm solid #DCE5EF;border-radius:2mm;padding:6mm;margin-bottom:6mm;break-inside:avoid;page-break-inside:avoid}'
+      +'.hd{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:.3mm solid #DCE5EF;padding-bottom:3mm}'
+      +'.co{font-weight:700;font-size:12pt;color:#10243A}.ttl{text-align:right;font-weight:700;letter-spacing:.12em;color:#10243A}'
+      +'.mut{color:#526477;font-size:8.5pt;font-weight:400;letter-spacing:0}.who{display:flex;justify-content:space-between;align-items:flex-start;margin:4mm 0}'
+      +'.tbl{display:flex;flex-direction:column;gap:1mm}.tbl.mut2{margin-top:3mm;padding-top:2mm;border-top:.25mm dashed #DCE5EF;color:#526477}'
+      +'.l{display:flex;justify-content:space-between;font-variant-numeric:tabular-nums}.l.b{border-top:.4mm solid #10243A;margin-top:2mm;padding-top:2mm;font-weight:700;font-size:12pt}'
+      +'.sig{display:grid;grid-template-columns:1fr 1fr;gap:14mm;margin-top:8mm;font-size:8.5pt;color:#526477}.ln{border-bottom:.3mm solid #526477;height:8mm}'
+      +'.foot{margin-top:3mm;border-top:.25mm solid #DCE5EF;padding-top:2mm}';
+    const html='<!doctype html><html lang="sq"><head><meta charset="utf-8"><title>Fletëpagesat '+this.esc(run.no)+'</title><style>'
+      +this.fontFaceCss()+css+'</style></head><body>'+this.payslipHtml(run)
+      +'<script>window.addEventListener(\'load\',function(){setTimeout(function(){try{window.print();}catch(e){}},50);});<\/script></body></html>';
+    this._printHtml(html,'Fletëpagesat e '+this.monthLabel(run.month)+' — për PDF zgjidhni “Save as PDF”',true);
   }
   printReport(T,o={}){
     const rows=this.reportRows(T); if(!rows.length){ this.toast('Asnjë rresht për të printuar','#8FA3B8'); return; }
@@ -5612,6 +5802,24 @@ class Component extends DCLogic {
             ...(rot?[{...C('Rigjenero tokenin'),act:true,go:()=>this.setState({confirm:{title:'Rigjenero token-in e “'+t.name+'”?',body:'Token-i i tanishëm i kësaj arke refuzohet menjëherë: arka nuk dërgon kuponë derisa t’i vendoset token-i i ri (shfaqet vetëm një herë). Terminali, kuponët dhe ndërrimet e tij mbeten të njëjtët.',color:'#B45309',ok:()=>this.terminalRotate(t)}})}]:[])]}; });
         T.empty='Asnjë terminal. Shtoni një me “+ Terminal”: merr POS ID, depon dhe (me server) token-in që vendoset te Cilësimet e POS-it.';
         break; }
+      case 'R:HR': {
+        const runs=[...(db.payrolls||[])].sort((a,b)=>String(b.month).localeCompare(String(a.month)));
+        const emps=this.employeesOf(db);
+        if(!emps.length&&!runs.length){ T.title='Raporti · HR'; T.sub='Asnjë punëtor ende — shtoni të parin te HR › Punëtorët dhe ky raport mbushet vetë.';
+          T.cols=[{label:'Muaji'}]; T.rows=[]; T.empty='Pa të dhëna.'; T.exportable=false; break; }
+        T.title='Raporti · Pagat'; T.sub='Çdo listë e gjeneruar, me zbërthimin që i duhet deklaratës: bruto, kontributet, tatimi, neto dhe kostoja e kompanisë.'; T.count=runs.length;
+        T.actions=[{label:'Punëtorët',p:'',go:()=>this.go('hr','Punëtorët')},{label:'Pagat',p:'',go:()=>this.go('hr','Pagat')}];
+        T.kpis=[{label:'Punëtorë aktivë',value:String(emps.filter(e=>this.empActive(e)).length)},
+          {label:'Lista të gjeneruara',value:String(runs.length)},
+          {label:'Bruto gjithsej',value:money(sum(runs,'gross'))},
+          {label:'Tatim + kontribute',value:money(sum(runs.map(r=>r.tax+r.pensionEmp+r.pensionEr))),c:'#B45309'}];
+        T.cols=[{label:'Lista'},{label:'Muaji'},{label:'Punëtorë',align:'right'},{label:'Bruto',align:'right'},{label:'Kontributi i tyre',align:'right'},{label:'Tatimi',align:'right'},{label:'Neto',align:'right'},{label:'Kontributi i kompanisë',align:'right'},{label:'Kostoja',align:'right'}];
+        T.rows=runs.map(r=>({cells:[C(r.no,{mono:true}),C(this.monthLabel(r.month),{b:true}),C(String((r.lines||[]).length),{align:'right'}),M(r.gross),M(r.pensionEmp,{color:'#526477'}),
+          M(r.tax,{color:'#B45309'}),M(r.net,{b:true,color:'#15803D'}),M(r.pensionEr,{color:'#526477'}),M(r.cost)]}));
+        T.foot=[C('Gjithsej',{b:true}),C(''),C(String(sum(runs.map(r=>(r.lines||[]).length))),{align:'right',b:true}),M(sum(runs,'gross'),{b:true}),M(sum(runs,'pensionEmp'),{b:true}),
+          M(sum(runs,'tax'),{b:true}),M(sum(runs,'net'),{b:true}),M(sum(runs,'pensionEr'),{b:true}),M(sum(runs,'cost'),{b:true})];
+        T.empty='Asnjë listë page ende — gjeneroni të parën te HR › Pagat.';
+        break; }
       case 'P:Artikujt e arkave': {
         /* Matrica Artikuj × Arka: një ndezje për çdo çift. Parazgjedhja „të gjitha arkat" ruhet si listë bosh, prandaj
            asnjë biznes me një arkë nuk e ndien këtë faqe; me dy arka (p.sh. POS-i i marketit dhe bari) pronari zgjedh
@@ -5892,6 +6100,90 @@ class Component extends DCLogic {
         T.cols=[{label:'Numri'},{label:'Furnitori'},{label:'Data'},{label:'Pritet'},{label:'Depoja'},{label:'Statusi'},{label:'Artikuj',align:'right'},{label:'Totali',align:'right'},{label:'Blerja'}];
         T.rows=list.map(o=>({open:()=>this.openDr('po',o.no),cells:[C(o.no,{mono:true}),C(o.supplier,{b:true}),C(o.date,{color:'#526477'}),C(o.due,{color:o.status==='Hapur'&&this.toIso(o.due)<today?'#B91C1C':'#526477'}),C(this.whName(o.wh,db),{color:'#526477'}),B(o.status),C(String(o.items.length),{align:'right'}),M(o.total,{b:true}),o.purchaseNo?C(o.purchaseNo,{mono:true,color:'#2563EB'}):C('—',{color:'#8FA3B8'})]}));
         T.footer=plural(list.length,'porosi','porosi')+' · '+money(sum(list,'total')); T.empty='Asnjë porosi blerjeje. Krijoni një me “+ Porosi blerjeje” ose nga profili i furnitorit.';
+        break; }
+      /* ───────── HR ─────────
+         Punëtorët janë të dhëna të vërteta të kompanisë (jo përdoruesit e ERP-së: ata janë llogari hyrjeje).
+         Çdo faqe këtu lexon të njëjtën listë; paga llogaritet nga `payrollOf`, me normat e Cilësimeve. */
+      case 'Punëtorët': {
+        const emps=this.employeesOf(db), set=this.hrSet(db);
+        const rows=emps.map(e=>({e,p:this.payrollOf(e,set)}));
+        const act=rows.filter(r=>this.empActive(r.e));
+        T.title='Punëtorët'; T.sub='Kartela e secilit: pozita, kontrata, paga bruto dhe çfarë i mbetet në dorë. Paga e muajit gjenerohet te HR › Pagat.'; T.count=emps.length;
+        T.actions=[{label:'+ Punëtor',p:'1',go:()=>this.openForm('employee')},{label:'Pagat',p:'',go:()=>this.go('hr','Pagat')}];
+        T.kpis=[{label:'Punëtorë aktivë',value:String(act.length)},{label:'Paga bruto / muaj',value:money(sum(act.map(r=>r.p.gross)))},
+          {label:'Neto për në dorë',value:money(sum(act.map(r=>r.p.net))),c:'#15803D'},{label:'Kostoja e kompanisë',value:money(sum(act.map(r=>r.p.cost))),sub:'bruto + kontributi i punëdhënësit'}];
+        T.cols=[{label:'Nr.'},{label:'Punëtori'},{label:'Pozita'},{label:'Departamenti'},{label:'Kontrata'},{label:'Bruto',align:'right'},{label:'Tatimi',align:'right'},{label:'Neto',align:'right'},{label:'Statusi'}];
+        T.rows=rows.map(r=>({open:()=>this.openDr('employee',r.e.id),cells:[C(r.e.no,{mono:true}),C(r.e.name,{b:true,sub:r.e.pid?'Nr. personal '+r.e.pid:''}),C(r.e.position,{color:'#526477'}),
+          C(r.e.dept,{color:'#526477'}),C(r.e.contract,{color:'#526477'}),M(r.p.gross),M(r.p.tax,{color:'#B45309'}),M(r.p.net,{b:true,color:'#15803D'}),B(r.e.status||'Aktiv',{})]}));
+        T.empty='Asnjë punëtor ende. Shtoni të parin me “+ Punëtor” — pastaj lista e pagave gjenerohet vetë.';
+        break; }
+      case 'Departamentet': case 'Pozitat': {
+        const byDept=page==='Departamentet', emps=this.employeesOf(db).filter(e=>this.empActive(e)), set=this.hrSet(db);
+        const keys=[...new Set(emps.map(e=>byDept?e.dept:e.position))].filter(Boolean).sort();
+        T.title=byDept?'Departamentet':'Pozitat'; T.sub=(byDept?'Departamentet':'Pozitat')+' dalin nga vetë punëtorët — shkruhen te kartela e punëtorit dhe grupohen këtu.'; T.count=keys.length;
+        T.actions=[{label:'+ Punëtor',p:'1',go:()=>this.openForm('employee')}];
+        T.cols=[{label:byDept?'Departamenti':'Pozita'},{label:'Punëtorë',align:'right'},{label:'Paga bruto',align:'right'},{label:'Mesatarja',align:'right'},{label:'Kostoja e kompanisë',align:'right'}];
+        T.rows=keys.map(k=>{ const list=emps.filter(e=>(byDept?e.dept:e.position)===k).map(e=>this.payrollOf(e,set));
+          const g=sum(list.map(x=>x.gross)); return {cells:[C(k,{b:true}),C(String(list.length),{align:'right'}),M(g),M(list.length?Math.round(g/list.length):0,{color:'#526477'}),M(sum(list.map(x=>x.cost)))]}; });
+        T.empty='Asnjë punëtor aktiv ende.';
+        break; }
+      case 'Orari': {
+        const emps=this.employeesOf(db).filter(e=>this.empActive(e));
+        T.title='Orari i punës'; T.sub='Ditët dhe orët e kontratës për secilin; ndryshohen te kartela e punëtorit. Orari real i turneve mbahet te arka (ndërrimet e POS-it).'; T.count=emps.length;
+        T.actions=[{label:'+ Punëtor',p:'1',go:()=>this.openForm('employee')}];
+        T.cols=[{label:'Punëtori'},{label:'Pozita'},{label:'Ditë / javë',align:'right'},{label:'Orë / ditë',align:'right'},{label:'Orë / javë',align:'right'},{label:'Orë / muaj',align:'right'},{label:'Çmimi i orës',align:'right'}];
+        T.rows=emps.map(e=>{ const d=Number(e.days)||5, h=Number(e.hours)||8, wk=d*h, mo=Math.round(wk*52/12);
+          return {open:()=>this.openDr('employee',e.id),cells:[C(e.name,{b:true}),C(e.position,{color:'#526477'}),C(String(d),{align:'right'}),C(String(h),{align:'right'}),
+            C(String(wk),{align:'right'}),C(String(mo),{align:'right'}),M(mo?Math.round((e.gross_c||0)/mo):0,{color:'#526477'})]}; });
+        T.empty='Asnjë punëtor aktiv ende.';
+        break; }
+      case 'Pushimet': {
+        const list=[...(db.leaves||[])].sort((a,b)=>this.toIso(b.from).localeCompare(this.toIso(a.from)));
+        const days=l=>this.leaveDays(l), inP=list.filter(l=>this.monthOf(l.from)===thisMonth||this.monthOf(l.to)===thisMonth);
+        T.title='Pushimet dhe mungesat'; T.sub='Çdo ditë e regjistruar hyn te prezenca e muajit dhe te kartela e punëtorit.'; T.count=list.length;
+        T.actions=[{label:'+ Pushim',p:'1',go:()=>this.openForm('leave')}];
+        T.kpis=[{label:'Ditë këtë muaj',value:String(sum(inP.map(days)))},
+          ...this.LEAVE_KINDS.slice(0,3).map(k=>({label:k+' · '+this.monthLabel(thisMonth).split(' ')[0],value:String(sum(inP.filter(l=>l.kind===k).map(days)))}))];
+        T.cols=[{label:'Punëtori'},{label:'Lloji'},{label:'Nga'},{label:'Deri'},{label:'Ditë',align:'right'},{label:'Shënim'}];
+        T.rows=list.map(l=>({cells:[C(l.name,{b:true}),B(l.kind,{}),C(l.from,{color:'#526477'}),C(l.to,{color:'#526477'}),C(String(days(l)),{align:'right'}),C(l.note||'—',{color:'#526477'})]}));
+        T.empty='Asnjë pushim i regjistruar ende.';
+        break; }
+      case 'Prezenca': {
+        const ym=thisMonth, emps=this.employeesOf(db).filter(e=>this.empActive(e)), wd=this.workDays(ym);
+        T.title='Prezenca · '+this.monthLabel(ym); T.sub='Ditët e punës së muajit minus pushimet e regjistruara. Muaji ka '+wd+' ditë pune (e hënë–e premte).'; T.count=emps.length;
+        T.actions=[{label:'+ Pushim',p:'1',go:()=>this.openForm('leave')},{label:'Pushimet',p:'',go:()=>this.go('hr','Pushimet')}];
+        const rowOf=e=>{ const ls=this.leavesOf(db,e.id,ym); const off=sum(ls.map(l=>this.leaveDays(l))); return {e,ls,off:Math.min(off,wd),present:Math.max(0,wd-Math.min(off,wd))}; };
+        const rows=emps.map(rowOf);
+        T.kpis=[{label:'Ditë pune',value:String(wd)},{label:'Ditë prezence',value:String(sum(rows,'present'))},{label:'Ditë mungese',value:String(sum(rows,'off')),c:sum(rows,'off')?'#B45309':'#10243A'}];
+        T.cols=[{label:'Punëtori'},{label:'Pozita'},{label:'Ditë prezence',align:'right'},{label:'Ditë mungese',align:'right'},{label:'Llojet e mungesës'}];
+        T.rows=rows.map(r=>({open:()=>this.openDr('employee',r.e.id),cells:[C(r.e.name,{b:true}),C(r.e.position,{color:'#526477'}),C(String(r.present),{align:'right'}),
+          C(String(r.off),{align:'right',color:r.off?'#B45309':'#10243A'}),C([...new Set(r.ls.map(l=>l.kind))].join(' · ')||'—',{color:'#526477'})]}));
+        T.empty='Asnjë punëtor aktiv ende.';
+        break; }
+      case 'Pagat': {
+        /* Lista e pagave e një muaji: llogaritet nga kartelat, shihet para se të gjenerohet, dhe kur gjenerohet
+           bëhet dokument i pandryshueshëm (shumat ngrihen aty) + pagesa nga llogaria + hyrja në ditar. */
+        const set=this.hrSet(db), emps=this.employeesOf(db).filter(e=>this.empActive(e)&&(e.gross_c||0)>0);
+        const runs=[...(db.payrolls||[])].sort((a,b)=>String(b.month).localeCompare(String(a.month)));
+        const ym=s.prYm||thisMonth, done=runs.find(r=>r.month===ym);
+        const calc=emps.map(e=>({e,p:this.payrollOf(e,set)}));
+        const tot=k=>sum(calc.map(x=>x.p[k]));
+        T.title='Pagat'; T.sub=done?'Lista e '+this.monthLabel(ym)+' është gjeneruar më '+done.date+' — shumat janë të ngrira.':'Llogaritur nga kartelat e punëtorëve me normat e Cilësimeve (tatimi '+set.p2+'/'+set.p3+'/'+set.p4+' %, pensioni '+set.pensionEmp+' % + '+set.pensionEr+' %).';
+        T.count=done?(done.lines||[]).length:calc.length;
+        T.filters=[{isSel:'1',isDate:'',title:'Muaji',value:ym,opts:monthsBack(6).map(m=>({id:m,label:this.monthLabel(m)})),set:e=>this.setState({prYm:e.target.value})}];
+        T.actions=[{label:'+ Punëtor',p:'',go:()=>this.openForm('employee')},{label:'Normat',p:'',go:()=>this.go('settings','Tatimet')},
+          ...(done?[{label:'Fletëpagesat',p:'',go:()=>this.printPayslips(done)}]:[]),
+          ...(done||!calc.length?[]:[{label:'Gjenero listën e '+this.monthLabel(ym),p:'1',go:()=>this.openForm('payrun',{ym})}])];
+        const show=done?(done.lines||[]).map(l=>({l,name:l.name,no:l.no||'',p:l})):calc.map(x=>({l:null,name:x.e.name,no:x.e.no,p:x.p}));
+        T.kpis=[{label:'Bruto',value:money(done?done.gross:tot('gross'))},{label:'Neto për pagesë',value:money(done?done.net:tot('net')),c:'#15803D'},
+          {label:'Tatimi + kontributet',value:money(done?(done.tax+done.pensionEmp+done.pensionEr):(tot('tax')+tot('pensionEmp')+tot('pensionEr'))),c:'#B45309',sub:'detyrim ndaj shtetit dhe fondit'},
+          {label:'Kostoja e kompanisë',value:money(done?done.cost:tot('cost'))}];
+        T.cols=[{label:'Nr.'},{label:'Punëtori'},{label:'Bruto',align:'right'},{label:'Kontributi i tij',align:'right'},{label:'Baza',align:'right'},{label:'Tatimi',align:'right'},{label:'Neto',align:'right'},{label:'Kontributi i kompanisë',align:'right'},{label:'Kostoja',align:'right'}];
+        T.rows=show.map(r=>({cells:[C(r.no,{mono:true}),C(r.name,{b:true}),M(r.p.gross),M(r.p.pensionEmp,{color:'#526477'}),M(r.p.base,{color:'#526477'}),M(r.p.tax,{color:'#B45309'}),
+          M(r.p.net,{b:true,color:'#15803D'}),M(r.p.pensionEr,{color:'#526477'}),M(r.p.cost)]}));
+        T.foot=[C('Gjithsej',{b:true}),C(''),M(sum(show.map(r=>r.p.gross)),{b:true}),M(sum(show.map(r=>r.p.pensionEmp)),{b:true}),M(sum(show.map(r=>r.p.base)),{b:true}),
+          M(sum(show.map(r=>r.p.tax)),{b:true}),M(sum(show.map(r=>r.p.net)),{b:true}),M(sum(show.map(r=>r.p.pensionEr)),{b:true}),M(sum(show.map(r=>r.p.cost)),{b:true})];
+        T.empty=emps.length?'':'Asnjë punëtor me pagë. Shtoni punëtorët te HR › Punëtorët.';
         break; }
       case 'Depo': {
         T.title='Depot'; T.sub='Gjendja sipas depove: hapja e stokut është te depoja kryesore; blerjet, faturat, POS-i dhe transferimet lëvizin mallin mes tyre.'; T.count=whs.length; T.exportable=true;
