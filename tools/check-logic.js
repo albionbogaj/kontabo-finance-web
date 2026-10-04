@@ -598,6 +598,42 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
      [true, true, true, true], 'faqezuesi: me __ktbPageH=210 (A4 i shtrirë) faqet janë më të ulëta, pra më shumë — gjithçka tjetër njësoj');
 }
 
+// ── lloji i produktit (mall · shërbim · aset) dhe periudhat e parazgjedhura të kompanisë ──
+{
+  // një shërbim nuk ka gjendje: nuk hyn te vlera e stokut dhe nuk krijon asnjë lëvizje kur shitet
+  c.commit(d => ({ products: [...d.products, { name: 'Ofrimi i softuerit — licencë 1 vjeçare', sku: 'SRV-LIC', unit: 'copë', cat: 'Të tjera', tax: 'E', kind: 'sherbim', price_c: 50000, price_t: 500000, cost_c: 0, minStock: 0, barcode: '—', pos: false }] }));
+  const srv = c.prodOf(db(), 'SRV-LIC');
+  eq([c.prodKind(srv), c.prodKindLabel(srv), c.hasStock(srv), c.hasStock(c.prodOf(db(), 'LED-18'))], ['sherbim', 'Shërbim', false, true],
+     'produkti: lloji mall / shërbim / aset, dhe vetëm malli mban gjendje');
+  const row = c.stockRowsOf(db()).find(p => p.sku === 'SRV-LIC');
+  eq([row.qm, row.value, row.low, row.isService], [0, 0, false, true], 'shërbimi te gjendja e stokut: pa sasi, pa vlerë, kurrë „nën minimum"');
+  const mvBefore = db().movements.length;
+  { const d0 = { ...db(), movements: [...db().movements] };
+    c._pushMovements(d0, { no: 'X-1', date: '01.10.2026', customer: 'Drini Market SH.P.K.', items: [{ sku: 'SRV-LIC', qty: 1, unit_c: 50000, unit: 'copë' }] }, 'sale');
+    eq(d0.movements.length, mvBefore, 'shitja e një shërbimi nuk krijon asnjë lëvizje stoku'); }
+  // forma e produktit: kur lloji është shërbim, fushat e stokut zhduken (dhe çelësi i fushës NUK është `kind`,
+  // sepse ai është lloji i vetë formës — një përplasje e tillë e linte formën bosh)
+  c.openForm('product', {});
+  const fMall = c.formVals().fields.map(f => f.label);
+  c.setF({ pkind: 'sherbim' });
+  const fSherbim = c.formVals().fields.map(f => f.label);
+  eq([fMall.includes('Gjendja fillestare'), fSherbim.includes('Gjendja fillestare'), fSherbim.includes('Stoku minimal'),
+      fSherbim.includes('Përbërja'), fSherbim.includes('Lloji i produktit'), c.state.frm.kind],
+     [true, false, false, false, true, 'product'],
+     'forma e produktit: „Shërbim" fsheh gjendjen, stokun minimal, përbërjen dhe paketimin — dhe forma mbetet forma e produktit');
+  c.state.frm = null;
+
+  // periudhat: të njëjtat si te paneli, me parazgjedhjen e kompanisë
+  eq(c.PERIODS.map(x => x[0]).join(), 'today,week,month,prev,year,all', 'periudhat: Sot · Këtë javë · Këtë muaj · Muaji i kaluar · Këtë vit · Gjithçka');
+  eq(c.weekStart('2026-10-04'), '2026-09-28', 'java nis të hënën (04.10.2026 është e diel → 28.09.2026)');
+  c.state.rp = ''; c.setIn('taxSettings', { defaultPeriod: 'year' });
+  eq([c.rpNow(), c.pageTable('R:Shitje').period.find(p => p.on === '1').label], ['year', 'Këtë vit'],
+     'raportet hapen te periudha që ka caktuar kompania (Cilësimet › Tatimet), jo te një parazgjedhje e jona');
+  c.state.rp = 'today';
+  eq(c.rpNow(), 'today', 'një zgjedhje e përdoruesit e mbivendos parazgjedhjen derisa të ndryshohet');
+  c.state.rp = 'all'; c.setIn('taxSettings', { defaultPeriod: 'month' });
+}
+
 // ── Librat e ATK-së: kolonat, kutitë, kategoritë, kodet e NUI-t, kuponët, .xlsx ──
 // Rregullat janë ato të udhëzuesve të ATK-së (UdhezuesiLSh_AL / UdhezuesiLB_AL) dhe të librave realë të EDI-t:
 // kuti pa lëvizje = BOSH (jo 0), nota kreditore e lëshuar shkon te libri i BLERJES [53]/[55], ajo e pranuar te
@@ -680,11 +716,13 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
   if (kthBlerje) { const r3 = c.vatBook('sale', all).rows.find(r => r.no === kthBlerje.no);
     eq([!!r3, !!r3 && r3.cells.nota_18 != null], [true, true], 'nota kreditore e PRANUAR (kthim blerjeje) hyn te libri i SHITJES [16]'); }
   // kuponët e arkës: një rresht për ditë me kodin „1" dhe vetëm kutitë e lejuara
-  const posDays = new Set((db().posReceipts || []).map(r => r.date));
-  if (posDays.size) { const posRows = c.vatBook('sale', all).rows.filter(r => r.what === 'pos');
-    eq([posRows.length, posRows.every(r => r.fiskali === '1'), posRows.every(r => !r.cells.nota_18 && !r.cells.eksporti), posRows[0].numri],
-       [posDays.size, true, true, 'Pazari ditor'],
-       'kuponët e arkës: një rresht për ditë (pazari ditor) me kodin „1", pa kuti të ndaluara'); }
+  // kuponët e arkës nuk përjashtohen kurrë nga libri i shitjes: një NDËRRIM = një rresht, si një faturë
+  const posGroups = new Set((db().posReceipts || []).map(r => r.shift || ('day:' + r.date)));
+  if (posGroups.size) { const posRows = c.vatBook('sale', all).rows.filter(r => r.what === 'pos');
+    eq([posRows.length, posRows.every(r => r.fiskali === '1'), posRows.every(r => !r.cells.nota_18 && !r.cells.eksporti),
+        posRows.every(r => /^(Ndërrimi |Pazari ditor)/.test(r.numri)), posRows.some(r => r.cells.shitje_18 || r.cells.shitje_8 || r.cells.liruar_pa)],
+       [posGroups.size, true, true, true, true],
+       'kuponët e arkës: një rresht për NDËRRIM (si një faturë) me kodin „1", me shumat e veta dhe pa kuti të ndaluara'); }
   // skedari .xlsx: koka fjalë për fjalë, shumat si TEKST me dy dhjetore, kutitë bosh pa asnjë shenjë
   const book = c.vatBook('sale', all), sheet = c.vatBookSheet(book);
   eq([sheet[0][0], sheet[1][1], sheet[2][0], sheet[2][c.bookIdx('sale', 'shitje_18')], sheet.length], ['Nr.', 'Data', 'Numri i kutisë në Deklaratën e TVSH-së', '[12]', 3 + book.rows.length],
@@ -1448,7 +1486,7 @@ fld('pos').opts.find(o => o.label.startsWith('Jo')).go(); c.formVals().actions[0
 { const g = c.prodOf(db(), 'GOT-001'); eq([!!g, g && g.recipe, g && g.opening, g && g.cost_c, g && g.pos, c.state.frm], [true, [{ sku: 'VOD', qm: 120 }], 0, 0, false, null], 'product form (recipe): saved with its recipe, opening/cost 0, hidden from the tills'); }
 c.openForm('product', { name: 'Gabim', sku: 'GB-1', cat: 'Pije', catQ: 'Pije', unit: 'gotë', unitQ: 'gotë', tax: 'E', rec: true, lines: [{ ...c.newLine(), fresh: false, sku: 'VOD', artQ: 'Vodka', qty: '4 kg' }] }); typeF('price', '1.00');
 { const v = c.formVals(); eq([v.actions[0].disabled, /Kontrolloni sasinë te rreshti 1/.test(v.msg)], [true, true], 'recipe line: a quantity in the wrong unit blocks the save'); c.state.frm = null; }
-c.openProduct('VOD'); c.drawerVals().actions[0].go(); { const v = c.formVals(); eq([fld('unit'), v.fields.some(f => f.label === 'Njësia' && f.isInfo && /nuk ndryshohet/.test(f.value)), v.fields.some(f => f.label === 'Lloji' && f.isInfo)], [undefined, true, true], 'edit form: a locked unit is an info field; an ingredient with stock cannot switch to a recipe'); c.state.frm = null; }
+c.openProduct('VOD'); c.drawerVals().actions[0].go(); { const v = c.formVals(); eq([fld('unit'), v.fields.some(f => f.label === 'Njësia' && f.isInfo && /nuk ndryshohet/.test(f.value)), v.fields.some(f => f.label === 'Përbërja' && f.isInfo), v.fields.some(f => f.label === 'Lloji i produktit')], [undefined, true, true, true], 'edit form: a locked unit is an info field; an ingredient with stock cannot switch to a recipe; the kind selector (mall/shërbim/aset) is always there'); c.state.frm = null; }
 c.openProduct('KOK'); c.drawerVals().actions[0].go(); { const v = c.formVals(); eq([c.state.frm.rec, v.lines.map(l => [l.L.sku, l.L.qty, l.ev.qm]), v.lines[0].opts.some(o => o.sku === 'KOK'), v.actions[0].disabled], [true, [['VOD', '0.04', 40], ['LIM', '0.5', 500]], false, false], 'edit form of a recipe: pre-filled ingredient lines (qty in the ingredient unit), the product itself not offered'); c.state.frm = null; }
 // drawers: the recipe, "përdoret në …", no stock actions on a recipe
 c.openProduct('KOK'); { const d = c.drawerVals(); eq([d.badge.text, d.actions.map(a => a.label), d.meta.find(m => m.k === 'Mund të përgatiten').v, d.sections[0].title, d.sections[0].rows.length, d.totals[0].v], ['Recetë', ['Redakto', 'Faturo', 'Etiketë / barkod'], '40 gotë', 'Receta · për 1 gotë', 2, c.fmt(53)], 'recipe drawer: makeable qty, the recipe, no Rregullo stokun / Blerje e re / Transfero'); }
@@ -2254,7 +2292,7 @@ apiBlock.then(async () => {
       R.go('pos', 'Arkat'); const Tn = R.pageTable('P:Arkat'), Pn = R.settingsPage('POS'); R.setState(s => ({ db: { ...s.db, terminals: terms0 } }));
       eq([Tn.rows.map(r => [r.cells[0].t, r.cells[7].t, r.cells[8].t]), Pn.cards.find(c => c.title === 'Terminalet').table.rows.map(r => [r.cells[0].t, r.cells[6].t])], [[['Arka Bar', '7', '€10.00'], ['Arka 2', '1', '€1.50'], ['Arka 2 e re', '0', '€0.00']], [['Arka Bar', '€10.00'], ['Arka 2', '€84.00'], ['Arka 2 e re', '€0.00']]], 'P:Arkat / Cilësime › POS: a terminal reusing a POS ID gets none of the old terminal\'s ledger documents');
       R.go('pos', 'Operatorët'); R.state.rp = 'month'; let O = R.pageTable('P:Operatorët'); const nums = r => r.cells.slice(6).map(c => c.t);
-      eq([O.cols.length, O.period.map(p => p.label + (p.on ? '*' : '')), O.rows.map(r => [r.cells[0].t, ...nums(r)]), O.foot.map(c => c.t), / Shitjet: libri i POS-it në server · Shtator 2026\.$/.test(O.sub)], [12, ['Ky muaj*', 'Muaji i kaluar', 'Ky vit', 'Gjithçka'],
+      eq([O.cols.length, O.period.map(p => p.label + (p.on ? '*' : '')), O.rows.map(r => [r.cells[0].t, ...nums(r)]), O.foot.map(c => c.t), / Shitjet: libri i POS-it në server · Shtator 2026\.$/.test(O.sub)], [12, ['Sot', 'Këtë javë', 'Këtë muaj*', 'Muaji i kaluar', 'Këtë vit', 'Gjithçka'],
         [['Arben Berisha', '0', '€0.00', '—', '—', '€0.00', '0'], ['Fjolla Kastrati', '0', '€0.00', '—', '—', '€0.00', '0'], ['Gent', '55', '€82.50', '—', '—', '€82.50', '1'], ['Besa', '2', '€7.50', '—', '—', '€7.50', '0'], ['Ana', '6', '€6.50', '-€1.50', '-€1.00', '€4.00', '1']],
         ['Gjithsej', '', '', '', '', '', '63', '€96.50', '-€1.50', '-€1.00', '€94.00', ''], true], 'P:Operatorët (ledger): the rows\' operators summed over the month (sales, returns, cancels, net, shifts); till operators who are no ERP user get a row of their own');
       eq([O.rows[2].cells[0].sub, O.rows[0].cells[5].t, O.rows[2].cells[1].t], ['nga arka · jo përdorues i ERP-së', 'Ndrysho PIN', '—'], 'P:Operatorët: the ERP users keep their PIN action; a till-only operator is marked');
