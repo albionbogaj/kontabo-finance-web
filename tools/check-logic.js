@@ -2686,10 +2686,10 @@ apiBlock.then(async () => {
         TP.onResolve = null; }
       // … and in a later session (the page was closed before the resolve): another user finds it pending but already applied
       let Y;
-      { const b7 = seen(TP.state, 'BAR-7'); propose(TP, { key: 'p:108', sku: 'BAR-7', before: b7, after: { ...b7, gross_t: 21000 } }); TP.onResolve = () => json(503, { error: 'unavailable', message: 'Serveri po rinis' });
+      { const b7 = seen(TP.state, 'BAR-7'), p8 = propose(TP, { key: 'p:108', sku: 'BAR-7', before: b7, after: { ...b7, gross_t: 21000 } }); TP.onResolve = () => json(503, { error: 'unavailable', message: 'Serveri po rinis' });
         const c0 = TP.commits.length; await tick(O); O.logout(); done(O); TP.onResolve = null;
         Y = mk(); await enter(Y, 'mag', 'tp'); await tick(Y); const p7 = TP.state.products.find(x => x.sku === 'BAR-7');
-        eq([TP.commits.length - c0, st(TP).slice(-1), [p7.gross_t, p7.price_t], TP.resolves.slice(-1)[0].results.map(r => [r.state, r.result.applied])], [1, ['p:108:applied'], [21000, 17797], [['applied', ['gross_t']]]], 'proposals: after a reload another user finds it pending but in posProposalsDone — resolved with the stored result, never applied twice'); }
+        eq([TP.commits.length - c0, st(TP).slice(-1), [p7.gross_t, p7.price_t], TP.resolves.slice(-1)[0].results.filter(r => r.id === p8.id).map(r => [r.state, r.result.applied])], [1, ['p:108:applied'], [21000, 17797], [['applied', ['gross_t']]]], 'proposals: after a reload another user finds it in posProposalsDone (its page\'s first run sends the book\'s verdicts again) — resolved with the stored result, never applied twice'); }
       // a 409 while committing the batch (another user changed the price meanwhile): applied again on the server's book — the ERP's price is kept
       { const b7 = seen(TP.state, 'BAR-7'); propose(TP, { key: 'p:109', sku: 'BAR-7', before: b7, after: { ...b7, gross_t: 23000, name: 'Ujë me gaz' } });
         TP.onCommit = patch => { if ('posProposalsDone' in patch && !TP.raced) { TP.raced = true; TP.version++; TP.state = { ...TP.state, products: TP.state.products.map(p => p.sku === 'BAR-7' ? { ...p, price_t: 18644, price_c: 186, gross_t: 22000 } : p) }; return json(409, { error: 'version_conflict', version: TP.version, state: TP.state }); } return null; };
@@ -2756,6 +2756,25 @@ apiBlock.then(async () => {
           'proposals: a verdict whose resolve failed is sent again on the next run BEFORE the pending list is read, though the bar superseded its proposal meanwhile — the server moves the successor\'s base, the bar\'s second price lands (not taken for an ERP change)');
         const r1 = TL.resolves.length; await tick(Q); eq(TL.resolves.length - r1, 0, 'proposals: a verdict acknowledged by a resolve (200) is not sent again');
         Q.logout(); done(Q); }
+      // … and when the page closed between the commit and the 200 (reload, crash, logout): the verdict lives only in the book's posProposalsDone. The
+      // next page's first run for the company (any user with `produkte`, any device) sends the book's latest applied / partial verdicts BEFORE it
+      // reads the pending list — P2 (the bar's next edit, which superseded P1 meanwhile) is merged against P1's price and lands; sent once per page
+      { const TJ = mkT('tj', 'Bar Mbyllur SH.P.K.', book(), 'on'), k0 = seen(TJ.state, 'KAFE'), gross = () => TJ.state.products.find(x => x.sku === 'KAFE').gross_t;
+        const p1 = propose(TJ, { key: 'p:711', sku: 'KAFE', before: k0, after: { ...k0, gross_t: k0.gross_t + 1000 } }); TJ.onResolve = () => json(503, { error: 'unavailable', message: 'Serveri po rinis' });
+        const Q = mk(); await enter(Q, 'mag', 'tj'); await tick(Q); TJ.onResolve = null; const a0 = [p1.state, gross(), (TJ.resolves || []).length]; Q.logout(); done(Q); // the tab is closed: this page's memory is gone
+        const p2 = propose(TJ, { key: 'p:711', sku: 'KAFE', before: k0, after: { ...k0, gross_t: k0.gross_t + 2000 } }), Q2 = mk(); await enter(Q2, 'mag', 'tj'); await tick(Q2);
+        eq([a0, TJ.resolves.map(r => r.results.map(x => x.id)), [p1.state, p1.result && p1.result.applied], p2.before.gross_t, [p2.state, p2.result], gross(), Q2.propUnacked().size],
+          [['pending', k0.gross_t + 1000, 0], [[p1.id], [p2.id]], ['superseded', ['gross_t']], k0.gross_t + 1000, ['applied', { sku: 'KAFE', applied: ['gross_t'], kept: [], reason: '' }], k0.gross_t + 2000, 0],
+          'proposals: the page closed after the commit, before the resolve returned 200 — the next page\'s first run sends the book\'s verdicts BEFORE the pending list: the server moves the successor\'s base, the bar\'s second price lands (not taken for an ERP change)');
+        const r1 = TJ.resolves.length; await tick(Q2); eq(TJ.resolves.length - r1, 0, 'proposals: the book\'s verdicts are sent again once per page and company — not on every run');
+        Q2.logout(); done(Q2); }
+      // what a page's first run for a company sends again: the book's latest PROP_RESEND applied / partial verdicts (a rejected one moves no base) —
+      // only once nothing is unsent (the book is the server's), once per company
+      { const Z = mk(), E = (id, state) => ({ id, state, result: { sku: null, applied: state === 'rejected' ? [] : ['name'], kept: state === 'applied' ? [] : ['name'], reason: '' } }); Z._api.tenantId = 'zz'; Z.PROP_RESEND = 2;
+        Z.state.db = { posProposalsDone: [E('e1', 'applied'), E('e2', 'partial'), E('e3', 'rejected'), E('e4', 'applied'), E('e5', 'rejected')] }; Z._pending = [{ products: [] }];
+        const a = Z.propUnacked().size; Z._pending = []; const b = [...Z.propUnacked().keys()]; Z.propUnacked().delete('e2'); Z.state.db = { posProposalsDone: [...Z.state.db.posProposalsDone, E('e6', 'applied')] };
+        const c = [...Z.propUnacked().keys()]; Z._api.tenantId = 'zy'; const d = Z.propUnacked().size;
+        eq([a, b, c, d], [0, ['e2', 'e4'], ['e4'], 2], 'proposals: a page\'s first run for a company takes the book\'s latest PROP_RESEND applied / partial verdicts as not acknowledged — not while changes are unsent, never twice for one company'); }
       // the tills must never apply an older catalogue right after a verdict (the bar stops protecting those fields when it reads it): once the batch
       // landed, a user with the POS permission PUTs the catalogue (its hash changed) BEFORE POST /pos/proposals/resolve — the new price and the new
       // product (under the bar's own SKU) are in it, the next posSync has nothing to send; a user without the POS permission never PUTs it
@@ -2768,7 +2787,7 @@ apiBlock.then(async () => {
           'proposals: the batch landed → the catalogue (POS permission, its hash changed) is PUT BEFORE the resolve — the tills never apply an older one right after the verdict: the new price and the new product under the bar\'s SKU are in it; the next posSync sends nothing');
         Q.logout(); done(Q); const k1 = seen(TK.state, 'KAFE'); propose(TK, { key: 'p:901', sku: 'KAFE', before: k1, after: { ...k1, gross_t: k1.gross_t + 1000 } });
         const M2 = mk(), s1 = seq().length; await enter(M2, 'mag', 'tk'); await tick(M2);
-        eq([seq().slice(s1), st(TK)], [['GET /pos/proposals', 'POST /state/commit', 'POST /pos/proposals/resolve'], ['p:901:applied', 'p:902:applied', 'p:901:applied']], 'proposals: a user without the POS permission (produkte only) resolves without PUTting the catalogue');
+        eq([seq().slice(s1), st(TK)], [['POST /pos/proposals/resolve', 'GET /pos/proposals', 'POST /state/commit', 'POST /pos/proposals/resolve'], ['p:901:applied', 'p:902:applied', 'p:901:applied']], 'proposals: a user without the POS permission (produkte only) resolves without PUTting the catalogue (its page\'s first run sends the book\'s verdicts again first)');
         M2.logout(); done(M2); }
       // a long reason never blocks the tenant's resolves (the mock refuses a result string > 200 like the first schema): Kafe — the ERP changed its
       // name and price, its unit is locked — gives a 200-character reason; a verdict an older build stored with a 300-character reason is cut when

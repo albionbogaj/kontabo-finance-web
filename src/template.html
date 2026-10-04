@@ -2830,6 +2830,7 @@ class Component extends DCLogic {
   PROP_LBL = {name:'emri',cat:'kategoria',gross_t:'çmimi me TVSH',tax:'TVSH',unit:'njësia',active:'shfaqja në POS'};
   PROP_RATE = {'-1':'A','0':'C','8':'D','18':'E'}; // the bar's VAT rate (norma; -1 = exempt) → ATK letter, when the letter itself is missing / unknown
   PROP_KEEP = 1000; PROP_ROUNDS = 5; PROP_BACKOFF = 300000; // ids kept in the book · batches per tick (while `more`) · ms of rest after the server refused a batch
+  PROP_RESEND = 200; // the book's latest applied / partial verdicts a page sends again on its first run for a company (propUnacked)
   PROP_PAGES = 5; // pages of 200 read into ONE batch (× 200 ≤ PROP_KEEP: every id of a batch stays in posProposalsDone)
   PROP_TEXT = 200; // the server's limit on every text of a verdict (MAX_PROPOSAL_TEXT): a longer reason refused the WHOLE resolve on the first schema
   // a text of a verdict within PROP_TEXT: cut at the last word when that keeps at least half of it, with "…" (UTF-16 units — never fewer than the
@@ -2955,8 +2956,13 @@ class Component extends DCLogic {
   // the verdicts this page resolves (per company, in this page's memory) until a POST /pos/proposals/resolve that carries them returns 200: each
   // later resolve sends them again, also once their proposal is no longer pending — the bar superseded it meanwhile: the server keeps that late
   // verdict and moves the successor's base to what the ERP applied (resolve is idempotent, a late verdict first-wins); _propRun sends them BEFORE
-  // it reads the pending list, so the successor is merged against that base and the bar's next edit is not taken for an ERP change
-  propUnacked(){ const M=this._propU||(this._propU=new Map()), t=this.apiCfg().tenantId||''; if(!M.has(t)) M.set(t,new Map()); return M.get(t); }
+  // it reads the pending list, so the successor is merged against that base and the bar's next edit is not taken for an ERP change. A page that
+  // closed (reload, crash, logout) between the commit and the 200 took them along: a page's first run for a company — nothing unsent, the book is
+  // the server's — starts from the book's latest PROP_RESEND applied / partial verdicts (posProposalsDone; one already resolved changes nothing;
+  // a rejected one moves no base, and one still pending is resolved again from the pending list anyway)
+  propUnacked(){ const M=this._propU||(this._propU=new Map()), t=this.apiCfg().tenantId||'', S=this._propSeed||(this._propSeed=new Set()); if(!M.has(t)) M.set(t,new Map()); const U=M.get(t);
+    if(!S.has(t)&&!(this._pending||[]).length&&!this._flushing){ S.add(t); for(const e of ((this.state.db||{}).posProposalsDone||[]).filter(e=>e&&e.id&&(e.state==='applied'||e.state==='partial')).slice(-this.PROP_RESEND)) if(!U.has(e.id)) U.set(e.id,e); } // unsent changes: seeded on a later run
+    return U; }
   // before a resolve the catalogue with what was applied goes to the tills FIRST (the POS permission and the ledger live, as posSyncLedger; only
   // when its hash changed): a bar that reads a verdict stops protecting those fields at once and would otherwise apply an older catalogue right
   // after it (the old price, a product it just created hidden) until the next posSync. A PUT that fails stops the run (nothing resolved; next tick)
