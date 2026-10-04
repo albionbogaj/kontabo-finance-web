@@ -20,8 +20,9 @@
 | Kontot e artikullit | Konto e shitjes / e blerjes për çdo artikull, të përdorura vërtet nga ditari (blerja e shërbimit te 6000, aseti te 1500) (04.10.2026) |
 | Fiskalizimi i faturave | Statusi e thotë të vërtetën: „Deklarohet në libër" + Libri i shitjes; agjenti i trilluar u hoq (04.10.2026) |
 | Roja e serverit | `watch.sh` çdo 5 min + `GET /system/watch` + njoftimi te paneli (04.10.2026) |
+| HR me paga | Punëtorët, pushimet, prezenca, lista e pagave (tatimi progresiv + kontributet), fletëpagesat, ditari (04.10.2026) |
 | Importi bankar | Financë › Import bankar: CSV/TSV ose MT940 → pagesa të përputhura me faturat/blerjet e hapura (04.10.2026) |
-| Depo git + CI lokal | Katër depo git; `node tools/check-logic.js` (1288), `python kontabo_pos.py --check` (1017), `pytest` (247) |
+| Depo git + CI lokal | Katër depo git; `node tools/check-logic.js` (1313), `python kontabo_pos.py --check` (1017), `pytest` (247) |
 | Storno pagese | Sirtari i faturës/blerjes → „Storno pagesën" (03.10.2026) |
 | SKU i produktit | Caktohet gjithmonë vetvetiu (03.10.2026) |
 | ERP në telefon | Shtresa `narrow` + `@media` (03.10.2026) |
@@ -64,9 +65,10 @@
     `/health`-in, hapësirën e diskut dhe moshën e kopjes rezervë; gjendja lexohet nga `GET /system/watch` dhe
     paneli i ERP-së nxjerr njoftimin „Serveri raporton problem". Njoftimi i jashtëm (Telegram a tjetër) ndizet
     duke vendosur `WATCH_WEBHOOK` te `/etc/kontabo-finance/watch.env`.
-13. **HR / Prodhim / CRM** — 13 faqe meny pa asnjë model të dhënash (`genericAdd` → „nuk është ende i ndërtuar").
-    Kërkon vendimin e pronarit se çfarë duhet të mbajë secili (p.sh. HR: punëtorët, kontratat, pushimet, pagat me
-    tatimin dhe kontributet e Kosovës) — pa atë vendim do të ndërtohej diçka që nuk i shërben punës së tij.
+13. **Prodhimi / CRM** — 6 faqe meny pa model të dhënash (`genericAdd` → „nuk është ende i ndërtuar").
+    ~~HR~~ u ndërtua më 04.10.2026 me vendimin e pronarit („HR me paga"): punëtorët, pushimet, prezenca, orari,
+    departamentet/pozitat, lista mujore e pagave me tatimin progresiv dhe kontributet, fletëpagesat dhe hyrja në
+    ditar (konto e re 2300). Normat rrinë te Cilësime › Tatimet › „Pagat" dhe duhen konfirmuar me kontabilistin.
 14. **Webhooks dhe SMS** — kartela „Së shpejti" te Integrimet; kërkojnë ofrues dhe backend. Importi bankar nuk
     është më aty: u ndërtua më 04.10.2026 (Financë › Import bankar, CSV/TSV ose MT940).
 
