@@ -597,6 +597,123 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
      [true, true, true, true], 'faqezuesi: me __ktbPageH=210 (A4 i shtrirë) faqet janë më të ulëta, pra më shumë — gjithçka tjetër njësoj');
 }
 
+// ── Librat e ATK-së: kolonat, kutitë, kategoritë, kodet e NUI-t, kuponët, .xlsx ──
+// Rregullat janë ato të udhëzuesve të ATK-së (UdhezuesiLSh_AL / UdhezuesiLB_AL) dhe të librave realë të EDI-t:
+// kuti pa lëvizje = BOSH (jo 0), nota kreditore e lëshuar shkon te libri i BLERJES [53]/[55], ajo e pranuar te
+// libri i SHITJES [16]/[18], kuponët e arkës bashkohen në një rresht ditor me kodin NUI „1", eksporti kërkon „3",
+// importi „8", dhe blerjet pa TVSH / jo të zbritshme shkojnë me vlerën e plotë (bazë + TVSH).
+{
+  const all = () => true;
+  eq([c.bookColIdx('A'), c.bookColIdx('G'), c.bookColIdx('X'), c.bookColIdx('AC')], [0, 6, 23, 28], 'bookColIdx: A=0, G=6, X=23, AC=28');
+  eq([c.BOOK.sale.g2.length, c.BOOK.sale.g3.length, c.BOOK.sale.keys.length,
+      c.BOOK.purchase.g2.length, c.BOOK.purchase.g3.length, c.BOOK.purchase.keys.length], [24, 24, 24, 29, 29, 29],
+     'kokat dhe çelësat: 24 kolona te libri i shitjes, 29 te i blerjes — sa shabllonët');
+  eq([c.bookBox('sale', 'liruar_pa'), c.bookBox('sale', 'shitje_18'), c.bookBox('sale', 'shitje_8'), c.bookBox('sale', 'tvsh_18'), c.bookBox('sale', 'tvsh_total')],
+     ['9', '12', '14', 'K1', '30'], 'Libri i shitjes: çelësat bien mbi kutitë [9] / [12] / [14] / [K1] / [30]');
+  eq([c.bookBox('purchase', 'pa_tvsh'), c.bookBox('purchase', 'vendore_18'), c.bookBox('purchase', 'vendore_8'), c.bookBox('purchase', 'fermer_8'), c.bookBox('purchase', 'nota_18'), c.bookBox('purchase', 'tvsh_total')],
+     ['31', '43', '45', '51', '53', '67'], 'Libri i blerjes: çelësat bien mbi kutitë [31] / [43] / [45] / [51] / [53] / [67]');
+  // një faturë vendore 18%: baza te [12], TVSH-ja te [K1], [30]=[K1]+[K2], gjithçka tjetër BOSH (jo 0)
+  const inv = db().invoices.find(r => r.status !== 'Draft' && r.status !== 'Anuluar');
+  const net = inv.items.reduce((a, i) => a + i.sub, 0), vat = inv.items.reduce((a, i) => a + i.vatc, 0);
+  let row = c.vatBook('sale', all).rows.find(r => r.no === inv.no);
+  eq([!!row, row.cells.shitje_18, row.cells.tvsh_18, row.cells.tvsh_total, row.cells.eksporti, row.cells.liruar_pa, row.fiskali],
+     [true, net, vat, vat, undefined, undefined, inv.nui],
+     'Libri i shitjes: faturë vendore 18% → [12] bazë, [K1] TVSH, [30] total; kutitë e tjera mbeten të pambushura');
+  // eksporti: e gjithë vlera te [11] dhe kodi NUI „3" (ATK-ja e ndalon eksportin me NUI real)
+  c.setVatCat(inv.no, 'sale', 'eksport');
+  row = c.vatBook('sale', all).rows.find(r => r.no === inv.no);
+  eq([row.cells.eksporti, row.cells.shitje_18, row.cells.tvsh_18, row.fiskali], [net + vat, undefined, undefined, '3'],
+     'kategoria „Eksport”: vlera te [11], asnjë TVSH, dhe kolona e NUI-t mban kodin „3" siç e kërkon udhëzuesi');
+  c.setVatCat(inv.no, 'sale', 'sherbim-jashte');
+  eq(c.vatBook('sale', all).rows.find(r => r.no === inv.no).fiskali, '2', 'kategoria „Shërbime jashtë vendit”: kodi „2"');
+  c.setVatCat(inv.no, 'sale', 'liruar-kreditim');
+  row = c.vatBook('sale', all).rows.find(r => r.no === inv.no);
+  eq([row.cells.liruar_tjera, row.cells.liruar_total], [net + vat, net + vat], '[10c] hyn te totali kalkulues [10]');
+  c.setVatCat(inv.no, 'sale', 'vendore');
+  // libri i blerjes: vendore / import / investive / fermer / jo e zbritshme
+  const pur = db().purchases.find(r => r.status !== 'Draft' && r.status !== 'Anuluar');
+  const pnet = pur.items.reduce((a, i) => a + i.sub, 0), pvat = pur.items.reduce((a, i) => a + i.vatc, 0);
+  let pr = c.vatBook('purchase', all).rows.find(r => r.no === pur.no);
+  eq([pr.cells.vendore_18, pr.cells.tvsh_18, pr.cells.tvsh_total, pr.fiskali], [pnet, pvat, pvat, pur.nui],
+     'Libri i blerjes: blerje vendore 18% → [43] bazë, [K1] TVSH, [67] total');
+  c.setVatCat(pur.no, 'purchase', 'import');
+  pr = c.vatBook('purchase', all).rows.find(r => r.no === pur.no);
+  eq([pr.cells.import_18, pr.cells.vendore_18, pr.cells.tvsh_18, pr.fiskali], [pnet, undefined, pvat, '8'],
+     'kategoria „Import”: [35] me bazën, TVSH-ja mbetet e zbritshme te [K1], kodi NUI „8"');
+  c.setVatCat(pur.no, 'purchase', 'import-investiv');
+  eq(c.vatBook('purchase', all).rows.find(r => r.no === pur.no).cells.import_inv_18, pnet, 'kategoria „Import investiv”: [39] — jo [35] (gabimi i kodit motër)');
+  c.setVatCat(pur.no, 'purchase', 'vendore-investive');
+  eq(c.vatBook('purchase', all).rows.find(r => r.no === pur.no).cells.vendore_inv_18, pnet, 'kategoria „Blerje investive vendore”: [47]');
+  c.setVatCat(pur.no, 'purchase', 'jo-e-zbritshme');
+  pr = c.vatBook('purchase', all).rows.find(r => r.no === pur.no);
+  eq([pr.cells.jozbritshme, pr.cells.tvsh_18, pr.cells.tvsh_total], [pnet + pvat, undefined, undefined],
+     'kategoria „Me TVSH jo të zbritshme”: [33] me vlerën e PLOTË (bazë+TVSH) dhe asnjë TVSH e zbritshme');
+  c.setVatCat(pur.no, 'purchase', 'fermer');
+  pr = c.vatBook('purchase', all).rows.find(r => r.no === pur.no);
+  eq([pr.cells.fermer_8, pr.cells.tvsh_8, pr.cells.vendore_18], [pnet, pvat, undefined], 'kategoria „Fermer”: [51] me bazën dhe TVSH-ja te [K2] (8%)');
+  c.setVatCat(pur.no, 'purchase', 'vendore');
+  // notat: e lëshuara në librin e blerjes [53], e pranuara në librin e shitjes [16]
+  const kthShitje = db().returns.find(r => r.kind === 'Kthim shitje'), kthBlerje = db().returns.find(r => r.kind === 'Kthim blerje');
+  if (kthShitje) { const r2 = c.vatBook('purchase', all).rows.find(r => r.no === kthShitje.no);
+    eq([!!r2, !!r2 && r2.cells.nota_18 != null, !!c.vatBook('sale', all).rows.find(r => r.no === kthShitje.no)], [true, true, false],
+       'nota kreditore që NE e lëshojmë (kthim shitjeje) hyn te libri i BLERJES [53] — dhe nuk shfaqet fare te libri i shitjes'); }
+  if (kthBlerje) { const r3 = c.vatBook('sale', all).rows.find(r => r.no === kthBlerje.no);
+    eq([!!r3, !!r3 && r3.cells.nota_18 != null], [true, true], 'nota kreditore e PRANUAR (kthim blerjeje) hyn te libri i SHITJES [16]'); }
+  // kuponët e arkës: një rresht për ditë me kodin „1" dhe vetëm kutitë e lejuara
+  const posDays = new Set((db().posReceipts || []).map(r => r.date));
+  if (posDays.size) { const posRows = c.vatBook('sale', all).rows.filter(r => r.what === 'pos');
+    eq([posRows.length, posRows.every(r => r.fiskali === '1'), posRows.every(r => !r.cells.nota_18 && !r.cells.eksporti), posRows[0].numri],
+       [posDays.size, true, true, 'Pazari ditor'],
+       'kuponët e arkës: një rresht për ditë (pazari ditor) me kodin „1", pa kuti të ndaluara'); }
+  // skedari .xlsx: koka fjalë për fjalë, shumat si TEKST me dy dhjetore, kutitë bosh pa asnjë shenjë
+  const book = c.vatBook('sale', all), sheet = c.vatBookSheet(book);
+  eq([sheet[0][0], sheet[1][1], sheet[2][0], sheet[2][c.bookIdx('sale', 'shitje_18')], sheet.length], ['Nr.', 'Data', 'Numri i kutisë në Deklaratën e TVSH-së', '[12]', 3 + book.rows.length],
+     '.xlsx: rreshti 1 grupet, 2 kolonat, 3 kutitë e deklaratës, të dhënat nga rreshti 4');
+  const line = sheet.find((r, i) => i >= 3 && r[2] === inv.no);
+  eq([typeof line[0], line[0].n > 0, line[1], line[c.bookIdx('sale', 'shitje_18')], line[c.bookIdx('sale', 'eksporti')], line[c.bookIdx('sale', 'tvsh_8')]],
+     ['object', true, inv.date, (net / 100).toFixed(2), '', ''],
+     '.xlsx: nr. rendor si numër, data dhe shumat si tekst me dy dhjetore, kutitë pa lëvizje krejt bosh');
+  eq(c.fmtBook(254237), '2542.37', 'fmtBook: pikë dhjetore, dy dhjetore, pa ndarës mijëshesh');
+  // libri pa lëvizje: një rresht i vetëm me kodin „0"
+  const zero = c.vatBookSheet(c.vatBook('sale', () => false), { firstDay: '01.01.2026' });
+  eq([zero.length, zero[3][0].n, zero[3][1], zero[3][2], zero[3][4], zero[3][6]], [4, 1, '01.01.2026', '1', '0', ''],
+     'libri pa lëvizje: një rresht me A=1, data e parë e periudhës, numri „1", kodi NUI „0" dhe asnjë shumë');
+  // deklarata [9]–[72]
+  const decl = c.vatDeclaration(all, '2026-09');
+  eq([decl.v[12], decl.v[13], decl.v[30], decl.v[43], decl.v[44], decl.v[67]],
+     [book.totals.shitje_18, Math.round(book.totals.shitje_18 * 18 / 100), decl.v[13] + (decl.v[15] || 0) + (decl.v[17] || 0) + (decl.v[19] || 0) + (decl.v[21] || 0) + (decl.v[23] || 0) + (decl.v[25] || 0) + (decl.v[27] || 0) + (decl.v[29] || 0),
+      c.vatBook('purchase', all).totals.vendore_18, Math.round(c.vatBook('purchase', all).totals.vendore_18 * 18 / 100), decl.v[67]],
+     'deklarata: kutia tek = round(kutia çift × normë) dhe [30] është shuma e kutive tek të shitjes');
+  const B = n2 => decl.v[n2] || 0;
+  eq([B(72), B(69), B(71), decl.v[72] != null && decl.v[69] != null], [Math.max(0, B(30) - B(67) - B(68)), Math.max(0, B(67) + B(68) - B(30)), Math.max(0, B(69) - B(70)), false],
+     'deklarata: [72] = (30−67−68) > 0, [69] = (67+68−30) > 0, [71] = 69−70 — dhe kutia që del zero mbetet BOSH, jo 0');
+  eq([decl.lines.filter(l => l.section).length, decl.lines.filter(l => l.strong).length > 0, decl.lines.some(l => l.box === 68 && !l.vatBox)], [3, true, true],
+     'deklarata: tre seksionet e formularit, kutitë e mbylljes të theksuara, [68] rresht më vete');
+  c.setVatBox('2026-09', '68', 10000);
+  const d2 = c.vatDeclaration(all, '2026-09');
+  eq([d2.v[68], d2.manual[68], d2.v[72] || 0, c.vatDeclaration(all, '2026-08').v[68] || 0], [10000, 10000, Math.max(0, (d2.v[30] || 0) - (d2.v[67] || 0) - 10000), 0],
+     'deklarata: [68] e vendosur me dorë hyn në llogaritje vetëm për periudhën e vet');
+  c.clearVatBox('2026-09', '68');
+  eq(c.vatDeclaration(all, '2026-09').manual[68], undefined, 'deklarata: „Hiqe vlerën” e kthen [68] te propozimi');
+}
+
+// ── .xlsx i shkruar nga vetë ne (pa bibliotekë, pa internet): ZIP + XML që e hap çdo Excel ──
+{
+  eq([c.colRef(0), c.colRef(25), c.colRef(26), c.colRef(28)], ['A', 'Z', 'AA', 'AC'], 'colRef: kolonat e librave shkojnë deri te AC');
+  eq(c.crc32(c.utf8('123456789')), 0xCBF43926, 'crc32: vlera e njohur e provës (0xCBF43926)');
+  eq([...c.utf8('Ç€')], [195, 135, 226, 130, 172], 'utf8: shkronjat shqipe dhe € kodohen si UTF-8');
+  const rows = [['Nr.', 'Fatura'], [{ n: 1 }, 'NTP VEDA 3 — ÇËçë'], ['', { n: 966.1 }]];
+  const b = c.xlsxBytes(rows, { sheet: 'Libri' });
+  const txt = Buffer.from(b).toString('latin1');
+  eq([b[0], b[1], b[2], b[3]], [0x50, 0x4b, 0x03, 0x04], 'xlsx: skedari nis me nënshkrimin e ZIP-it (PK\x03\x04)');
+  eq([txt.includes('[Content_Types].xml'), txt.includes('xl/worksheets/sheet1.xml'), txt.includes('xl/styles.xml'), txt.includes('PK')],
+     [true, true, true, true], 'xlsx: paketa ka pjesët e detyrueshme dhe fundin e katalogut qendror');
+  const sx = c.sheetXml(rows);
+  eq([/<c r="A1" t="inlineStr"><is><t xml:space="preserve">Nr\.<\/t><\/is><\/c>/.test(sx), /<c r="A2"><v>1<\/v><\/c>/.test(sx), /<c r="B3"><v>966\.1<\/v><\/c>/.test(sx), /r="A3"/.test(sx)],
+     [true, true, true, false], 'xlsx: teksti shkon si inlineStr, numri si numër, qeliza bosh nuk shkruhet fare');
+  eq(c.sheetXml([[], ['x']]).includes('<row r="1">'), false, 'xlsx: një rresht krejt bosh nuk zë vend në skedar');
+}
+
 // ── fshirja e produkteve me zgjedhje të shumëfishtë (Produktet › kutizat → “Fshi”) ──
 {
   const skuWithHistory = db().movements[0].sku;                       // ka lëvizje stoku, pra gjurmë

@@ -1866,6 +1866,8 @@ class Component extends DCLogic {
     {id:'hr',label:'HR',items:['Punëtorët','Departamentet','Pozitat','Orari','Pushimet','Prezenca','Pagat'],mod:'hr'},
     {id:'prodhim',label:'Prodhim',items:['Recetat / BOM','Prodhimet','Materialet','Urdhrat e punës','Konsumi','Raportet'],mod:'prodhim'},
     {id:'kontab',label:'Kontabilitet',items:['Kontot','Ditari','Hyrjet kontabël','Bilanci','Fitim / Humbje','Raporte']},
+    // Librat e ATK-së janë dokumente në vete (ngarkohen te EDI), prandaj kanë seksionin e tyre — jo tab brenda raportit të TVSH-së
+    {id:'librat',label:'Librat e TVSH-së',items:['Libri i shitjes','Libri i blerjes','Deklarata e TVSH-së']},
     {id:'raporte',label:'Raporte',items:['Shitje','Blerje','Financë','Stok','POS','TVSH','HR','Prodhim']},
     {id:'kompania',label:'Kompania',items:['Të dhënat e kompanisë','Degët','Përdoruesit','Rolet','Modulet','Kompanitë e mia']},
     {id:'settings',label:'Cilësime',items:['Llogaria','Abonimi','Pagesat','Siguria','Njoftimet','Fiskalizimi','POS','Faturat','Tatimet','Email','Integrimet','API']}
@@ -2130,6 +2132,268 @@ class Component extends DCLogic {
   // a recipe product (cocktail, a glass poured from a bottle…): recipe = [{sku, qm}], qm = thousandths of the INGREDIENT's unit per 1 unit sold.
   // Single level both ways; it holds no stock of its own (opening/cost 0) — its ingredients leave the warehouse when it is sold
   isRecipe(p){ return !!p&&Array.isArray(p.recipe)&&p.recipe.length>0; }
+  /* ───────── kategoritë e TVSH-së për Librin e Shitjes / Blerjes (formati zyrtar i ATK-së) ─────────
+     Rreshti 3 i të dy shablloneve (TemplateLSh_AL / TemplateLB_AL) mban numrin e kutisë në Deklaratën e TVSH-së për
+     secilën kolonë — pra libri dhe deklarata janë i njëjti grumbull numrash dhe deklarata DEL nga librat, nuk
+     llogaritet veçmas. `col` është shkronja e kolonës në shabllon, `box` numri i kutisë.
+     Një dokument mban `vatCat` (parazgjedhje „vendore"): kategoritë e liruara e çojnë tërë vlerën në një kolonë të
+     vetme pa TVSH; „vendore" e ndan sipas normës së çdo rreshti (18 % / 8 %), ashtu si i ruan ERP-ja. */
+  VAT_SALE_CATS = [
+    {id:'vendore',          label:'Shitje vendore (e tatueshme)',          col18:'M', col8:'S', box18:'12', box8:'14', def:true},
+    {id:'eksport',          label:'Eksport',                               col:'L',  box:'11'},
+    {id:'sherbim-jashte',   label:'Shërbime jashtë vendit',                col:'H',  box:'10a'},
+    {id:'ngarkese-kundert', label:'Brenda vendit me ngarkesë të kundërt',  col:'I',  box:'10b'},
+    {id:'liruar-kreditim',  label:'E liruar me të drejtë kreditimi',       col:'J',  box:'10c'},
+    {id:'liruar',           label:'E liruar pa të drejtë kreditimi',       col:'G',  box:'9'},
+  ];
+  VAT_PUR_CATS = [
+    {id:'vendore',            label:'Blerje vendore',                         col18:'M', col8:'V', box18:'43', box8:'45', def:true},
+    {id:'vendore-investive',  label:'Blerje investive vendore',               col18:'N', col8:'W', box18:'47', box8:'49'},
+    {id:'import',             label:'Import',                                 col18:'K', col8:'T', box18:'35', box8:'37'},
+    {id:'import-investiv',    label:'Import investiv',                        col18:'L', col8:'U', box18:'39', box8:'41'},
+    {id:'fermer',             label:'Blerje nga fermerët (normë e sheshtë)',  col8:'X',  box8:'51'},
+    {id:'pa-tvsh',            label:'Blerje / import pa TVSH',                col:'G',  box:'31'},
+    {id:'pa-tvsh-investive',  label:'Blerje investive pa TVSH',               col:'H',  box:'32'},
+    {id:'jo-e-zbritshme',     label:'Me TVSH jo të zbritshme',                col:'I',  box:'33'},
+    {id:'jo-e-zbritshme-inv', label:'Investive me TVSH jo të zbritshme',      col:'J',  box:'34'},
+  ];
+  vatCats(kind){ return kind==='purchase'?this.VAT_PUR_CATS:this.VAT_SALE_CATS; }
+  /* ───────── Libri i Shitjes / Libri i Blerjes — formati zyrtar i ATK-së ─────────
+     Kokat janë FJALË PËR FJALË ato të shabllonëve (TemplateLSh_AL / TemplateLB_AL): rreshti 1 grupet, rreshti 2
+     kolonat, rreshti 3 numrat e kutive në Deklaratën e TVSH-së; të dhënat nisin te rreshti 4. Kolonat e shumave
+     mbajnë BAZËN (neto) përveç kolonave të totalit të TVSH-së ([K1], [K2], [30], [67]), ashtu si te shembujt e
+     mbushur ku 355.93 me 18 % jep 64.07. Një dokument = një rresht. */
+  /* ───────── Libri i Shitjes / Libri i Blerjes — formati zyrtar i ATK-së ─────────
+     Burimet: UdhezuesiLSh_AL / UdhezuesiLB_AL (ATK) + shabllonet TemplateLSh_AL / TemplateLB_AL + librat realë
+     të shkarkuar nga EDI. Rregullat që nuk thyhen:
+       · tri rreshtat e kokës janë FJALË PËR FJALË të shabllonit (ATK-ja e rigjeneron nga kopja e vet) dhe të
+         dhënat nisin te rreshti 4;
+       · një kuti pa lëvizje mbetet KREJT BOSH — kurrë 0: një 0 lexohet si deklarim i shumës zero;
+       · kolona E (NUI/Nr. fiskal) është MANDATORE dhe për rastet e veçanta mban një KOD, jo numrin e palës:
+         1 = pazari ditor i arkës, 2 = shërbime jashtë vendit, 3 = eksport, 4/5 = rregullime 18/8 %,
+         6 = blerje me ngarkesë të kundërt, 8 = importe, 9/10 = rregullime 18/8 % te blerja, 0 = libër pa lëvizje;
+       · nota kreditore që NE e lëshojmë (kthim shitjeje) nuk hyn në librin e shitjes: hyn te libri i blerjes,
+         kutia [53]/[55]. Nota kreditore që PRANOJMË (kthim blerjeje) hyn te libri i shitjes, [16]/[18];
+       · blerjet pa TVSH / me TVSH jo të zbritshme ([31]–[34]) shkojnë me vlerën e PLOTË (bazë + TVSH);
+       · kuponët e arkës nuk hyjnë një nga një: një rresht për ditë (pazari ditor), vetëm [9],[10c],[12],[14]. */
+  BOOK = {
+    sale:{ cols:24, party:'Blerësi',
+      keys:['nr','data','numri','pale','fiskali','tvshNr','liruar_pa','sherbime_jasht','ngarkese_kund','liruar_tjera','liruar_total','eksporti',
+            'shitje_18','nota_18','borxh_18','rregullim_18','ngarkese_18','tvsh_18','shitje_8','nota_8','borxh_8','rregullim_8','tvsh_8','tvsh_total'],
+      g1:{0:'Nr.',1:'Fatura',3:'Blerësi',6:'Shitjet e liruara nga TVSH',12:'Shitjet e tatueshme me normën 18%',18:'Shitjet e tatueshme me normën 8%',23:'Totali i TVSH-së së llogaritur me   18% dhe 8%'},
+      g2:['','Data','Numri i faturës','Emri i blerësit','Numri Fiskal i blerësit','Numri i TVSH-së së blerësit',
+          'Shitjet e liruara pa të drejtë kreditimi','Shitjet e shërbimeve jashtë vendit','Shitjet brenda vendit me ngarkesë të kundërt  të TVSH-së','Shitjet tjera të liruara me të drejtë kreditimi','Totali i shitjeve të liruara me të drejtë kreditimi','Eksportet',
+          'Shitjet e tatueshme','Nota debitore e lëshuar, nota kreditore e pranuar','Fatura e borxhit të keq e pranuar','Rregullimet për të rritur TVSH-në','Blerjet që i nënshtrohen ngarkesës së kundërt','Totali i TVSH-së së llogaritur me normën 18%',
+          'Shitjet e tatueshme','Nota debitore e lëshuar, nota kreditore e pranuar','Fatura e borxhit të keq e pranuar','Rregullimet për të rritur TVSH-në / Ngarkesa e kundërt për Energjinë me normë 8%','Totali i TVSH-së së llogaritur me normën 8%',''],
+      g3:['Numri i kutisë në Deklaratën e TVSH-së','','','','','','[9]','[10a]','[10b]','[10c]','[10] = [10a]+[10b]+[10c]','[11]','[12]','[16]','[20]','[24]','[28]','[K1]','[14]','[18]','[22]','[26]','[K2]','[30]'] },
+    purchase:{ cols:29, party:'Shitësi',
+      keys:['nr','data','numri','pale','fiskali','tvshNr','pa_tvsh','pa_tvsh_inv','jozbritshme','jozbritshme_inv',
+            'import_18','import_inv_18','vendore_18','vendore_inv_18','nota_18','borxh_18','rregullim_18','kreditim_18','tvsh_18',
+            'import_8','import_inv_8','vendore_8','vendore_inv_8','fermer_8','nota_8','borxh_8','rregullim_8','tvsh_8','tvsh_total'],
+      g1:{0:'Nr.',1:'Fatura',3:'Shitësi',6:'Blerjet dhe Importet e liruara dhe me TVSH jo të zbritshme',10:'Blerjet dhe Importet e tatushme me 18%, si dhe rregullimet e zbritjeve',19:'Blerjet dhe Importet e tatushme me 8%, si dhe rregullimet e zbritjeve',28:'Totali i TVSH-së së zbritshme me 18% dhe 8%'},
+      g2:['','Data','Numri i faturës','Emri i shitësit','Numri Fiskal i shitësit','Numri i TVSH-së së shitësit',
+          'Blerjet dhe importet pa TVSH','Blerjet dhe importet investive pa TVSH','Blerjet dhe importet me TVSH jo të zbritshme','Blerjet dhe importet investive me TVSH jo të zbritshme',
+          'Importet','Importet investive','Blerjet vendore','Blerjet investive vendore','Nota debitore e pranuar, nota kreditore e lëshuar','Fatura e borxhit të keq e lëshuar','Rregullimet për të ulur TVSH-në për pagesë','E drejta e kreditimit të TVSH-së në lidhje me Ngarkesën e Kundërt','Totali i TVSH-së së  zbritshme me 18%',
+          'Importet','Importet investive','Blerjet vendore','Blerjet investive vendore','Blerjet nga fermerët (aplikimi i normës së sheshtë)','Nota debitore e pranuar, nota kreditore e lëshuar','Fatura e borxhit të keq e lëshuar','Rregullimet për të ulur TVSH-në / Ngarkesa e kundërt për Energjinë me normë 8%','Totali i TVSH-së së  zbritshme me 8%',''],
+      g3:['Numri i kutisë në Deklaratën e TVSH-së','','','','','','[31]','[32]','[33]','[34]','[35]','[39]','[43]','[47]','[53]','[57]','[61]','[65]','[K1]','[37]','[41]','[45]','[49]','[51]','[55]','[59]','[63]','[K2]','[67]'] },
+  };
+  bookColIdx(letter){ let n2=0; for(const ch of String(letter)) n2=n2*26+(ch.charCodeAt(0)-64); return n2-1; }   // 'A'→0, 'AC'→28
+  bookIdx(kind,key){ return this.BOOK[kind].keys.indexOf(key); }
+  bookBox(kind,key){ return (this.BOOK[kind].g3[this.bookIdx(kind,key)]||'').replace(/[\[\]]/g,'').split(' ')[0]; }
+  // ndarja e një dokumenti sipas normës: {18:{net,vat},8:{net,vat},0:{net,vat}} (POS-i i ruan si *_c)
+  docByRate(doc){
+    const out={18:{net:0,vat:0},8:{net:0,vat:0},0:{net:0,vat:0}};
+    for(const i of (doc.items||[])){
+      const rate=Number(i.rate)||0, k=out[rate]?rate:0;
+      out[k].net+=(i.sub!=null?i.sub:i.sub_c)||0;
+      out[k].vat+=(i.vatc!=null?i.vatc:i.vat_c)||0;
+    }
+    return out;
+  }
+  // një rresht i librit të shitjes; `src.what`: 'invoice' · 'pos' (pazari ditor) · 'notaReceived' (notë krediti e pranuar)
+  saleBookRow(src){
+    const c={}, add=(k,v)=>{ if(v) c[k]=(c[k]||0)+v; };
+    const by=this.docByRate(src.doc), cat=this.vatCatOf(src.doc,'sale');
+    let fiskali=src.nui||'';
+    if(src.what==='pos'){ fiskali='1'; add('shitje_18',by[18].net); add('tvsh_18',by[18].vat); add('shitje_8',by[8].net); add('tvsh_8',by[8].vat); add('liruar_pa',by[0].net+by[0].vat); }
+    else if(src.what==='notaReceived'){ add('nota_18',by[18].net); add('tvsh_18',by[18].vat); add('nota_8',by[8].net); add('tvsh_8',by[8].vat); }
+    else if(cat.id==='vendore'){ add('shitje_18',by[18].net); add('tvsh_18',by[18].vat); add('shitje_8',by[8].net); add('tvsh_8',by[8].vat); add('liruar_pa',by[0].net+by[0].vat); }
+    else {
+      const total=by[18].net+by[18].vat+by[8].net+by[8].vat+by[0].net+by[0].vat;
+      const key={eksport:'eksporti','sherbim-jashte':'sherbime_jasht','ngarkese-kundert':'ngarkese_kund','liruar-kreditim':'liruar_tjera',liruar:'liruar_pa'}[cat.id];
+      add(key,total);
+      if(cat.id==='eksport') fiskali='3'; else if(cat.id==='sherbim-jashte') fiskali='2';
+    }
+    const lt=(c.sherbime_jasht||0)+(c.ngarkese_kund||0)+(c.liruar_tjera||0); if(lt) c.liruar_total=lt;
+    const tt=(c.tvsh_18||0)+(c.tvsh_8||0); if(tt) c.tvsh_total=tt;
+    return {...src,fiskali,cells:c};
+  }
+  // një rresht i librit të blerjes; `src.what`: 'purchase' · 'expense' · 'notaIssued' (notë krediti e lëshuar prej nesh)
+  purchaseBookRow(src){
+    const c={}, add=(k,v)=>{ if(v) c[k]=(c[k]||0)+v; };
+    const by=this.docByRate(src.doc), cat=this.vatCatOf(src.doc,'purchase');
+    let fiskali=src.nui||'';
+    if(src.what==='notaIssued'){ add('nota_18',by[18].net); add('tvsh_18',by[18].vat); add('nota_8',by[8].net); add('tvsh_8',by[8].vat); }
+    else if(cat.id==='pa-tvsh'||cat.id==='pa-tvsh-investive') add(cat.id==='pa-tvsh'?'pa_tvsh':'pa_tvsh_inv',by[18].net+by[18].vat+by[8].net+by[8].vat+by[0].net+by[0].vat);
+    else if(cat.id==='jo-e-zbritshme'||cat.id==='jo-e-zbritshme-inv') add(cat.id==='jo-e-zbritshme'?'jozbritshme':'jozbritshme_inv',by[18].net+by[18].vat+by[8].net+by[8].vat+by[0].net+by[0].vat);
+    else if(cat.id==='fermer'){ add('fermer_8',by[18].net+by[8].net+by[0].net); add('tvsh_8',by[18].vat+by[8].vat); }
+    else {
+      const imp=cat.id==='import'||cat.id==='import-investiv', inv=cat.id==='import-investiv'||cat.id==='vendore-investive';
+      const k=r=>(imp?'import_':'vendore_')+(inv?'inv_':'')+r;
+      add(k(18),by[18].net); add('tvsh_18',by[18].vat);
+      add(k(8),by[8].net); add('tvsh_8',by[8].vat);
+      add(inv?'pa_tvsh_inv':'pa_tvsh',by[0].net+by[0].vat);   // rreshtat 0 % / të liruar: [31]/[32], me vlerën e plotë
+      if(imp) fiskali='8';
+    }
+    const tt=(c.tvsh_18||0)+(c.tvsh_8||0); if(tt) c.tvsh_total=tt;
+    return {...src,fiskali,cells:c};
+  }
+  /* dokumentet e një periudhe. Kuponët e arkës bashkohen në NJË rresht për ditë (pazari ditor, neni i udhëzuesit:
+     „Numri 1 … gjegjësisht Pazari ditor"), kurse faturat janë secila me rreshtin e vet. */
+  vatBook(kind,inPeriod){
+    const d=this.state.db, co=d.company||{}, BK=this.BOOK[kind], src=[];
+    // kolona F (numri i TVSH-së së palës) lexohet nga regjistri i klientit/furnitorit — dokumentet mbajnë vetëm NUI-n
+    const vatOf=(name,isC)=>{ const x=((isC?d.customers:d.suppliers)||[]).find(y=>y.name===name); return (x&&x.vat)||''; };
+    const P=(doc,what,no,date,pale,nui,vatNo)=>({doc,what,no,date,numri:no,data:date,pale:pale||'—',nui:nui||'',vatNo:vatNo||''});
+    if(kind==='sale'){
+      for(const r of (d.invoices||[])) if(r.status!=='Draft'&&r.status!=='Anuluar'&&inPeriod(r.date)) src.push(P(r,'invoice',r.no,r.date,r.customer,r.nui,vatOf(r.customer,true)));
+      for(const r of (d.returns||[])) if(r.kind==='Kthim blerje'&&inPeriod(r.date)) src.push(P(r,'notaReceived',r.no,r.date,r.supplier,r.nui,vatOf(r.supplier,false)));
+      const days=new Map();
+      for(const r of (d.posReceipts||[])) if(inPeriod(r.date)){
+        const day=days.get(r.date)||{items:[],n:0}; days.set(r.date,day);
+        const sign=(r.status==='Kthim'||r.status==='Anulim')?-1:1;
+        for(const i of (r.items||[])) day.items.push({rate:i.rate,sub:sign*((i.sub!=null?i.sub:i.sub_c)||0),vatc:sign*((i.vatc!=null?i.vatc:i.vat_c)||0)});
+        day.n+=1;
+      }
+      for(const [date,day] of days) src.push(P({items:day.items,vatCat:'vendore',_pos:day.n},'pos','Pazari ditor',date,co.name||'—','1',''));
+    }else{
+      for(const r of (d.purchases||[])) if(r.status!=='Draft'&&r.status!=='Anuluar'&&inPeriod(r.date)) src.push(P(r,'purchase',r.no,r.date,r.supplier,r.nui,vatOf(r.supplier,false)));
+      for(const r of (d.returns||[])) if(r.kind==='Kthim shitje'&&inPeriod(r.date)) src.push(P(r,'notaIssued',r.no,r.date,r.customer,r.nui,vatOf(r.customer,true)));
+      for(const r of (d.expenses||[])) if(inPeriod(r.date)&&((r.vat||0)>0||(r.net||0)>0))
+        src.push(P({items:[{rate:(r.vat||0)>0?18:0,sub:r.net||0,vatc:r.vat||0}],vatCat:r.vatCat||'vendore'},'expense',r.no,r.date,r.vendor,'',''));
+    }
+    src.sort((a,b)=>this.toIso(a.date).localeCompare(this.toIso(b.date))||String(a.no).localeCompare(String(b.no)));
+    const rows=src.map((x,i)=>({...(kind==='sale'?this.saleBookRow(x):this.purchaseBookRow(x)),nr:i+1}));
+    const totals={};
+    for(const r of rows) for(const k in r.cells) totals[k]=(totals[k]||0)+r.cells[k];
+    return {kind,head:BK,rows,totals,empty:rows.length===0};
+  }
+  // '355.93' — pikë dhjetore, dy dhjetore, pa ndarës mijëshesh (si te librat realë të pranuar nga ATK-ja)
+  fmtBook(c){ return (Math.round(c)/100).toFixed(2); }
+  /* rreshtat e .xlsx-it: tri rreshtat e kokës fjalë për fjalë, pastaj një rresht për dokument. Data, numrat dhe
+     shumat shkruhen si TEKST (ashtu janë në çdo libër të shkarkuar nga ATK-ja); kolona A është numër i vërtetë;
+     një kuti pa vlerë nuk shkruhet fare. Një libër pa lëvizje merr rreshtin e deklarimit me zero (NUI „0"). */
+  vatBookSheet(book,o={}){
+    const BK=book.head, head1=new Array(BK.cols).fill(''); for(const k in BK.g1) head1[Number(k)]=BK.g1[k];
+    const co=(this.state.db||{}).company||{};
+    const line=r=>{ const out=new Array(BK.cols).fill('');
+      out[0]={n:r.nr}; out[1]=r.data; out[2]=String(r.numri||r.no||''); out[3]=r.pale||''; out[4]=String(r.fiskali||''); out[5]=r.vatNo||'';
+      for(const k in r.cells) out[this.bookIdx(book.kind,k)]=this.fmtBook(r.cells[k]);
+      return out; };
+    const body=book.rows.length?book.rows.map(line)
+      :[[{n:1},o.firstDay||this.fmtDate(this.today()),'1',co.name||'—','0',...new Array(BK.cols-5).fill('')]];
+    return [head1,BK.g2.slice(),BK.g3.slice(),...body];
+  }
+  /* ───────── Deklarata e TVSH-së — formulari [9]–[72] i ATK-së ─────────
+     Kutitë ÇIFT mbajnë bazën (nga librat), kutitë TEK TVSH-në e saj = round(bazë × normë) — udhëzuesi e përcakton
+     [K1] si (shuma e bazave)×18 % dhe [K2] si ×8 %, prandaj TVSH-ja e deklaratës llogaritet mbi bazën e agreguar
+     dhe mund të dallojë një-dy cent nga shuma e TVSH-ve për faturë (ajo e librit). [30] dhe [67] janë shuma e
+     kutive tek. Me dorë vendosen vetëm [68] dhe [70]; [69], [71], [72] dalin prej tyre. Kuti pa lëvizje = bosh. */
+  DECL_SALE = [[9,'liruar_pa',0,0,'Shitjet e liruara pa të drejtë kreditimi'],
+    [10,'liruar_total',0,0,'Shitjet e liruara me të drejtë kreditimi'],
+    [11,'eksporti',0,0,'Eksportet'],
+    [12,'shitje_18',18,13,'Shitjet e tatueshme me normën 18%'],
+    [14,'shitje_8',8,15,'Shitjet e tatueshme me normën 8%'],
+    [16,'nota_18',18,17,'Nota debitore e lëshuar, nota kreditore e pranuar me normë 18%'],
+    [18,'nota_8',8,19,'Nota debitore e lëshuar, nota kreditore e pranuar me normë 8%'],
+    [20,'borxh_18',18,21,'Fatura e borxhit të keq e pranuar me normë 18%'],
+    [22,'borxh_8',8,23,'Fatura e borxhit të keq e pranuar me normë 8%'],
+    [24,'rregullim_18',18,25,'Rregullimet për të rritur TVSH-në me normë 18%'],
+    [26,'rregullim_8',8,27,'Rregullimet për të rritur TVSH-në / Ngarkesa e kundërt për Energjinë me normë 8%'],
+    [28,'ngarkese_18',18,29,'Blerjet që i nënshtrohen ngarkesës së kundërt 18%']];
+  DECL_PUR = [[31,'pa_tvsh',0,0,'Blerjet, importet pa TVSH'],
+    [32,'pa_tvsh_inv',0,0,'Blerjet, importet investive pa TVSH'],
+    [33,'jozbritshme',0,0,'Blerjet, importet me TVSH jo të zbritshme'],
+    [34,'jozbritshme_inv',0,0,'Blerjet, importet investive me TVSH jo të zbritshme'],
+    [35,'import_18',18,36,'Importet me normë 18%'],
+    [37,'import_8',8,38,'Importet me normë 8%'],
+    [39,'import_inv_18',18,40,'Importet investive me normë 18%'],
+    [41,'import_inv_8',8,42,'Importet investive me normë 8%'],
+    [43,'vendore_18',18,44,'Blerjet vendore me normë 18%'],
+    [45,'vendore_8',8,46,'Blerjet vendore me normë 8%'],
+    [47,'vendore_inv_18',18,48,'Blerjet investive vendore me normë 18%'],
+    [49,'vendore_inv_8',8,50,'Blerjet investive vendore me normë 8%'],
+    [51,'fermer_8',8,52,'Blerjet nga fermerët vendor (aplikimi i normës së sheshtë 8%)'],
+    [53,'nota_18',18,54,'Nota debitore e pranuar, nota kreditore e lëshuar me normë 18%'],
+    [55,'nota_8',8,56,'Nota debitore e pranuar, nota kreditore e lëshuar me normë 8%'],
+    [57,'borxh_18',18,58,'Fatura e borxhit të keq e lëshuar me normë 18%'],
+    [59,'borxh_8',8,60,'Fatura e borxhit të keq e lëshuar me normë 8%'],
+    [61,'rregullim_18',18,62,'Rregullimet për të ulur TVSH-në me normë 18%'],
+    [63,'rregullim_8',8,64,'Rregullimet për të ulur TVSH-në / Ngarkesa e kundërt për Energjinë me normë 8%'],
+    [65,'kreditim_18',18,66,'E drejta e kreditimit të TVSH-së në lidhje me ngarkesën e kundërt me normë 18%']];
+  DECL_STRONG = [30,67,69,71,72];
+  vatDeclaration(inPeriod,key){
+    const sale=this.vatBook('sale',inPeriod), pur=this.vatBook('purchase',inPeriod);
+    const v={}, calc={}, manual=this.vatDecl(key), lines=[];
+    const feed=(list,book)=>{ let vatSum=0;
+      for(const [box,k,rate,vatBox,title] of list){
+        const base=book.totals[k];
+        if(base!=null){ v[box]=base; if(vatBox){ v[vatBox]=Math.round(base*rate/100); vatSum+=v[vatBox]; } }
+        lines.push({box,vatBox:vatBox||0,title});
+      }
+      return vatSum; };
+    lines.push({section:true,title:'Shitjet dhe TVSH-ja e llogaritur'});
+    const out=feed(this.DECL_SALE,sale);
+    v[30]=out; lines.push({box:0,vatBox:30,title:'Totali i TVSH-së së llogaritur',strong:true});
+    lines.push({section:true,title:'Blerjet dhe TVSH-ja e zbritshme'});
+    const inn=feed(this.DECL_PUR,pur);
+    v[67]=inn; lines.push({box:0,vatBox:67,title:'Totali i TVSH-së së zbritshme',strong:true});
+    lines.push({section:true,title:'Përfundimi'});
+    calc[68]=0;                                   // propozimi: [71] i periudhës paraprake — e vendos pronari
+    v[68]=manual[68]!=null?manual[68]:calc[68];
+    v[69]=Math.max(0,v[67]+v[68]-v[30]);
+    v[70]=manual[70]!=null?manual[70]:0;
+    v[71]=Math.max(0,v[69]-v[70]);
+    v[72]=Math.max(0,v[30]-v[67]-v[68]);
+    lines.push({box:68,vatBox:0,title:'Kreditimi i TVSH-së i bartur nga periudha paraprake',sub:manual[68]!=null?'vendosur me dorë':''},
+      {box:69,vatBox:0,title:'Balanca kreditore e mbetur',sub:'[69] = (67+68−30) > 0',strong:true},
+      {box:70,vatBox:0,title:'Kërkesa për rimbursim',sub:manual[70]!=null?'vendosur me dorë':''},
+      {box:71,vatBox:0,title:'Kreditimi i TVSH-së për periudhën pasuese',sub:'[71] = (69−70)',strong:true},
+      {box:72,vatBox:0,title:'TVSH për pagesë',sub:'[72] = (30−67−68) > 0',strong:true});
+    // rregulli i ATK-së: një kuti pa lëvizje mbetet KREJT BOSH, jo 0 — vlen edhe për kutitë e mbylljes
+    for(const b of [68,69,70,71,72]) if(!v[b]&&manual[b]==null) delete v[b];
+    for(const ln of lines) if(ln.box&&this.DECL_STRONG.includes(ln.box)) ln.strong=true;
+    return {key,v,calc,manual,lines,sale,pur};
+  }
+  downloadVatBook(kind,inPeriod,label){
+    const book=this.vatBook(kind,inPeriod);
+    if(!book.rows.length){ this.toast('Asnjë dokument në këtë periudhë','#8FA3B8'); return false; }
+    const name='Libri-i-'+(kind==='sale'?'shitjes':'blerjes')+'-'+this.norm(label).replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')+'.xlsx';
+    return this.downloadXlsx(this.vatBookSheet(book),name,{sheet:'Sheet1'});
+  }
+  // kutia [68] (TVSH për pagesë) e deklaratës: llogaritet nga librat, por mbetet E REDAKTUESHME — pronari mund ta
+  // ndryshojë (p.sh. kredit i bartur nga periudha e kaluar); vlera e shkruar me dorë ruhet për atë periudhë
+  vatDecl(key){ return ((this.state.db||{}).vatDecl||{})[key]||{}; }
+  setVatBox(key,box,cents){
+    this.commit(d=>({vatDecl:{...(d.vatDecl||{}),[key]:{...((d.vatDecl||{})[key]||{}),[box]:cents}}}),'Kutia ['+box+'] u ruajt','#2563EB');
+    this.logAudit('Deklarata e TVSH-së '+key+': kutia ['+box+'] u caktua me dorë në '+this.fromC(cents));
+  }
+  clearVatBox(key,box){
+    this.commit(d=>{ const cur={...((d.vatDecl||{})[key]||{})}; delete cur[box]; return {vatDecl:{...(d.vatDecl||{}),[key]:cur}}; },'Kutia ['+box+'] u kthye te llogaritja','#8FA3B8');
+  }
+  vatCatDef(kind){ return (this.vatCats(kind).find(x=>x.def)||this.vatCats(kind)[0]).id; }
+  vatCatOf(doc,kind){ const list=this.vatCats(kind); const id=(doc&&doc.vatCat)||''; return list.find(x=>x.id===id)||list.find(x=>x.def)||list[0]; }
+  vatCatLabel(doc,kind){ return this.vatCatOf(doc,kind).label; }
+  // ndryshimi i kategorisë së një dokumenti (sirtari ose libri): prek VETËM fushën `vatCat`, asgjë financiare
+  setVatCat(no,kind,cat){
+    const key=kind==='purchase'?'purchases':'invoices';
+    const c=this.vatCats(kind).find(x=>x.id===cat); if(!c) return false;
+    this.commit(d=>{ const upd=list=>(list||[]).map(x=>x.no===no?{...x,vatCat:cat}:x);
+      return kind==='purchase'?{purchases:upd(d.purchases),returns:upd(d.returns)}:{invoices:upd(d.invoices),returns:upd(d.returns)}; },
+      'Kategoria e TVSH-së: '+c.label,'#2563EB');
+    this.logAudit('Kategoria e TVSH-së e '+no+' u caktua „'+c.label+'”');
+    return true;
+  }
   /* ───────── fshirja e produkteve (Produktet › zgjidh → “Fshi të zgjedhurit”) ─────────
      Një produkt me GJURMË nuk fshihet kurrë: lëvizjet e stokut dhe rreshtat e dokumenteve do të mbeteshin me një SKU
      pa produkt (raportet e stokut dhe kostoja mesatare lexojnë pikërisht atë lidhje), dhe një recetë do të mbetej me
@@ -3993,6 +4257,23 @@ class Component extends DCLogic {
       actions=[{label:edit?'Ruaj':'Shto kategorinë',primary:true,disabled:!ready,go:()=>{ const ok=edit?this.renameCategory(edit,f.name,f.note):!!this.addCategory(f.name,f.note); if(ok) close(); }}];
       if(edit&&cur) actions.unshift({label:'Fshi',disabled:used>0,hint:used?used+' produkte e përdorin':'',go:()=>this.setState({confirm:{title:'Fshi kategorinë “'+cur.name+'”?',body:'Asnjë produkt nuk e përdor; hiqet nga lista.',color:'#B91C1C',ok:()=>{ if(this.deleteCategory(edit)) close(); }}})});
       if(edit&&used) msg=used+' produkte e përdorin këtë kategori — mund të riemërohet, por jo të fshihet.';
+    } else if(K==='vatcat'){
+      // kategoria e TVSH-së e një dokumenti: vendos VETËM se në cilën kolonë të librit (dhe kuti të deklaratës) bie shuma
+      const bk=f.bookKind==='purchase'?'purchase':'sale', cats=this.vatCats(bk);
+      const box=x=>x.box?'kutia ['+x.box+']':'kutitë ['+(x.box18||'—')+'] / ['+(x.box8||'—')+']';
+      title='Kategoria e TVSH-së'; sub='Dokumenti '+(f.no||'')+(f.party?' · '+f.party:'')+' — kategoria thotë në cilën kolonë të '
+        +(bk==='purchase'?'Librit të Blerjes':'Librit të Shitjes')+' shkon shuma. Asnjë shumë nuk ndryshon.';
+      fields=[seg('cat','Kategoria',cats.map(x=>[x.id,x.label+' — '+box(x)]))];
+      actions=[{label:'Ruaj',primary:true,disabled:!f.cat,go:()=>{ if(this.setVatCat(f.no,bk,f.cat)) close(); }}];
+    } else if(K==='vatbox'){
+      // kutitë e deklaratës që i vendos pronari: [68] krediti i bartur nga periudha paraprake, [70] kërkesa për rimbursim
+      const cv=this.toC(f.amount);
+      title='Kutia ['+f.box+']'; sub=f.label+' — kjo kuti nuk del nga librat e kësaj periudhe: e vendos pronari ose kontabilisti. '
+        +'Vlera ruhet për këtë periudhë dhe del te PDF-ja e deklaratës; [69], [71] dhe [72] rillogariten vetvetiu.';
+      fields=[txt('amount','Shuma (€)',{decimal:true,err:cv===null,half:true}),
+        info('Periudha',f.key||'—',{half:true,color:'#526477'})];
+      actions=[{label:'Ruaj',primary:true,disabled:cv===null,go:()=>{ this.setVatBox(f.key,f.box,cv); close(); }}];
+      if(f.manual) actions.unshift({label:'Hiqe vlerën',go:()=>{ this.clearVatBox(f.key,f.box); close(); }});
     } else if(K==='adjust'){
       // a product with a pack can be counted in packs ("Numërimi në"): 12.5 shishe → 8.75 l; the adjustment is booked in the product's unit
       const prod=this.PRODUCTS.find(p=>p.sku===f.sku), cur=prod?this.stockOf(prod.sku):0, pk=prod?this.packOf(prod):null, inPk=!!(pk&&f.pk);
@@ -4011,9 +4292,10 @@ class Component extends DCLogic {
     } else if(K==='customer'||K==='supplier'){
       const isC=K==='customer', edit=f.edit||'', dup=!!f.name.trim()&&(isC?this.CUSTOMERS:this.SUPPLIERS).some(c=>c.name!==edit&&this.norm(c.name)===this.norm(f.name));
       title=edit?(isC?'Redakto klientin':'Redakto furnitorin'):(isC?'Klient i ri':'Furnitor i ri'); sub=edit?'Ndryshimi i emrit përditëson referencat në dokumentet ekzistuese.':'';
-      fields=[txt('name','Emri',{err:dup,hint:dup?'ekziston tashmë':''}),...(isC?[seg('type','Lloji',[['Biznes','Biznes'],['Individual','Individual']],{half:true})]:[]),txt('nui','NUI',{half:true,ph:isC&&f.type==='Individual'?'opsional':'9 shifra'}),txt('fiscal','Nr. fiskal',{half:true,ph:'opsional'}),txt('city','Qyteti',{half:true}),txt('contact','Personi i kontaktit',{half:true}),txt('address','Adresa')];
+      fields=[txt('name','Emri',{err:dup,hint:dup?'ekziston tashmë':''}),...(isC?[seg('type','Lloji',[['Biznes','Biznes'],['Individual','Individual']],{half:true})]:[]),txt('nui','NUI',{half:true,ph:isC&&f.type==='Individual'?'opsional':'9 shifra'}),txt('fiscal','Nr. fiskal',{half:true,ph:'opsional'}),
+        txt('vat','Nr. i TVSH-së',{half:true,ph:'9 shifra, nis me 3 — opsional'}),txt('city','Qyteti',{half:true}),txt('contact','Personi i kontaktit',{half:true}),txt('address','Adresa')];
       const ready=!!f.name.trim()&&!dup;
-      actions=[{label:edit?'Ruaj ndryshimet':(isC?'Shto klientin':'Shto furnitorin'),primary:true,disabled:!ready,go:()=>{ const p={name:f.name.trim(),nui:f.nui.trim()||'—',fiscal:f.fiscal.trim()||'—',city:f.city.trim()||'—',contact:f.contact.trim()||'—',address:f.address.trim()||f.city.trim()||'—'}; if(isC) p.type=f.type; if(edit){ this.saveParty(K,edit,p); this.setState({frm:null}); this.openDr(K,p.name); } else { this.addParty(K,p); close(); } }}];
+      actions=[{label:edit?'Ruaj ndryshimet':(isC?'Shto klientin':'Shto furnitorin'),primary:true,disabled:!ready,go:()=>{ const p={name:f.name.trim(),nui:f.nui.trim()||'—',fiscal:f.fiscal.trim()||'—',vat:(f.vat||'').trim(),city:f.city.trim()||'—',contact:f.contact.trim()||'—',address:f.address.trim()||f.city.trim()||'—'}; if(isC) p.type=f.type; if(edit){ this.saveParty(K,edit,p); this.setState({frm:null}); this.openDr(K,p.name); } else { this.addParty(K,p); close(); } }}];
     } else if(K==='branch'){
       title='Degë e re'; sub='Dega merr ID rendore (BR-…); terminalet fiskale dhe përdoruesit i caktohen degës.';
       const dup=!!f.name.trim()&&db.branches.some(b=>this.norm(b.name)===this.norm(f.name));
@@ -4200,7 +4482,7 @@ class Component extends DCLogic {
       const last=live[0];
       const actions=isC?[{label:'Fatura e re',kind:'primary',go:()=>this.openForm('invoice',{customer:party.name,customerQ:party.name})},{label:'Ofertë',kind:'',go:()=>this.openForm('quote',{customer:party.name,customerQ:party.name})},{label:'Shiko faturat',kind:'',go:()=>this.setState({dr:null,section:'shitje',page:'Fatura',statusTab:'Të gjitha',q:party.name})}]
         :[{label:'Blerje e re',kind:'primary',go:()=>this.openForm('purchase',{supplier:party.name,supplierQ:party.name})},{label:'Porosi blerjeje',kind:'',go:()=>this.openForm('po',{supplier:party.name,supplierQ:party.name})},{label:'Shiko blerjet',kind:'',go:()=>{ this.setState({dr:null,pTab:'Të gjitha',pq:party.name}); this.go('blerje','Blerje'); }}];
-      actions.push({label:'Redakto',kind:'',go:()=>this.openForm(isC?'customer':'supplier',{edit:party.name,name:party.name,type:party.type||'Biznes',nui:party.nui==='—'?'':party.nui,fiscal:party.fiscal==='—'?'':party.fiscal,city:party.city==='—'?'':party.city,contact:party.contact==='—'?'':party.contact,address:party.address==='—'?'':party.address})});
+      actions.push({label:'Redakto',kind:'',go:()=>this.openForm(isC?'customer':'supplier',{edit:party.name,name:party.name,type:party.type||'Biznes',nui:party.nui==='—'?'':party.nui,fiscal:party.fiscal==='—'?'':party.fiscal,vat:party.vat||'',city:party.city==='—'?'':party.city,contact:party.contact==='—'?'':party.contact,address:party.address==='—'?'':party.address})});
       const docRow=x=>({open:()=>isC?this.setState({dr:null,section:'shitje',page:'Fatura',drawer:x.no}):this.openPurchase(x.no),cells:[this.cell(x.no,{mono:true}),this.cell(x.kind,{color:'#526477'}),this.cell(x.date,{color:'#526477'}),this.cell(x.due,{color:'#526477'}),this.badgeCell(x.status),this.moneyCell(x.total,{b:true}),x.status==='Anuluar'||x.status==='Draft'||x.kind==='Profaturë'?this.cell('—',{align:'right',color:'#8FA3B8'}):this.moneyCell(this.rem(x),{color:this.rem(x)?'#B91C1C':'#15803D'})]});
       return {title:party.name,subtitle:(isC?(party.type||'Biznes')+' · ':'Furnitor · ')+party.city+(party.contact&&party.contact!=='—'?' · '+party.contact:''),no:party.nui!=='—'?'NUI '+party.nui:'PA NUI',badge:overdue.length?{text:overdue.length+' të vonuara',...this.st('Vonuar')}:debt?{text:'Borxh '+this.fmt(debt),...this.st('Pjesërisht')}:{text:'Në rregull',...this.st('Në rregull')},actions,close,
         meta:[{k:'Adresa',v:party.address},{k:'Nr. fiskal',v:party.fiscal,mono:true},{k:isC?'Fatura':'Blerje',v:String(docs.length)},{k:isC?'Shitur (pa TVSH)':'Blerë (pa TVSH)',v:this.fmt(live.reduce((a,x)=>a+x.sub,0))},{k:isC?'Borxhi':'Detyrimi ynë',v:this.fmt(debt),color:debt?'#B91C1C':'#15803D'},{k:'Të vonuara',v:overdue.length?overdue.length+' · '+this.fmt(overdue.reduce((a,x)=>a+this.rem(x),0)):'—',color:overdue.length?'#B91C1C':'#526477'},{k:isC?'Fatura e fundit':'Blerja e fundit',v:last?last.no+' · '+last.date:'—'},{k:isC?'Nota krediti':'Kthime',v:rets.length?rets.length+' · '+this.fmt(rets.filter(r=>r.status!=='Anuluar').reduce((a,r)=>a+r.total,0)):'—'},...(orders.length?[{k:'Porosi',v:String(orders.length)}]:[]),...(quotes.length?[{k:'Oferta',v:String(quotes.length)}]:[])],
@@ -4591,6 +4873,96 @@ class Component extends DCLogic {
     this._printHtml(html,'Dialogu i printimit u hap · '+(T.title||'Raport')+' · A4'+(land?' i shtrirë':'')
       +' — për PDF zgjidhni “Save as PDF / Microsoft Print to PDF”',true);
   }
+  /* ───────── .xlsx i shkruar nga vetë ne (pa bibliotekë, pa internet) ─────────
+     Librat e ATK-së ngarkohen si .xlsx, dhe një skedar tatimor nuk mund të varet nga një CDN: serveri i firmës
+     punon në LAN dhe mund të jetë pa internet fare. Një .xlsx është një ZIP me pak XML — e shkruajmë vetë, me
+     hyrje TË PANGJESHURA (metoda 0: pa deflate, pa varësi) dhe me qeliza si tekst i brendshëm (inlineStr) ose
+     numra. Kështu kontrollojmë byte për byte formatin që pret ATK-ja dhe asgjë nuk ngarkohet nga jashtë. */
+  _crcTab(){ if(this.__crcT) return this.__crcT; const t=new Uint32Array(256);
+    for(let n=0;n<256;n++){ let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); t[n]=c>>>0; }
+    return (this.__crcT=t); }
+  crc32(b){ const t=this._crcTab(); let c=0xFFFFFFFF; for(let i=0;i<b.length;i++) c=t[(c^b[i])&0xFF]^(c>>>8); return (c^0xFFFFFFFF)>>>0; }
+  utf8(str){ const out=[]; for(const ch of String(str)){ const cp=ch.codePointAt(0);
+      if(cp<0x80) out.push(cp);
+      else if(cp<0x800) out.push(0xC0|cp>>6,0x80|cp&63);
+      else if(cp<0x10000) out.push(0xE0|cp>>12,0x80|(cp>>6)&63,0x80|cp&63);
+      else out.push(0xF0|cp>>18,0x80|(cp>>12)&63,0x80|(cp>>6)&63,0x80|cp&63); }
+    return new Uint8Array(out); }
+  // ZIP me hyrje të pangjeshura; data/ora fikse (1980-01-01) që skedari të jetë i njëjtë për të njëjtat të dhëna
+  zipBytes(files){
+    const parts=[], central=[]; let off=0;
+    const u16=v=>[v&255,(v>>8)&255], u32=v=>[v&255,(v>>8)&255,(v>>16)&255,(v>>>24)&255];
+    for(const f of files){
+      const name=this.utf8(f.name), data=f.data, crc=this.crc32(data);
+      const local=[...u32(0x04034b50),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0)];
+      parts.push(new Uint8Array(local),name,data);
+      central.push([...u32(0x02014b50),...u16(20),...u16(20),...u16(0x0800),...u16(0),...u16(0),...u16(0),...u32(crc),...u32(data.length),...u32(data.length),...u16(name.length),...u16(0),...u16(0),...u16(0),...u16(0),...u32(0),...u32(off)],name);
+      off+=local.length+name.length+data.length;
+    }
+    const cd=[]; let cdLen=0;
+    for(let i=0;i<central.length;i+=2){ const head=new Uint8Array(central[i]), nm=central[i+1]; cd.push(head,nm); cdLen+=head.length+nm.length; }
+    const eocd=new Uint8Array([...u32(0x06054b50),...u16(0),...u16(0),...u16(files.length),...u16(files.length),...u32(cdLen),...u32(off),...u16(0)]);
+    const all=[...parts,...cd,eocd]; const total=all.reduce((a,x)=>a+x.length,0);
+    const out=new Uint8Array(total); let p=0; for(const x of all){ out.set(x,p); p+=x.length; }
+    return out;
+  }
+  colRef(i){ let n=i+1, s=''; while(n>0){ const r=(n-1)%26; s=String.fromCharCode(65+r)+s; n=Math.floor((n-1)/26); } return s; }
+  // një qelizë: '' / null = bosh (nuk shkruhet fare) · {n:12.34} = numër · gjithçka tjetër = tekst
+  _cellXml(ref,v){
+    if(v===null||v===undefined||v==='') return '';
+    if(typeof v==='object'&&v!==null&&'n' in v){ const num=Number(v.n); return '<c r="'+ref+'"><v>'+(Number.isFinite(num)?num:0)+'</v></c>'; }
+    return '<c r="'+ref+'" t="inlineStr"><is><t xml:space="preserve">'+this.esc(String(v))+'</t></is></c>';
+  }
+  sheetXml(rows){
+    const body=rows.map((row,r)=>{ const cells=(row||[]).map((v,i)=>this._cellXml(this.colRef(i)+(r+1),v)).join('');
+      return cells?'<row r="'+(r+1)+'">'+cells+'</row>':''; }).join('');
+    return '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+      +'<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>'+body+'</sheetData></worksheet>';
+  }
+  xlsxBytes(rows,o={}){
+    const name=this.esc(o.sheet||'Sheet1');
+    const files=[
+      {name:'[Content_Types].xml',data:this.utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        +'<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">'
+        +'<Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>'
+        +'<Default Extension="xml" ContentType="application/xml"/>'
+        +'<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>'
+        +'<Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>'
+        +'<Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>'
+        +'</Types>')},
+      {name:'_rels/.rels',data:this.utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>')},
+      {name:'xl/workbook.xml',data:this.utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        +'<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">'
+        +'<sheets><sheet name="'+name+'" sheetId="1" r:id="rId1"/></sheets></workbook>')},
+      {name:'xl/_rels/workbook.xml.rels',data:this.utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        +'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        +'<Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>'
+        +'<Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>')},
+      {name:'xl/styles.xml',data:this.utf8('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        +'<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+        +'<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>'
+        +'<fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>'
+        +'<borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>'
+        +'<cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>'
+        +'<cellXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/></cellXfs>'
+        +'<cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles></styleSheet>')},
+      {name:'xl/worksheets/sheet1.xml',data:this.utf8(this.sheetXml(rows))},
+    ];
+    return this.zipBytes(files);
+  }
+  downloadXlsx(rows,fileName,o={}){
+    try{
+      const bytes=this.xlsxBytes(rows,o);
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(new Blob([bytes],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+      a.download=fileName; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+      this.toast('U shkarkua '+fileName+' · '+rows.length+' rreshta','#2563EB');
+      return true;
+    }catch(e){ this.toast('Shkarkimi nuk lejohet në këtë mjedis: '+(e.message||e),'#B45309'); return false; }
+  }
   // reports (Raporte), org tables (Kompania), admin tables — continues pageTable()
   morePages(page,T,H){
     const {C,M,B,search,sum,plural,money,db,s,issued,sales,openDoc,receivedP,stockRows,today,thisMonth,monthsBack}=H;
@@ -4713,6 +5085,52 @@ class Component extends DCLogic {
           T.foot=[C('Gjithsej',{b:true}),C(''),C(''),C(''),C(''),M(sum(docs,'net'),{b:true}),M(inn,{b:true}),M(sum(docs,'total'),{b:true})]; }
         break; }
       /* ───── POS (desktop, synced) ───── */
+      case 'Libri i shitjes': case 'Libri i blerjes': {
+        period();
+        const kind=page==='Libri i blerjes'?'purchase':'sale', isSale=kind==='sale';
+        const book=this.vatBook(kind,inPeriod), BK=book.head, KEYS=BK.keys.slice(6);
+        T.title='Libri i '+(isSale?'shitjes':'blerjes')+' — formati i ATK-së';
+        T.sub=periodLabel+' · tri rreshtat e kokës dhe numrat e kutive janë ata të shabllonit zyrtar; një kuti pa lëvizje mbetet '
+          +'bosh, kurrë 0. Shkarkohet si .xlsx për ngarkim te EDI ose si PDF. Klikoni një rresht për të ndryshuar kategorinë e TVSH-së.';
+        T.count=book.rows.length;
+        const tv=k=>book.totals[k]||0;
+        T.kpis=[{label:'Rreshta',value:String(book.rows.length)},
+          {label:isSale?'TVSH e llogaritur [30]':'TVSH e zbritshme [67]',value:money(tv('tvsh_total')),c:isSale?'#B91C1C':'#15803D'},
+          {label:'Baza 18%',value:money(isSale?tv('shitje_18'):tv('import_18')+tv('import_inv_18')+tv('vendore_18')+tv('vendore_inv_18'))},
+          {label:'Baza 8%',value:money(isSale?tv('shitje_8'):tv('import_8')+tv('import_inv_8')+tv('vendore_8')+tv('vendore_inv_8')+tv('fermer_8'))}];
+        T.actions=[{label:'Shkarko XLSX (ATK)',p:'1',go:()=>this.downloadVatBook(kind,inPeriod,periodLabel)}];
+        T.cols=[{label:'Nr.',align:'right'},{label:'Data'},{label:'Numri i faturës'},{label:isSale?'Blerësi':'Shitësi'},{label:'Nr. fiskal / kodi'},{label:'Nr. i TVSH-së'},{label:'Kategoria'},
+          ...KEYS.map(k=>({label:((BK.g3[this.bookIdx(kind,k)]||'')+' '+(BK.g2[this.bookIdx(kind,k)]||'')).trim(),align:'right'}))];
+        const catOf=r=>r.what==='pos'?'Pazari ditor (arka)':r.what==='notaReceived'?'Notë krediti e pranuar':r.what==='notaIssued'?'Notë krediti e lëshuar':this.vatCatOf(r.doc,kind).label;
+        T.rows=book.rows.map(r=>({open:r.what==='invoice'||r.what==='purchase'?()=>this.openForm('vatcat',{no:r.no,bookKind:kind,cat:this.vatCatOf(r.doc,kind).id,party:r.pale}):null,
+          cells:[C(String(r.nr),{align:'right',color:'#8FA3B8'}),C(r.date,{color:'#526477'}),C(String(r.numri||r.no),{mono:true}),C(r.pale,{b:true}),
+            C(String(r.fiskali||'—'),{mono:true,color:r.fiskali&&r.fiskali.length<=2?'#B45309':'#526477'}),C(r.vatNo||'—',{mono:true,color:'#526477'}),B(catOf(r)),
+            ...KEYS.map(k=>r.cells[k]!=null?M(r.cells[k]):C('',{align:'right'}))]}));
+        T.foot=[C('Gjithsej',{b:true}),C(''),C(''),C(''),C(''),C(''),C(''),
+          ...KEYS.map(k=>book.totals[k]!=null?M(book.totals[k],{b:true}):C('',{align:'right'}))];
+        T.empty='Asnjë dokument në këtë periudhë — skedari i ATK-së do të dalë si „libër me zero" (një rresht me kodin 0).';
+        break; }
+      case 'Deklarata e TVSH-së': {
+        period();
+        const decl=this.vatDeclaration(inPeriod,s.rp==='month'?thisMonth:s.rp==='prev'?monthsBack(2)[1]:s.rp==='year'?today.slice(0,4):'all');
+        T.title='Deklarata e TVSH-së';
+        T.sub=periodLabel+' · kutitë [9]–[72] si te formulari i ATK-së, të gjitha nga Libri i Shitjes dhe i Blerjes. '
+          +'Me dorë vendosen vetëm [68] (krediti i bartur nga periudha paraprake) dhe [70] (kërkesa për rimbursim); '
+          +'një kuti pa lëvizje mbetet bosh, jo 0.';
+        T.count='';
+        T.kpis=[{label:'TVSH e llogaritur [30]',value:money(decl.v[30]||0),c:'#B91C1C'},
+          {label:'TVSH e zbritshme [67]',value:money(decl.v[67]||0),c:'#15803D'},
+          {label:decl.v[72]?'TVSH për pagesë [72]':'Kredit për periudhën pasuese [71]',value:money(decl.v[72]||decl.v[71]||0),b:true},
+          {label:'Krediti i bartur [68]',value:money(decl.v[68]||0),c:decl.manual[68]!=null?'#B45309':'#10243A',sub:decl.manual[68]!=null?'vendosur me dorë':'propozim nga periudha paraprake'}];
+        T.actions=[{label:'Kutia [68]…',p:'1',go:()=>this.openForm('vatbox',{key:decl.key,box:'68',label:'Krediti i TVSH-së i bartur nga periudha paraprake',amount:this.fromC(decl.v[68]||0),calc:decl.calc[68]||0,manual:decl.manual[68]!=null})},
+          {label:'Kutia [70]…',p:'',go:()=>this.openForm('vatbox',{key:decl.key,box:'70',label:'Kërkesa për rimbursim',amount:this.fromC(decl.v[70]||0),calc:0,manual:decl.manual[70]!=null})}];
+        T.cols=[{label:'Kutia'},{label:'Përshkrimi'},{label:'Vlera',align:'right'},{label:'TVSH',align:'right'}];
+        T.rows=decl.lines.map(ln=>({cells:[C(ln.box?'['+ln.box+']':'',{mono:true,b:ln.strong}),
+          C(ln.title,{b:ln.strong||ln.section,color:ln.section?'#10243A':'#152536',sub:ln.sub||''}),
+          ln.box&&decl.v[ln.box]!=null?M(decl.v[ln.box],{b:ln.strong}):C('',{align:'right'}),
+          ln.vatBox&&decl.v[ln.vatBox]!=null?M(decl.v[ln.vatBox],{b:ln.strong}):C('',{align:'right'})]}));
+        T.empty='Asnjë dokument në këtë periudhë.';
+        break; }
       case 'P:Arkat': {
         const cfg=this.posCfg(), h=cfg.health, on=cfg.status==='online', srv=this.apiAuthed(), terms=db.terminals||[];
         T.title='Arkat (terminalet POS)'; T.sub=srv?'Çdo terminal merr një token dhe sinkronizon vetë me serverin (kuponët, ndërrimet, katalogu); ERP-ja i merr nga serveri.':'POS-i është program desktop në kompjuterin e arkës; kjo faqe lidhet me API-në e tij lokale (127.0.0.1) dhe merr shitjet.'; T.count=terms.length; T.exportable=false;
