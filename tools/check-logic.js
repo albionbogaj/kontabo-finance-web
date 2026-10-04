@@ -723,8 +723,8 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
   eq([txt.includes('[Content_Types].xml'), txt.includes('xl/worksheets/sheet1.xml'), txt.includes('xl/styles.xml'), txt.includes('PK')],
      [true, true, true, true], 'xlsx: paketa ka pjesët e detyrueshme dhe fundin e katalogut qendror');
   const sx = c.sheetXml(rows);
-  eq([/<c r="A1" t="inlineStr"><is><t xml:space="preserve">Nr\.<\/t><\/is><\/c>/.test(sx), /<c r="A2"><v>1<\/v><\/c>/.test(sx), /<c r="B3"><v>966\.1<\/v><\/c>/.test(sx), /r="A3"/.test(sx)],
-     [true, true, true, false], 'xlsx: teksti shkon si inlineStr, numri si numër, qeliza bosh nuk shkruhet fare');
+  eq([/<c r="A1" t="s"><v>0<\/v><\/c>/.test(sx), /<c r="A2"><v>1<\/v><\/c>/.test(sx), /<c r="B3"><v>966\.1<\/v><\/c>/.test(sx), /r="A3"/.test(sx), /<dimension ref="A1:B3"\/>/.test(sx)],
+     [true, true, true, false, true], 'xlsx: teksti si sharedString (t="s", forma që përdorin librat e ATK-së), numri si numër, qeliza bosh nuk shkruhet, fleta mban <dimension>');
   eq(c.sheetXml([[], ['x']]).includes('<row r="1">'), false, 'xlsx: një rresht krejt bosh nuk zë vend në skedar');
 }
 
