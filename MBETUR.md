@@ -14,7 +14,11 @@
 | Kuponi sipas Shtojcës F | `pos/receipt.py` + `pos/escpos.py` me 8 etalonë (`golden/`), tekst · HTML · ESC/POS nga i njëjti burim |
 | Printimi | Printer termik 80 mm, ESC/POS RAW, letra del vetë pas shitjes (0.13.0) |
 | Instaluesi i POS-it + përditësimi | Inno Setup për përdorues (pa UAC) + përditësim automatik me manifest të nënshkruar (0.11.0) |
-| Depo git + CI lokal | Katër depo git; `node tools/check-logic.js` (1166), `python kontabo_pos.py --check` (980), `pytest` (237) |
+| Adapteri i printerit fiskal Tremol | `pos/tremol.py` (ZFPLabServer XK, `TremolProvider`, `FakeZfp` në teste) — 0.14.0; mbetet vetëm prova në pajisje reale |
+| Librat e TVSH-së + deklarata | Seksion i vetin: libri i shitjes/blerjes në formatin e ATK-së, eksport nga VETË shablloni, deklarata [9]–[72] (04.10.2026) |
+| Artikujt për arkë | ERP › POS › *Artikujt e arkave* (matrica artikuj × arka) → katalogu mban `terms`; POS 0.15.0 e zbaton (04.10.2026) |
+| Kontot e artikullit | Konto e shitjes / e blerjes për çdo artikull, të përdorura vërtet nga ditari (blerja e shërbimit te 6000, aseti te 1500) (04.10.2026) |
+| Depo git + CI lokal | Katër depo git; `node tools/check-logic.js` (1278), `python kontabo_pos.py --check` (1017), `pytest` (237) |
 | Storno pagese | Sirtari i faturës/blerjes → „Storno pagesën" (03.10.2026) |
 | SKU i produktit | Caktohet gjithmonë vetvetiu (03.10.2026) |
 | ERP në telefon | Shtresa `narrow` + `@media` (03.10.2026) |
@@ -40,8 +44,8 @@
 
 **Punë ndërtimi që mbetet**
 
-8. **Adapterët e printerave fiskalë** (`TremolProvider`, pastaj `FlinkProvider`) — plani dhe vlerësimi i kohës
-   te `kontabo-pos/docs/ANALIZA-PRINTERET-FISKALE.md`.
+8. **Adapteri F-Link** (`FlinkProvider`) — Tremol-i është ndërtuar (`pos/tremol.py`, 0.14.0) dhe i mbetet vetëm
+   prova në pajisje reale (`kontabo-pos/docs/HAPAT-E-TESTIMIT.md` §12); F-Link-u pret dokumentacionin e pikës 3.
 9. **Ekzekutimi i radhës fiskale te serveri** (hapi 4): `fiscal_queue` listohet dhe riprovohet, por asnjë proces
    s'i dërgon transaksionet — faturat e ERP-së mbeten „Në pritje". Varet nga vendimi se cila rrugë fiskalizon
    faturat e ERP-së (arka, agjenti i Windows-it, apo serveri me çelësat e tenantit).

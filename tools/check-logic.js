@@ -3227,6 +3227,96 @@ apiBlock.then(async () => {
     } finally { S.features = feat0; }
   }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
 
+// ── artikulli: Aktiv, arkat ku shitet, kontot e shitjes/blerjes dhe tabela e Produkteve ──
+// Kërkesa e pronarit: tabela e artikujve si mostra e tij (Emri · Tipi · Kodi · Njësia matëse · Norma e TVSH ·
+// Çmimi · Aktiv · Në PoS · Konto e blerjes · Konto e shitjes) dhe artikujt të zgjidhen PËR ARKË — „për POS këta
+// artikuj, për bar të selektohen artikujt e caktuar". Parazgjedhja „të gjitha arkat" ruhet si listë BOSH, prandaj
+// një biznes me një arkë nuk ndien asgjë dhe një arkë e re i merr vetvetiu të gjithë artikujt.
+{
+  const P0 = c.prodOf(db(), 'LED-18');
+  eq([c.prodActive(P0), c.prodActive({ active: false }), c.prodTerms(P0), c.prodOnTerm(P0, 't1')], [true, false, [], true],
+     'artikulli: Aktiv është parazgjedhja dhe pa zgjedhje arkash shitet te të gjitha');
+  // dy arka: POS-i i marketit dhe bari
+  c.commit(() => ({ terminals: [{ id: 't1', name: 'Arka 1', posId: 'POS-0001', branch: 'Dega Prishtinë', warehouse: 'W1', status: 'Aktiv' },
+                                { id: 't2', name: 'Bari', posId: 'POS-0002', branch: 'Dega Prishtinë', warehouse: 'W1', status: 'Aktiv' }] }));
+  eq(c.prodTermsLabel(P0, db()), 'Të gjitha arkat', 'etiketa: pa zgjedhje → „Të gjitha arkat"');
+  // hiqja e barit → artikulli mbetet vetëm te Arka 1, dhe katalogu e dërgon me POS ID-në e saj
+  c.setProdTerm('LED-18', 't2', false);
+  const p1 = c.prodOf(db(), 'LED-18');
+  eq([p1.posTerms, c.prodOnTerm(p1, 't1'), c.prodOnTerm(p1, 't2'), c.prodTermsLabel(p1, db()), p1.pos !== false],
+     [['t1'], true, false, 'Arka 1', true], 'arkat: fikja e barit e lë artikullin vetëm te Arka 1');
+  eq(c.posCatalogPayload().products.find(x => x.sku === 'LED-18').terms, ['POS-0001'],
+     'katalogu: arkat dërgohen si POS ID (arka e njeh vetveten me pos_id), jo me id-në e brendshme të ERP-së');
+  // ndezja prapë → lista kthehet BOSH („të gjitha"), që një arkë e tretë t’i marrë vetvetiu
+  c.setProdTerm('LED-18', 't2', true);
+  eq([c.prodTerms(c.prodOf(db(), 'LED-18')), 'terms' in c.posCatalogPayload().products.find(x => x.sku === 'LED-18')], [[], false],
+     'arkat: me të gjitha arkat të ndezura lista ruhet bosh dhe katalogu nuk mban fare `terms`');
+  // fikja e arkës së fundit = jashtë POS-it (gjendja „në asnjë arkë" nuk ekziston)
+  c.setProdTerm('LED-18', 't1', false); c.setProdTerm('LED-18', 't2', false);
+  { const p = c.prodOf(db(), 'LED-18');
+    eq([p.pos, c.prodTerms(p), c.prodOnTerm(p, 't1'), !!c.posCatalogPayload().products.find(x => x.sku === 'LED-18')], [false, [], false, false],
+       'arkat: fikja e arkës së fundit e nxjerr artikullin nga POS-i — dhe katalogu nuk e dërgon më'); }
+  c.setProdTerm('LED-18', 't1', true); c.setProdTerm('LED-18', 't2', true);
+  // Aktiv / Në PoS nga tabela, pa hapur formën
+  c.setProdFlag('LED-18', 'active', false);
+  eq([c.prodActive(c.prodOf(db(), 'LED-18')), !!c.posCatalogPayload().products.find(x => x.sku === 'LED-18')], [false, false],
+     'Aktiv: një artikull joaktiv nuk shkon më te arkat');
+  eq(db().invoices.some(r => (r.items || []).some(i => i.sku === 'LED-18')), true, 'Aktiv: historia e artikullit joaktiv mbetet e paprekur');
+  c.setProdFlag('LED-18', 'active', true);
+  // faqja POS › Artikujt e arkave: një kolonë ndezjeje për çdo arkë
+  { const T = c.pageTable('P:Artikujt e arkave');
+    eq([T.cols.map(x => x.label).join(), T.rows[0].cells.length, T.rows[0].cells[3].sw, T.rows[0].cells[4].sw],
+       ['Artikulli,Tipi,Çmimi,Arka 1,Bari,Shitet te', 6, true, true],
+       'POS › Artikujt e arkave: matrica artikuj × arka, një ndezje për çdo arkë');
+    const r = T.rows.find(x => x.cells[0].t === c.prodOf(db(), 'LED-18').name);
+    r.cells[4].go();
+    eq([c.prodTerms(c.prodOf(db(), 'LED-18')), c.pageTable('P:Artikujt e arkave').rows.find(x => x.cells[0].t === c.prodOf(db(), 'LED-18').name).cells[5].t],
+       [['t1'], 'Arka 1'], 'POS › Artikujt e arkave: ndezja ruhet menjëherë dhe kolona „Shitet te" e thotë');
+    c.setProdTerm('LED-18', 't2', true); }
+  // kontot: parazgjedhja sipas llojit, dhe ditari i përdor vërtet
+  eq([c.prodAccPur({ kind: 'mall' }), c.prodAccPur({ kind: 'sherbim' }), c.prodAccPur({ kind: 'aset' }),
+      c.prodAccSale({ kind: 'mall' }), c.prodAccSale({ kind: 'sherbim' }), c.prodAccPur({ kind: 'sherbim', accPur: '1300' })],
+     ['1300', '6000', '1500', '4000', '4010', '1300'],
+     'kontot: malli te stoku, shërbimi te shpenzimet, aseti te mjetet themelore — dhe zgjedhja me dorë fiton');
+  eq([c.coaName('1500'), c.coaName('4010'), c.coaLabel('6000')], ['Mjete themelore', 'Të hyra nga shërbimet', '6000 · Shpenzime operative'],
+     'plani i kontove: mjetet themelore dhe të hyrat nga shërbimet janë në plan');
+  { // një blerje shërbimi: debiti shkon te 6000, nuk fryn stoku te 1300
+    const d0 = db(), bal0 = c.balances(), pur = d0.purchases.find(p => p.status !== 'Draft' && p.status !== 'Anuluar');
+    const srvSku = 'SRV-ACC';
+    c.commit(d => ({ products: [...d.products, { name: 'Mirëmbajtje mujore', sku: srvSku, unit: 'copë', cat: 'Të tjera', tax: 'E', kind: 'sherbim', price_c: 10000, price_t: 100000, cost_c: 0, minStock: 0, barcode: '—', pos: false, active: true }],
+      purchases: [...d.purchases, { ...pur, no: 'BL-TEST-SRV', status: 'Pranuar', sub: 10000, vat: 1800, total: 11800, paid: 0, credited: 0,
+        items: [{ name: 'Mirëmbajtje mujore', sku: srvSku, unit: 'copë', qty: 1, unit_c: 10000, unit_t: 1000000, rate: 18, tax: 'E', disc_c: 0, sub: 10000, vatc: 1800, tot: 11800 }] }] }));
+    const bal1 = c.balances();
+    eq([bal1['6000'].bal - bal0['6000'].bal, bal1['1300'].bal - bal0['1300'].bal, bal1['2200'].bal - bal0['2200'].bal], [10000, 0, 11800],
+       'ditari: blerja e një shërbimi debitohet te shpenzimet operative, stoku mbetet i paprekur');
+    const J = c.journal();
+    eq(J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[1], 0), 0) === J.reduce((a, e) => a + e.lines.reduce((x, l) => x + l[2], 0), 0), true,
+       'ditari mbetet i balancuar me kontot e artikujve');
+    eq(c.pageTable('Bilanci').kpis[3].value, 'Balancuar ✓', 'Bilanci balancon me kontot e artikujve (grupet vijnë nga plani)');
+    c.commit(d => ({ products: d.products.filter(p => p.sku !== srvSku), purchases: d.purchases.filter(p => p.no !== 'BL-TEST-SRV') }));
+  }
+  // forma e produktit: Statusi + kontot, dhe lloji e ndryshon kontoën e blerjes vetëm sa kohë nuk është zgjedhur me dorë
+  c.openForm('product', {});
+  { const lab = () => c.formVals().fields.map(f => f.label);
+    eq([lab().includes('Statusi'), lab().includes('Konto e shitjes'), lab().includes('Konto e blerjes')], [true, true, true],
+       'forma e produktit: Statusi dhe kontot e shitjes/blerjes');
+    const seg = c.formVals().fields.find(f => f.label === 'Lloji i produktit');
+    seg.opts.find(o => o.label === 'Shërbim').go();
+    eq([c.state.frm.accPur, c.state.frm.accSale, c.state.frm.accPurQ], ['6000', '4010', '6000 · Shpenzime operative'],
+       'forma: zgjedhja „Shërbim" sjell vetvetiu kontot e shërbimit');
+    c.setF({ accPur: '1300', accPurQ: '1300 · Stoku i mallit' });
+    c.formVals().fields.find(f => f.label === 'Lloji i produktit').opts.find(o => o.label === 'Aset / mjet themelor').go();
+    eq(c.state.frm.accPur, '1300', 'forma: një konto e zgjedhur me dorë nuk ndryshohet nga lloji');
+    c.state.frm = null; }
+  // tabela e Produkteve sipas mostrës së pronarit
+  eq(/>Emri<[\s\S]*?>Tipi<[\s\S]*?>Kodi<[\s\S]*?>Njësia matëse<[\s\S]*?>Norma e TVSH<[\s\S]*?>Çmimi<[\s\S]*?>Aktiv<[\s\S]*?>Në PoS<[\s\S]*?>Konto e blerjes<[\s\S]*?>Konto e shitjes</.test(html), true,
+     'Produktet: kolonat dhe radha e tyre si mostra e pronarit');
+  eq([html.includes('sc-camel-on-click="{{ p.toggleActive }}"'), html.includes('sc-camel-on-click="{{ p.togglePos }}"'),
+      html.includes('data-on="{{ p.activeS }}"'), html.includes('data-on="{{ p.posS }}"')], [true, true, true, true],
+     'Produktet: Aktiv dhe Në PoS ndizen drejt te tabela');
+  c.commit(() => ({ terminals: [] }));
+}
+
 // ── skedari i ATK-së del NGA VETË SHABLLONI: çdo pjesë tjetër bajt për bajt e pandryshuar ──
 // Rregulli i pronarit: as një presje, as një pikë, as një stil i shabllonit nuk ndryshon. Prandaj krahasohet
 // paketa e prodhuar me shabllonin e ngulitur: vetëm sheet1.xml dhe sharedStrings.xml guxojnë të ndryshojnë,
