@@ -3240,6 +3240,52 @@ apiBlock.then(async () => {
     } finally { S.features = feat0; }
   }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
 
+// ── Importi bankar: pasqyra e bankes behet pagesa, por vetem ato qe i zgjedh pronari ──
+// Rregulli qe mbron para: nje rresht pa perputhje te sigurt nuk regjistrohet kurre vetvetiu.
+{
+  // shumat e bankes ne te gjitha format qe dalin nga eksportet
+  eq([c.bankAmount('1.250,00'), c.bankAmount('1,250.00'), c.bankAmount('-45,20'), c.bankAmount('45.20-'),
+      c.bankAmount('(12,50)'), c.bankAmount('1 250,00 EUR'), c.bankAmount(''), c.bankAmount('abc')],
+     [125000, 125000, -4520, -4520, -1250, 125000, null, null], 'bankAmount: presja/pika, minusi para a pas, kllapat dhe valuta');
+  eq([c.bankDate('04.10.2026'), c.bankDate('2026-10-04'), c.bankDate('4/10/26'), c.bankDate('x')],
+     ['2026-10-04', '2026-10-04', '2026-10-04', ''], 'bankDate: formatet e zakonshme te pasqyrave');
+
+  const inv = db().invoices.find(r => c.rem(r) > 0 && r.status !== 'Draft' && r.kind !== 'Profature');
+  const rem = c.rem(inv);
+  // 1) CSV me kolona te emertuara: numri i fatures te pershkrimi = perputhje e sigurt
+  const csv = 'Data;Pershkrimi;Shuma\n04.10.2026;Pagese ' + inv.no + ' nga klienti;' + (rem / 100).toFixed(2).replace('.', ',') + '\n04.10.2026;Komision mujor banke;-3,50';
+  const rows = c.bankRows(csv);
+  eq([rows.length, rows[0].date, rows[0].amt, rows[1].amt], [2, '2026-10-04', rem, -350], 'bankRows: CSV me Data/Pershkrimi/Shuma, dalja negative');
+  const m0 = c.bankMatch(rows[0]), m1 = c.bankMatch(rows[1]);
+  eq([!!m0, m0 && m0.kind, m0 && m0.doc.no, m0 && m0.why, m1], [true, 'sale', inv.no, 'numri i dokumentit te përshkrimi', null],
+     'bankMatch: numri i dokumentit e zgjidh faturen; komisioni i bankes mbetet pa perputhje');
+
+  // 2) kolonat Debi/Kredi te ndara
+  const dc = c.bankRows('Data;Pershkrimi;Debi;Kredi\n04.10.2026;Pagese furnitori;120,00;\n04.10.2026;Arketim;;80,00');
+  eq([dc[0].amt, dc[1].amt], [-12000, 8000], 'bankRows: kolonat Debi/Kredi te ndara japin shenjen e duhur');
+
+  // 3) MT940
+  const mt = c.bankRows(':20:STMT\n:25:1234\n:61:2610041004C1250,00NTRFNONREF\n:86:PAGESE ' + inv.no + '\n:61:2610041004D45,20NTRF\n:86:KOMISION\n:62F:C261004EUR0,00');
+  eq([mt.length, mt[0].date, mt[0].amt, /PAGESE/.test(mt[0].desc), mt[1].amt], [2, '2026-10-04', 125000, true, -4520],
+     'bankRows: MT940 — :61: jep daten dhe shenjen C/D, :86: pershkrimin');
+
+  // 4) faqja: rreshti i perputhur ndizet vete, ai pa perputhje jo — dhe regjistrimi mbyll faturen
+  c.state.section = 'finance'; c.state.page = 'Import bankar';
+  c.state.bank = { text: csv, acc: '', sel: {} };
+  const page = c.settingsPage('Import bankar');
+  const tbl = page.cards[1].table;
+  eq([page.cards.length, tbl.rows.length, tbl.rows[0].cells[4].sw === true && tbl.rows[0].cells[4].on === true, !!tbl.rows[1].cells[4].sw,
+      /Regjistro 1 pagese/.test(page.cards[1].actions[0].label.replace(/[ëç]/g, e => ({ 'ë': 'e', 'ç': 'c' }[e])))],
+     [2, 2, true, false, true], 'faqja: rreshti i perputhur ndizet vete, komisioni jo, butoni numeron vetem te zgjedhurit');
+  const paid0 = inv.paid, nPay = db().payments.length;
+  page.cards[1].actions[0].go();
+  const after = db().invoices.find(r => r.no === inv.no);
+  eq([after.paid - paid0, after.status, db().payments.length - nPay, c.state.bank.text,
+      db().payments[0].note.startsWith('Import bankar')],
+     [rem, 'Paguar', 1, '', true], 'importi bankar: regjistron vetem rreshtin e zgjedhur, fatura mbyllet, pasqyra pastrohet');
+  c.state.bank = null; c.state.section = 'dashboard'; c.state.page = 'Paneli';
+}
+
 // ── roja e serverit te paneli: nje server i semure e gjen pronarin aty ku punon ──
 // Rregulli: vetem nje pergjigje e VERTETE e serverit („jam i instaluar dhe nuk jam mire") behet njoftim.
 // Mungesa e rojes ose nje gabim rrjeti nuk shfaqet fare — perndryshe cdo nderprerje linje do te dukej si alarm.

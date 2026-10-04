@@ -1983,7 +1983,7 @@ class Component extends DCLogic {
     {id:'dashboard',label:'Paneli',items:['Paneli']},
     {id:'shitje',label:'Shitje',items:['Fatura','Faturim masiv','Oferta','Porosi','Klientë','Kthime']},
     {id:'blerje',label:'Blerje',items:['Blerje','Porosi blerjeje','Furnitorë','Kthime']},
-    {id:'finance',label:'Financë',items:['Hyrje','Dalje','Shpenzime','Pagesa','Llogari bankare','Arkë','Bilanci','TVSH','Raporte financiare']},
+    {id:'finance',label:'Financë',items:['Hyrje','Dalje','Shpenzime','Pagesa','Import bankar','Llogari bankare','Arkë','Bilanci','TVSH','Raporte financiare']},
     {id:'produkte',label:'Produkte',items:['Produktet','Kategoritë','Çmimet','Njësitë','Barkodet','Lista e çmimeve']},
     {id:'stok',label:'Stok',items:['Gjendja','Depo','Transferime','Hyrje në stok','Dalje nga stok','Inventar','Lëvizjet']},
     {id:'pos',label:'POS',items:['Arkat','Artikujt e arkave','Hap POS-in','Shitje','Kthime','Operatorët','Mbyllja e arkës','Raportet e arkës'],mod:'pos'},
@@ -5041,6 +5041,46 @@ class Component extends DCLogic {
     const P={title:key.replace(/^A:/,''),sub:'',cards:[],back:null};
     const nextNos=Object.fromEntries(['FSH','PRO','BL','PAG','SHP','KR','KD','OF','PS','PB','TR'].map(k=>[k,this.nextNo(k)(1)]));
     switch(key){
+      case 'Import bankar': {
+        /* Pasqyra e bankës → pagesa. Rrjedha: ngjit tekstin (CSV/TSV i eksportuar, ose MT940), shiko rreshtat me
+           përputhjen e propozuar, hiq atë që nuk e do, shtyp „Regjistro". Rreshtat pa përputhje rrinë të fikur dhe
+           nuk regjistrohen kurrë vetvetiu — një pagesë e vendosur te fatura e gabuar është më keq se asnjë pagesë. */
+        const bk={text:'',acc:'',sel:{},...(s.bank||{})};
+        const put=p=>this.setState(st=>({bank:{text:'',acc:'',sel:{},...(st.bank||{}),...p}}));
+        const b=bind(()=>bk,put);
+        const accs=this.accountsOf(db), acc=accs.find(a=>a.id===bk.acc)||accs.find(a=>a.type==='Bankë')||accs[0];
+        const rows=bk.text.trim()?this.bankRows(bk.text):[];
+        const seen=new Set((db.payments||[]).map(p=>this.toIso(p.date)+'|'+p.amount_c+'|'+p.ref));
+        const lines=rows.map((r,i)=>{ const m=this.bankMatch(r,db);
+          const dup=!!m&&seen.has(r.date+'|'+Math.min(Math.abs(r.amt),this.rem(m.doc))+'|'+m.doc.no);
+          const on=bk.sel[i]===undefined?(!!m&&!dup):!!bk.sel[i];
+          return {i,r,m,dup,on,amt:Math.min(Math.abs(r.amt),m?this.rem(m.doc):Math.abs(r.amt))}; });
+        const pick=lines.filter(l=>l.on&&l.m);
+        P.sub='Lexon pasqyrën e bankës (CSV/TSV ose MT940), e përputh çdo rresht me një faturë a blerje të hapur dhe i regjistron pagesat që zgjidhni. Asnjë rresht nuk regjistrohet pa e parë ju.';
+        P.cards=[
+          card('Pasqyra e bankës',{wide:true,
+            fields:[b.seg('acc','Llogaria ku ranë paratë',accs.map(a=>[a.id,a.name+' · '+a.type])),
+              b.area('text','Ngjitni pasqyrën',{ph:'Data;Përshkrimi;Shuma\n04.10.2026;Pagesë FSH-2026-00125 ABC;1.250,00',
+                hint:'CSV/TSV me kolonat Data · Përshkrimi · Shuma (ose Debi/Kredi veçmas), ose teksti i plotë i një MT940 (:61: / :86:)'})],
+            actions:[...(bk.text?[{label:'Pastro',go:()=>this.setState({bank:{text:'',acc:bk.acc,sel:{}}})}]:[])],
+            note:rows.length?rows.length+' rreshta u lexuan · '+lines.filter(l=>l.m).length+' u përputhën me një dokument të hapur':(bk.text.trim()?'Nuk u njoh asnjë rresht — kontrolloni kolonat (Data · Përshkrimi · Shuma) ose ngjitni MT940-n e plotë.':''),
+            noteColor:rows.length?'#526477':'#B45309'}),
+          ...(rows.length?[card('Rreshtat e pasqyrës',{wide:true,
+            table:{cols:[{label:'Data'},{label:'Përshkrimi'},{label:'Shuma',align:'right'},{label:'Përputhja'},{label:'Regjistro',align:'center'}],
+              rows:lines.map(l=>({cells:[
+                C(l.r.date?this.fmtDate(l.r.date):'—',{color:'#526477'}),
+                C(l.r.desc.slice(0,70)||'—',{sub:l.m?l.m.why:''}),
+                M(l.r.amt,{b:true,color:l.r.amt<0?'#B91C1C':'#15803D'}),
+                l.m?C((l.m.kind==='sale'?'Faturë ':'Blerje ')+l.m.doc.no,{b:true,sub:(l.m.kind==='sale'?l.m.doc.customer:l.m.doc.supplier)+' · mbetur '+money(this.rem(l.m.doc))+(l.dup?' · duket e regjistruar':'')})
+                  :C('Pa përputhje',{color:'#B45309',sub:'regjistrojeni me dorë te dokumenti'}),
+                l.m?{...C(''),align:'center',sw:true,on:l.on,go:()=>put({sel:{...bk.sel,[l.i]:!l.on}})}:C('',{})]}))},
+            actions:[{label:pick.length?'Regjistro '+plural(pick.length,'pagesë','pagesa'):'Asnjë rresht i zgjedhur',primary:true,dis:!pick.length,
+              go:()=>{ if(!pick.length||!acc) return; let k=0;
+                for(const l of pick){ this.recordPayment({kind:l.m.kind,ref:l.m.doc.no,amount_c:l.amt,account:acc.id,date:this.fmtDate(l.r.date||this.today()),note:'Import bankar · '+l.r.desc.slice(0,60)}); k++; }
+                this.logAudit('Import bankar: '+k+' pagesa nga pasqyra te '+acc.name);
+                this.setState({bank:{text:'',acc:bk.acc,sel:{}}}); this.toast(k+' pagesa u regjistruan te '+acc.name,'#22C55E'); }}],
+            note:pick.length?'Do të regjistrohen '+money(pick.reduce((a,l)=>a+l.amt,0))+' te '+(acc?acc.name:'—')+'. Një shumë më e madhe se mbetja e dokumentit pritet te mbetja.':'Ndizni rreshtat që doni të regjistroni.'})]:[])];
+        break; }
       case 'Të dhënat e kompanisë': {
         P.sub='Ndryshimet ruhen automatikisht dhe përdoren te fatura A4, email-i dërgues, fiskalizimi dhe raportet.';
         P.cards=[card('Identiteti',{fields:[co.txt('name','Emri i kompanisë',{half:true}),co.txt('legal','Forma ligjore',{half:true}),co.txt('nui','NUI',{half:true,err:!/^\d{9}$/.test(db.company.nui),hint:/^\d{9}$/.test(db.company.nui)?'':'9 shifra'}),co.txt('fiscalNo','Numri fiskal',{half:true}),co.txt('vat','Numri i TVSH-së',{half:true,dis:!db.taxSettings.vatRegistered,hint:db.taxSettings.vatRegistered?'shtypet në kupon dhe faturë':'kompania nuk është e regjistruar për TVSH — kuponët dhe faturat dalin pa TVSH (grupi A)'}),co.txt('activity','Veprimtaria',{half:true}),co.txt('unitNo','Nr. i njësisë (ATK)',{half:true,hint:'kur s’ka degë me numër të vetin — koka e kuponit fiskal'}),co.txt('licence','Licenca e njësisë (nr/data)',{half:true,hint:'p.sh. L5-0412/14.02.2024'})],toggles:[tx.tog('vatRegistered','E regjistruar në TVSH','Po: kuponët/faturat me TVSH sipas grupeve A/C/D/E. Jo: çdo shitje në grupin A (0 %), pa rreshta TVSH-je — dërgohet edhe te arkat (katalogu › company.vatRegistered)',{audit:'Regjistrimi për TVSH'})]}),
@@ -6028,6 +6068,55 @@ class Component extends DCLogic {
     return {prod,taxCode,rate,netC,qm,bp,netErr,grossErr,qtyErr,discErr,err,line,...(pk?{pk,packQ:nq,packC:pc,unitT}:{})};
   }
   // Excel / CSV / TSV text -> {header, rows}. Delimiter is sniffed from the header line; quoted cells are honoured.
+  /* ───────── Importi bankar: pasqyra e bankës → pagesa të regjistruara ─────────
+     Pse: deri sot „Banka — import i lëvizjeve" ishte një kartelë „Së shpejti", kurse pagesat shkruheshin një e nga
+     një me dorë nga ekstrakti. Këtu lexohet pasqyra (CSV/TSV i eksportuar nga banka, ose rreshtat :61:/:86: të një
+     MT940), secili rresht përputhet me një faturë ose blerje të hapur, dhe pronari vendos vetë cilat rreshta
+     regjistrohen. Asnjë rresht nuk regjistrohet vetvetiu: paratë e dikujt tjetër nuk mbyllin faturën e gabuar. */
+  BANK_COLS = {date:['data','date','data e valutes','data e valutës','booking date','value date','datum'],
+    desc:['pershkrimi','përshkrimi','description','details','narrative','pershkrim','qellimi','qëllimi','reference','referenca'],
+    amount:['shuma','amount','vlera','iznos','betrag'], debit:['debi','debit','dalje','ne ngarkim','në ngarkim'], credit:['kredi','credit','hyrje','ne kredi','në kredi']};
+  bankCols(header){ const map={}; header.forEach((h,i)=>{ const x=this.norm(h); for(const [k,list] of Object.entries(this.BANK_COLS)) if(map[k]===undefined&&list.includes(x)) map[k]=i; }); return map; }
+  // një shumë bankare: „1.250,00" / „1,250.00" / „-45.20" / „45.20-" → centë (negativ = dalje)
+  bankAmount(t){ let x=String(t==null?'':t).trim(); if(!x) return null; let neg=/^-/.test(x)||/-$/.test(x)||/^\(.*\)$/.test(x);
+    x=x.replace(/[()]/g,'').replace(/[−–]/g,'-').replace(/[^0-9.,-]/g,'').replace(/-/g,'');
+    if(x.includes(',')&&x.includes('.')) x=(x.lastIndexOf(',')>x.lastIndexOf('.'))?x.replace(/\./g,'').replace(',','.'):x.replace(/,/g,'');
+    else if(x.includes(',')) x=/,\d{1,2}$/.test(x)?x.replace(/\./g,'').replace(',','.'):x.replace(/,/g,'');
+    if(!x||isNaN(Number(x))) return null; const c=Math.round(Number(x)*100); return neg?-c:c; }
+  bankDate(t){ const x=String(t==null?'':t).trim(); let m=x.match(/^(\d{4})-(\d{2})-(\d{2})/); if(m) return m[1]+'-'+m[2]+'-'+m[3];
+    m=x.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/); if(!m) return '';
+    const y=m[3].length===2?'20'+m[3]:m[3]; return y+'-'+String(m[2]).padStart(2,'0')+'-'+String(m[1]).padStart(2,'0'); }
+  /* MT940: çdo lëvizje nis me :61: (data VVMMDD, shenja C/D, shuma me presje) dhe e ka përshkrimin te :86: pas saj. */
+  bankMT940(text){ const out=[]; const lines=String(text).replace(/\r\n?/g,'\n').split('\n'); let cur=null;
+    for(const raw of lines){ const l=raw.trim();
+      let m=l.match(/^:61:(\d{2})(\d{2})(\d{2})(?:\d{4})?(R?[CD])([0-9.,]+)/);
+      if(m){ if(cur) out.push(cur); const sign=m[4].endsWith('D')?-1:1, amt=this.bankAmount(m[5]);
+        cur={date:'20'+m[1]+'-'+m[2]+'-'+m[3],desc:'',amt:amt===null?null:sign*Math.abs(amt)}; continue; }
+      if(l.startsWith(':86:')&&cur){ cur.desc=(cur.desc?cur.desc+' ':'')+l.slice(4).trim(); continue; }
+      if(cur&&l&&!l.startsWith(':')) cur.desc=(cur.desc?cur.desc+' ':'')+l; }
+    if(cur) out.push(cur); return out.filter(r=>r.amt!==null&&r.amt!==0); }
+  bankRows(text){
+    const t=String(text||''); if(/^:\d{2}[A-Z]?:/m.test(t)&&/:61:/.test(t)) return this.bankMT940(t);
+    const {header,rows}=this.parseTable(t); if(!rows.length) return [];
+    const c=this.bankCols(header); if(c.date===undefined&&c.amount===undefined&&c.credit===undefined) return [];
+    return rows.map(r=>{ const amt=c.amount!==undefined?this.bankAmount(r[c.amount])
+        :(this.bankAmount(r[c.credit])||0)-Math.abs(this.bankAmount(r[c.debit])||0);
+      return {date:this.bankDate(c.date!==undefined?r[c.date]:''),desc:String(c.desc!==undefined?r[c.desc]:r.join(' ')).trim(),amt:amt===null?null:amt}; })
+      .filter(r=>r.amt!==null&&r.amt!==0);
+  }
+  /* Përputhja e një rreshti me një dokument TË HAPUR. Tri rregulla, nga më e sigurta te më e dobëta — dhe asgjë
+     nuk regjistrohet pa e parë pronari: numri i dokumentit te përshkrimi; pastaj mbetja e saktë bashkë me emrin e
+     palës; ndryshe rreshti mbetet pa përputhje dhe fiket. */
+  bankMatch(row,db){
+    const d=db||this.view(), inn=row.amt>0, want=Math.abs(row.amt), nd=this.norm(row.desc).replace(/[^a-z0-9]/g,'');
+    const list=(inn?d.invoices:d.purchases).filter(x=>x.status!=='Draft'&&x.status!=='Anuluar'&&x.kind!=='Profaturë'&&this.rem(x)>0);
+    const byNo=list.find(x=>nd.includes(this.norm(x.no).replace(/[^a-z0-9]/g,'')));
+    if(byNo) return {kind:inn?'sale':'purchase',doc:byNo,why:'numri i dokumentit te përshkrimi'};
+    const party=x=>this.norm(inn?x.customer:x.supplier).split(/\s+/).filter(w=>w.length>3)[0]||'';
+    const exact=list.filter(x=>this.rem(x)===want&&party(x)&&this.norm(row.desc).includes(party(x)));
+    if(exact.length===1) return {kind:inn?'sale':'purchase',doc:exact[0],why:'shuma e plotë dhe emri i palës'};
+    return null;
+  }
   parseTable(text){
     const lines=String(text||'').replace(/^﻿/,'').replace(/\r\n?/g,'\n').split('\n').filter(l=>l.trim()!=='');
     if(!lines.length) return {header:[],rows:[]};
