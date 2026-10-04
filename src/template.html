@@ -4372,7 +4372,9 @@ class Component extends DCLogic {
     return lines.map((L,idx)=>{
       const e=isR?this.evalRecipeLine(L):this.evalLine(L,mode), prod=e.prod, id=L.id, set=p=>setLine(id,p);
       const q=this.norm(L.artQ);
-      const opts=this.PRODUCTS.filter(p=>!(stockOnly&&this.isRecipe(p))&&!(isR&&p.sku===self)).filter(p=>!q||L.sku||this.norm(p.name).includes(q)||this.norm(p.sku).includes(q)).map(p=>({name:p.name,sku:p.sku,cat:p.cat,unit:p.unit,rate:this.effRate(p.tax),priceFmt:this.fmt(isP||isR?p.cost_c:p.price_c),bg:p.sku===L.sku?'rgba(37,99,235,.08)':'transparent',
+      // artikulli JOAKTIV nuk zgjidhet më te dokumente të reja; ai që është zgjedhur te rreshti mbetet në listë,
+      // që një draft i vjetër ose redaktimi i një dokumenti të mos e humbasë artikullin e vet
+      const opts=this.PRODUCTS.filter(p=>(this.prodActive(p)||p.sku===L.sku)&&!(stockOnly&&this.isRecipe(p))&&!(isR&&p.sku===self)).filter(p=>!q||L.sku||this.norm(p.name).includes(q)||this.norm(p.sku).includes(q)).map(p=>({name:p.name,sku:p.sku,cat:p.cat,unit:p.unit,rate:this.effRate(p.tax),priceFmt:this.fmt(isP||isR?p.cost_c:p.price_c),bg:p.sku===L.sku?'rgba(37,99,235,.08)':'transparent',
         pick:ev=>{ev.preventDefault();set({sku:p.sku,artQ:p.name,artOpen:false,tax:p.tax,net:'',gross:'',fresh:false,...(L.pk?{pk:false}:{})});}})); // another article starts in its own unit
       const taxOpts=Object.entries(this.TAX).filter(([code])=>this.vatOn()||code==='A').map(([code,t])=>({code,rate:t.rate,name:t.name,on:code===e.taxCode?'1':'',go:()=>set(l=>{const nc=l.net===''?null:this.toC(l.net);return {tax:code,gross:nc===null?'':this.fromC(this.grossOf(nc,t.rate))};})}));
       const base=prod?(isP?prod.cost_c:prod.price_c):0;
