@@ -742,6 +742,16 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
   if (kthBlerje) { const r3 = c.vatBook('sale', all).rows.find(r => r.no === kthBlerje.no);
     eq([!!r3, !!r3 && r3.cells.nota_18 != null], [true, true], 'nota kreditore e PRANUAR (kthim blerjeje) hyn te libri i SHITJES [16]'); }
   // kuponët e arkës: një rresht për ditë me kodin „1" dhe vetëm kutitë e lejuara
+  // një faturë A4 e bërë nga një kupon është KOPJE: hyn te lista e faturave, por JO si rresht i dytë në libër
+  { const rec = (db().posReceipts || [])[0];
+    if (rec) {
+      const before = c.vatBook('sale', all).rows.length;
+      c.commit(d => ({ invoices: [{ ...d.invoices[0], no: 'A4-POS-TEST', fromPos: rec.id, posNo: rec.no, date: rec.date, status: 'Paguar' }, ...d.invoices] }));
+      const after = c.vatBook('sale', all);
+      eq([after.rows.length, after.rows.some(r => r.no === 'A4-POS-TEST')], [before, false],
+         'faturë A4 nga një kupon: nuk shtohet rresht i dytë në librin e shitjes (shitja numërohet një herë, te ndërrimi)');
+      c.commit(d => ({ invoices: d.invoices.filter(r => r.no !== 'A4-POS-TEST') }));
+    } }
   // kuponët e arkës nuk përjashtohen kurrë nga libri i shitjes: një NDËRRIM = një rresht, si një faturë
   const posGroups = new Set((db().posReceipts || []).map(r => r.shift || ('day:' + r.date)));
   if (posGroups.size) { const posRows = c.vatBook('sale', all).rows.filter(r => r.what === 'pos');

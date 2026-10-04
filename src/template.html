@@ -2385,7 +2385,10 @@ class Component extends DCLogic {
     const vatOf=(name,isC)=>{ const x=((isC?d.customers:d.suppliers)||[]).find(y=>y.name===name); return (x&&x.vat)||''; };
     const P=(doc,what,no,date,pale,nui,vatNo)=>({doc,what,no,date,numri:no,data:date,pale:pale||'—',nui:nui||'',vatNo:vatNo||''});
     if(kind==='sale'){
-      for(const r of (d.invoices||[])) if(r.status!=='Draft'&&r.status!=='Anuluar'&&inPeriod(r.date)) src.push(P(r,'invoice',r.no,r.date,r.customer,r.nui,vatOf(r.customer,true)));
+      // Nje fature A4 e bere nga nje kupon (`fromPos`) eshte KOPJE e atij kuponi per klientin: kuponi ka shkuar
+      // vete te ATK-ja dhe hyn ne liber me rreshtin e nderrimit. Po ta numeronim edhe faturen, shitja do te dilte
+      // dy here te libri dhe te deklarata (i njejti rregull si te salesDocs).
+      for(const r of (d.invoices||[])) if(r.status!=='Draft'&&r.status!=='Anuluar'&&!r.fromPos&&inPeriod(r.date)) src.push(P(r,'invoice',r.no,r.date,r.customer,r.nui,vatOf(r.customer,true)));
       for(const r of (d.returns||[])) if(r.kind==='Kthim blerje'&&inPeriod(r.date)) src.push(P(r,'notaReceived',r.no,r.date,r.supplier,r.nui,vatOf(r.supplier,false)));
       /* Kuponët e arkës hyjnë PATJETËR në librin e shitjes — jo të përjashtuar. Grupimi bëhet sipas NDËRRIMIT
          („një ndërrim = një faturë në libër", kërkesë e pronarit); një kupon pa ndërrim bie te pazari i ditës së vet.
