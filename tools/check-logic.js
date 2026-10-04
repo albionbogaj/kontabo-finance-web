@@ -1493,7 +1493,7 @@ apiBlock.then(async () => {
     if (p === '/auth/logout') return json(200, { ok: true });
     if (p === '/auth/switch-tenant') return json(200, jOf(u.key, body.tenantId));
     if (p === '/pos/status') return posOk(u) ? json(200, { terminals: [], catalogVersion: T.catVersion, unsyncedReceipts: 0 }) : json(403, { error: 'forbidden', message: 'Nuk keni leje' });
-    if (p === '/pos/catalog' && m === 'PUT') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); T.catalogs.push(body.catalog); T.catVersion++; return json(200, { version: T.catVersion }); }
+    if (p === '/pos/catalog' && m === 'PUT') { if (!posOk(u)) return json(403, { error: 'forbidden', message: 'Nuk keni leje' }); if (T.onCatalog) { const r = T.onCatalog(body); if (r) return r; } T.catalogs.push(body.catalog); T.catVersion++; return json(200, { version: T.catVersion }); }
     if (p === '/pos/sales') return json(200, { receipts: [], shifts: [], cursor: +q.since || 0 });
     if (p === '/pos/ack') return json(200, { acked: 0 });
     if (p === '/pos/ledger') { if (S.gate && S.gate.tid === T.id) await S.gate.p;
@@ -2789,6 +2789,20 @@ apiBlock.then(async () => {
         const M2 = mk(), s1 = seq().length; await enter(M2, 'mag', 'tk'); await tick(M2);
         eq([seq().slice(s1), st(TK)], [['POST /pos/proposals/resolve', 'GET /pos/proposals', 'POST /state/commit', 'POST /pos/proposals/resolve'], ['p:901:applied', 'p:902:applied', 'p:901:applied']], 'proposals: a user without the POS permission (produkte only) resolves without PUTting the catalogue (its page\'s first run sends the book\'s verdicts again first)');
         M2.logout(); done(M2); }
+      // the server refuses the catalogue for good (422 invalid, 413 too big — the tills would never get it): the verdicts still go, the refusal is
+      // noted (lastError) — the first batch is resolved, the bar's next proposal is read and resolved too; a catalogue PUT that fails only for now
+      // (503) holds the resolve back until a later tick sends both
+      { const TZ = mkT('tz', 'Bar Katalog Refuzuar SH.P.K.', book(), 'on'), k0 = seen(TZ.state, 'KAFE'), k1 = { ...k0, gross_t: k0.gross_t + 1000 }, er = x => ((x._posRt || {}).lastError || ''); TZ.rs = () => (TZ.resolves || []).length;
+        TZ.onCatalog = () => json(422, { error: 'validation_error', message: 'Të dhënat e kërkesës janë të pavlefshme' }); propose(TZ, { key: 'p:951', sku: 'KAFE', before: k0, after: k1 });
+        const Q = mk(); await enter(Q, 'own', 'tz'); await tick(Q); const a0 = [st(TZ), TZ.rs(), TZ.catalogs.length, er(Q)];
+        propose(TZ, { key: 'p:952', sku: 'KAFE', before: k1, after: { ...k1, name: 'Kafe e re' } }); await tick(Q); const g = TZ.state.products.find(x => x.sku === 'KAFE');
+        eq([a0, st(TZ), TZ.rs(), TZ.commits.length, [g.name, g.gross_t]], [[['p:951:applied'], 1, 0, 'Katalogu: Të dhënat e kërkesës janë të pavlefshme'], ['p:951:applied', 'p:952:applied'], 2, 2, ['Kafe e re', k0.gross_t + 1000]],
+          'proposals: the server refuses the catalogue for good (422) — the verdicts still reach the bar (the refusal noted in lastError), the next proposal is read and resolved: a catalogue the tills would never get does not stop the company\'s resolves');
+        let n = 1; TZ.onCatalog = () => (n-- > 0 ? json(503, { error: 'unavailable', message: 'Serveri po rinis' }) : null); const k2 = seen(TZ.state, 'KAFE');
+        propose(TZ, { key: 'p:953', sku: 'KAFE', before: k2, after: { ...k2, gross_t: k2.gross_t + 1000 } }); const r0 = TZ.rs(); await tick(Q); const b0 = [st(TZ).slice(-1), TZ.rs() - r0, TZ.catalogs.length]; await tick(Q);
+        eq([b0, st(TZ).slice(-1), TZ.rs() - r0, TZ.catalogs.length, TZ.catalogs.length && TZ.catalogs[0].products.find(x => x.sku === 'KAFE').gross_t], [[['p:953:pending'], 0, 0], ['p:953:applied'], 1, 1, k2.gross_t + 1000],
+          'proposals: a catalogue PUT that fails only for now (503) holds the resolve back — the next tick PUTs the catalogue, then resolves');
+        TZ.onCatalog = null; Q.logout(); done(Q); }
       // a long reason never blocks the tenant's resolves (the mock refuses a result string > 200 like the first schema): Kafe — the ERP changed its
       // name and price, its unit is locked — gives a 200-character reason; a verdict an older build stored with a 300-character reason is cut when
       // it is sent again; a verdict the server still refuses is sent alone and left out — the others of its chunk are resolved

@@ -2965,9 +2965,12 @@ class Component extends DCLogic {
     return U; }
   // before a resolve the catalogue with what was applied goes to the tills FIRST (the POS permission and the ledger live, as posSyncLedger; only
   // when its hash changed): a bar that reads a verdict stops protecting those fields at once and would otherwise apply an older catalogue right
-  // after it (the old price, a product it just created hidden) until the next posSync. A PUT that fails stops the run (nothing resolved; next tick)
-  async propCatalog(ok){ if(!this.posPerm()||!this.ledgerLive(this.state.db)) return true; const cat=this.posCatalogReady(false); if(!cat||cat.hash===this.posCfg().catalogHashSrv) return true;
-    const c=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); if(!ok()) return false; this.posRt({catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:(c&&c.version)||0}); return true; }
+  // after it (the old price, a product it just created hidden) until the next posSync. A PUT that fails for now (network, 5xx, 409…) stops the run
+  // (nothing resolved; next tick); one the server refuses for good (400 / 413 / 422: invalid, too big) is noted (lastError) and the verdicts go on —
+  // the tills would not get that catalogue anyway, and holding them back would stop every resolve of the company
+  async propCatalog(ok){ if(!this.posPerm()||!this.ledgerLive(this.state.db)) return true; const cat=this.posCatalogReady(false); if(!cat||cat.hash===this.posCfg().catalogHashSrv) return true; let c;
+    try{ c=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); }catch(e){ if(![400,413,422].includes(e&&e.status)) throw e; if(!ok()) return false; this.posRt({lastError:'Katalogu: '+String((e&&e.message)||e)}); return true; }
+    if(!ok()) return false; this.posRt({catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:(c&&c.version)||0}); return true; }
   // POST /pos/proposals/resolve in chunks of 200 (propWire), after the catalogue (propCatalog): R (landed in the book) joins propUnacked, then every
   // verdict there is sent and leaves it once acknowledged. A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
   // time: a verdict it still refuses is left out for the rest of this session (this._propSkip — sent every tick it would block its chunk again),
