@@ -2379,8 +2379,11 @@ class Component extends DCLogic {
   }
   /* dokumentet e një periudhe. Kuponët e arkës bashkohen në NJË rresht për ditë (pazari ditor, neni i udhëzuesit:
      „Numri 1 … gjegjësisht Pazari ditor"), kurse faturat janë secila me rreshtin e vet. */
-  vatBook(kind,inPeriod){
-    const d=this.state.db, co=d.company||{}, BK=this.BOOK[kind], src=[];
+  vatBook(kind,inPeriod,db){
+    /* Burimi i te dhenave eshte view(), jo state.db: me librin e POS-it te serveri (posLedger) kuponet, levizjet
+       dhe pagesat NUK rrine te state.db — ato derivohen nga libri dhe dalin vetem nga view(). Me state.db libri i
+       ATK-se dilte PA ASNJE rresht te arkes, pra qarkullimi i arkave mungonte krejt te .xlsx-i qe ngarkohet. */
+    const d=db||this.view(), co=d.company||{}, BK=this.BOOK[kind], src=[];
     // kolona F (numri i TVSH-së së palës) lexohet nga regjistri i klientit/furnitorit — dokumentet mbajnë vetëm NUI-n
     const vatOf=(name,isC)=>{ const x=((isC?d.customers:d.suppliers)||[]).find(y=>y.name===name); return (x&&x.vat)||''; };
     const P=(doc,what,no,date,pale,nui,vatNo)=>({doc,what,no,date,numri:no,data:date,pale:pale||'—',nui:nui||'',vatNo:vatNo||''});
@@ -2388,7 +2391,8 @@ class Component extends DCLogic {
       // Nje fature A4 e bere nga nje kupon (`fromPos`) eshte KOPJE e atij kuponi per klientin: kuponi ka shkuar
       // vete te ATK-ja dhe hyn ne liber me rreshtin e nderrimit. Po ta numeronim edhe faturen, shitja do te dilte
       // dy here te libri dhe te deklarata (i njejti rregull si te salesDocs).
-      for(const r of (d.invoices||[])) if(r.status!=='Draft'&&r.status!=='Anuluar'&&!r.fromPos&&inPeriod(r.date)) src.push(P(r,'invoice',r.no,r.date,r.customer,r.nui,vatOf(r.customer,true)));
+      // vetem faturat e vertete: profatura nuk eshte dokument tatimor dhe nuk hyn ne liber
+      for(const r of (d.invoices||[])) if(r.kind!=='Profaturë'&&r.status!=='Draft'&&r.status!=='Anuluar'&&!r.fromPos&&inPeriod(r.date)) src.push(P(r,'invoice',r.no,r.date,r.customer,r.nui,vatOf(r.customer,true)));
       for(const r of (d.returns||[])) if(r.kind==='Kthim blerje'&&inPeriod(r.date)) src.push(P(r,'notaReceived',r.no,r.date,r.supplier,r.nui,vatOf(r.supplier,false)));
       /* Kuponët e arkës hyjnë PATJETËR në librin e shitjes — jo të përjashtuar. Grupimi bëhet sipas NDËRRIMIT
          („një ndërrim = një faturë në libër", kërkesë e pronarit); një kupon pa ndërrim bie te pazari i ditës së vet.
@@ -2398,9 +2402,14 @@ class Component extends DCLogic {
         const key=r.shift||('day:'+r.date);
         const g=groups.get(key)||{items:[],n:0,date:r.date,shift:r.shift||''}; groups.set(key,g);
         const sign=(r.status==='Kthim'||r.status==='Anulim')?-1:1;
-        const its=(r.items||[]);
+        // Shumat merren nga rreshtat kur ata i mbajne. Nje permbledhje ditore e serverit mund te vije me rreshta pa
+        // shuma (vetem emrat): atehere lexohen totalet e vete kuponit dhe norma nxirret nga raporti TVSH/baze —
+        // ndryshe dita e arkes do te hynte ne liber me zero.
+        const its=(r.items||[]).filter(i=>(((i.sub!=null?i.sub:i.sub_c)||0)||((i.vatc!=null?i.vatc:i.vat_c)||0)));
         if(its.length) for(const i of its) g.items.push({rate:i.rate,sub:sign*((i.sub!=null?i.sub:i.sub_c)||0),vatc:sign*((i.vatc!=null?i.vatc:i.vat_c)||0)});
-        else if(r.total) g.items.push({rate:(r.vat||0)>0?18:0,sub:sign*(r.sub||0),vatc:sign*(r.vat||0)});   // përmbledhje ditore e serverit (pa rreshta)
+        else if(r.sub||r.vat||r.total){ const sub=r.sub!=null?r.sub:Math.max(0,(r.total||0)-(r.vat||0)), vat=r.vat||0;
+          const pct=sub?Math.round(vat*100/sub):0, rate=pct>=13?18:pct>=4?8:0;
+          g.items.push({rate,sub:sign*sub,vatc:sign*vat}); }
         g.n+=Number(r.n)||1;
         if(this.toIso(r.date)<this.toIso(g.date)) g.date=r.date;
       }

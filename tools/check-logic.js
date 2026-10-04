@@ -1644,6 +1644,29 @@ c.state.db = { ...db(), products: db().products.filter(p => p.sku !== 'OLD') };
     x.state.db = { ...d(), purchases: d().purchases.map(p => p.no === bl2 ? { ...p, items: [...p.items, il(x, 'MIX', 10, 200)], sub: p.sub + 2000, vat: p.vat + 360, total: p.total + 2360 } : p) };
     const kd = ret(x, 'purchase', bl2, [{ li: 1, qty: 4 }]);
     eq([/^KD-/.test(kd), mvR(x, kd), x.stockOf('MIX'), x.hasMoves(d(), 'MIX')], [true, [], 0, false], 'P1: a purchase return never books stock of a recipe product (no negative own stock)'); });
+  // P1b — LIBRI I SHITJES me librin e POS-it te serveri: kuponet vijne nga view(), jo nga state.db.
+  // Me state.db libri i ATK-se dilte PA ASNJE rresht arke — pra .xlsx-i qe ngarkohet te EDI nen-deklaronte gjithe
+  // qarkullimin e arkave, ndersa faqja e vjeter brenda R:TVSH e tregonte si duhet (dy libra qe nuk perputheshin).
+  blk('P1b', () => { const x = mkC(), d = () => x.state.db, rows = new Map();
+    const date = '2026-09-10';
+    rows.set('D:k1:' + date, { id: 'D:k1:' + date, kind: 'day', no: 'POS-k1-' + date, date, lastTs: date + ' 22:00:00',
+      terminal: { key: 'k1', posId: 'POS-0001', name: 'Arka 1' },
+      totals: { sub_c: 10000, vat_c: 1800, total_c: 11800, count: 7 },
+      items: [{ sku: 'LED-18', name: 'Ndriçues LED 18W', unit: 'copë', qty: 10, unit_c: 1000, rate: 18, tax: 'E', sub: 10000, vatc: 1800, tot: 11800 }],
+      payments: [{ kind: 'cash', amount_c: 11800 }], moves: [] });
+    x._ledger = { ...x.ledgerFresh(''), loaded: true, rows, ver: 1 }; x.apiAuthed = () => true; x.state.db = { ...d(), posLedgerV: 1 };
+    const inPeriod = () => true;
+    const book = x.vatBook('sale', inPeriod);
+    const pos = book.rows.filter(r => r.what === 'pos');
+    eq([x.ledgerLive(x.state.db), (d().posReceipts || []).length, pos.length > 0, pos.every(r => r.fiskali === '1'), pos.reduce((a, r) => a + (r.cells.shitje_18 || 0), 0) > 0],
+       [true, 0, true, true, true],
+       'P1b: me librin e POS-it te serveri, Libri i Shitjes i merr kuponet nga view() — state.db i ka zero, libri jo');
+    // profatura nuk eshte dokument tatimor: nuk hyn ne liber
+    const pro = d().invoices.find(r => r.kind === 'Faturë');
+    x.state.db = { ...d(), invoices: [{ ...pro, no: 'PRO-TEST-1', kind: 'Profaturë', status: 'Lëshuar' }, ...d().invoices] };
+    const b2 = x.vatBook('sale', inPeriod);
+    eq(b2.rows.some(r => r.no === 'PRO-TEST-1'), false, 'P1b: profatura nuk hyn ne Librin e Shitjes (nuk eshte dokument tatimor)'); });
+
   // P2 — Lëvizjet / Hyrje në stok / Dalje nga stok newest BY DATE: with the POS ledger the derived rows sit after the book's — today's book rows still come first
   blk('P2', () => { const x = mkC(), d = () => x.state.db, sup = d().suppliers[0].name, rows = new Map();
     for (let k = 1; k <= 30; k++) for (const t of ['k1', 'k2']) { const date = '2026-08-' + String(k).padStart(2, '0'), id = 'D:' + t + ':' + date;
