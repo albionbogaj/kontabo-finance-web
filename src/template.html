@@ -984,6 +984,13 @@ input,select{font-family:inherit}
       <sc-if value="{{ isProdukte }}" hint-placeholder-val="{{ false }}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
           <h1 style="margin:0;font-family:Manrope,sans-serif;letter-spacing:-.025em;font-weight:800;font-size:28px">Produktet</h1><span style="padding:3px 8px;border-radius:7px;background:rgba(16,36,58,.06);font-size:12px;font-weight:600;color:#3C5268">{{ productCount }}</span>
+          <sc-if value="{{ pHasSel }}" hint-placeholder-val="{{ false }}">
+            <div style="display:flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;border-radius:9px;background:rgba(185,28,28,.08)">
+              <span style="font-size:12.5px;font-weight:700;color:#B91C1C">{{ pSelCount }} të zgjedhura</span>
+              <button sc-camel-on-click="{{ deleteSelProducts }}" style="padding:5px 10px;border:0;border-radius:8px;background:#B91C1C;color:#fff;font-size:12px;font-weight:700;cursor:pointer">Fshi ({{ pSelCount }})</button>
+              <button sc-camel-on-click="{{ pClearSel }}" class="mf-btn" style="padding:5px 10px;font-size:12px">Pastro</button>
+            </div>
+          </sc-if>
           <div style="flex:1"></div>
           <sc-raw-select value="{{ pFilter }}" sc-camel-on-change="{{ setPFilter }}" class="mf-sel" title="Filtro"><sc-for list="{{ pFilterOpts }}" as="o" hint-placeholder-count="3"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></sc-raw-select>
           <sc-raw-select value="{{ pSort }}" sc-camel-on-change="{{ setPSort }}" class="mf-sel" title="Rendit"><sc-for list="{{ pSortOpts }}" as="o" hint-placeholder-count="3"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></sc-raw-select>
@@ -994,11 +1001,12 @@ input,select{font-family:inherit}
         </div>
         <div style="border-radius:14px;background:rgba(255,255,255,.72);backdrop-filter:blur(20px);border:1px solid rgba(16,36,58,.07);overflow:hidden">
           <sc-raw-table style="width:100%;border-collapse:collapse;font-size:13px">
-            <sc-raw-thead><sc-raw-tr style="color:#526477;font-size:11.5px;text-align:left;background:rgba(16,36,58,.02)"><sc-raw-th style="padding:10px 16px;font-weight:600">Produkti</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">SKU</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Barkodi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Kategoria</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Njësia</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Grupi TVSH</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:right">Çmimi pa TVSH</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:right">Me TVSH</sc-raw-th><sc-raw-th style="padding:10px 16px;font-weight:600;text-align:right">Stoku</sc-raw-th></sc-raw-tr></sc-raw-thead>
+            <sc-raw-thead><sc-raw-tr style="color:#526477;font-size:11.5px;text-align:left;background:rgba(16,36,58,.02)"><sc-raw-th style="padding:10px 16px;width:36px"><input type="checkbox" aria-label="Zgjidh të gjitha" checked="{{ pAllSel }}" sc-camel-on-change="{{ pToggleAll }}" style="accent-color:#B91C1C;cursor:pointer"></sc-raw-th><sc-raw-th style="padding:10px 8px;font-weight:600">Produkti</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">SKU</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Barkodi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Kategoria</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Njësia</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Grupi TVSH</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:right">Çmimi pa TVSH</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:right">Me TVSH</sc-raw-th><sc-raw-th style="padding:10px 16px;font-weight:600;text-align:right">Stoku</sc-raw-th></sc-raw-tr></sc-raw-thead>
             <sc-raw-tbody>
               <sc-for list="{{ products }}" as="p" hint-placeholder-count="8">
                 <sc-raw-tr sc-camel-on-click="{{ p.open }}" style="border-top:1px solid rgba(16,36,58,.05);cursor:pointer" style-hover="background:rgba(37,99,235,.04)">
-                  <sc-raw-td style="padding:10px 16px;font-weight:600">{{ p.name }}</sc-raw-td>
+                  <sc-raw-td sc-camel-on-click="{{ stop }}" style="padding:10px 16px;cursor:default"><input type="checkbox" aria-label="Zgjidh" checked="{{ p.checked }}" sc-camel-on-change="{{ p.toggle }}" style="accent-color:#B91C1C;cursor:pointer"></sc-raw-td>
+                  <sc-raw-td style="padding:10px 8px;font-weight:600">{{ p.name }}</sc-raw-td>
                   <sc-raw-td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#3C5268">{{ p.sku }}</sc-raw-td><sc-raw-td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#3C5268">{{ p.barcode }}</sc-raw-td>
                   <sc-raw-td style="padding:10px 12px"><span style="padding:3px 8px;border-radius:7px;font-size:11.5px;font-weight:600;background:rgba(16,36,58,.06);color:#3C5268">{{ p.cat }}</span></sc-raw-td>
                   <sc-raw-td style="padding:10px 12px;color:#526477">{{ p.unit }}</sc-raw-td>
@@ -1733,7 +1741,7 @@ input,select{font-family:inherit}
   <div style="position:fixed;inset:0;background:rgba(16,36,58,.3);backdrop-filter:blur(6px);z-index:60;display:grid;place-items:center">
     <div role="alertdialog" style="width:420px;padding:24px;border-radius:16px;background:rgba(255,255,255,.9);backdrop-filter:blur(30px);border:1px solid rgba(255,255,255,.9);box-shadow:0 30px 80px -30px rgba(16,36,58,.45)">
       <div style="font-weight:700;font-size:16px">{{ confirmTitle }}</div>
-      <div style="font-size:13.5px;color:#3C5268;margin-top:6px;line-height:1.5">{{ confirmBody }}</div>
+      <div style="font-size:13.5px;color:#3C5268;margin-top:6px;line-height:1.5;white-space:pre-line">{{ confirmBody }}</div>
       <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:20px"><button sc-camel-on-click="{{ closeConfirm }}" style="padding:8px 14px;border:1px solid rgba(16,36,58,.12);border-radius:9px;background:#fff;font-weight:600;font-size:13px;cursor:pointer">Anulo</button><button sc-camel-on-click="{{ doConfirm }}" style="padding:8px 14px;border:0;border-radius:9px;background:{{ confirmColor }};color:#fff;font-weight:700;font-size:13px;cursor:pointer">Konfirmo</button></div>
     </div>
   </div>
@@ -1792,7 +1800,7 @@ class Component extends DCLogic {
     // receipt drawer (GET /pos/receipts/{id}), the server's API keys and the raw key shown once after creating it
     posList:null, posF:null, posPages:null, posRc:null, apiKeysSrv:null, apiSecret:null,
     // list tools: invoice selection (checkboxes), sort/filter of the Fatura, Klientë and Produktet lists
-    isel:{}, invSort:'date_desc', invKind:'Të gjitha', cSort:'name', cFilter:'Të gjitha', pSort:'name', pFilter:'Të gjitha',
+    isel:{}, psel:{}, invSort:'date_desc', invKind:'Të gjitha', cSort:'name', cFilter:'Të gjitha', pSort:'name', pFilter:'Të gjitha',
     // login: the signed-in user (null = login screen) and the login form
     session:null, login:{email:'',pw:'',show:false,remember:true,err:'',busy:false,view:'login',apiUrl:'',apiOpen:false,apiMsg:'',invToken:'',invName:'',invPw:'',resetToken:'',resetPw:'',sgCompany:'',sgNui:'',sgCity:'',sgName:'',sgEmail:'',sgPw:'',sgPw2:''} };
 
@@ -2122,6 +2130,51 @@ class Component extends DCLogic {
   // a recipe product (cocktail, a glass poured from a bottle…): recipe = [{sku, qm}], qm = thousandths of the INGREDIENT's unit per 1 unit sold.
   // Single level both ways; it holds no stock of its own (opening/cost 0) — its ingredients leave the warehouse when it is sold
   isRecipe(p){ return !!p&&Array.isArray(p.recipe)&&p.recipe.length>0; }
+  /* ───────── fshirja e produkteve (Produktet › zgjidh → “Fshi të zgjedhurit”) ─────────
+     Një produkt me GJURMË nuk fshihet kurrë: lëvizjet e stokut dhe rreshtat e dokumenteve do të mbeteshin me një SKU
+     pa produkt (raportet e stokut dhe kostoja mesatare lexojnë pikërisht atë lidhje), dhe një recetë do të mbetej me
+     përbërës fantazmë. Prandaj fshihen VETËM produktet pa asnjë lëvizje, pa rresht dokumenti dhe pa përdorim në recetë —
+     për të tjerët mesazhi thotë saktësisht sa i mbajnë. Dokumentet e lëshuara nuk preken: ato e ruajnë rreshtin si kopje. */
+  productUsage(sku,d){
+    d=d||this.state.db;
+    let docs=0;
+    for(const k of this.DOC_LISTS) for(const x of (d[k]||[])) if((x.items||[]).some(i=>i.sku===sku)) docs++;
+    for(const r of (d.posReceipts||[])) if((r.items||[]).some(i=>i.sku===sku)) docs++;
+    return {mv:this.mvBySku(d,sku).length,docs,recipes:this.usedIn(d,sku).length};
+  }
+  productDeleteBlocker(sku,d){
+    const u=this.productUsage(sku,d);
+    const why=[u.mv?u.mv+' lëvizje stoku':'',u.docs?u.docs+' dokumente':'',u.recipes?u.recipes+' receta':''].filter(Boolean);
+    return why.length?why.join(' · '):'';
+  }
+  deleteProducts(skus){
+    const d=this.state.db, list=(skus||[]).map(sku=>(d.products||[]).find(p=>p.sku===sku)).filter(Boolean);
+    if(!list.length){ this.toast('Asnjë produkt i zgjedhur','#8FA3B8'); return; }
+    const free=[], kept=[];
+    for(const p of list){ const why=this.productDeleteBlocker(p.sku,d); (why?kept:free).push({p,why}); }
+    const nm=x=>x.p.name+' ('+x.p.sku+')';
+    if(!free.length){
+      this.setState({confirm:{title:'Nuk fshihet asnjë produkt',color:'#B45309',
+        body:(list.length===1?'Produkti i zgjedhur ka gjurmë në libra':list.length+' produktet e zgjedhura kanë gjurmë në libra')
+          +' dhe fshirja do të linte lëvizje e rreshta dokumentesh pa produkt:\n\n'
+          +kept.slice(0,8).map(x=>'• '+nm(x)+' — '+x.why).join('\n')+(kept.length>8?'\n… edhe '+(kept.length-8)+' të tjerë':''),
+        ok:()=>{}}});
+      return;
+    }
+    const body=(free.length===1?'Fshihet produkti ':'Fshihen '+free.length+' produkte: ')
+      +free.slice(0,8).map(nm).join(', ')+(free.length>8?' … edhe '+(free.length-8)+' të tjerë':'')
+      +'.\nAsnjë nuk ka lëvizje stoku, rresht dokumenti apo përdorim në recetë — pra asgjë në libra nuk ndryshon.'
+      +(kept.length?'\n\nNuk fshihen '+kept.length+' produkte me gjurmë: '+kept.slice(0,5).map(x=>nm(x)+' ('+x.why+')').join(', ')+(kept.length>5?' …':'')+'.':'')
+      +'\n\nKatalogu i ri u shkon arkave me sinkronizimin e radhës.';
+    this.setState({confirm:{title:free.length===1?'Fshi produktin?':'Fshi '+free.length+' produkte?',color:'#B91C1C',body,ok:()=>{
+      const gone=new Set(free.map(x=>x.p.sku));
+      this.commit(dd=>({products:(dd.products||[]).filter(p=>!gone.has(p.sku))}),
+        free.length===1?'Produkti u fshi':free.length+' produkte u fshinë','#8FA3B8');
+      this.logAudit('U fshinë '+free.length+' produkte: '+free.map(nm).join(', '));
+      this.setState({psel:{}});
+      if(kept.length) this.toast(kept.length+' produkte nuk u fshinë (kanë gjurmë në libra)','#B45309');
+    }}});
+  }
   usedIn(d,sku){ return ((d&&d.products)||[]).filter(p=>this.isRecipe(p)&&p.recipe.some(r=>r.sku===sku)); }
   // integer division rounded half away from zero (symmetric for sales and their reversals)
   rha(n,dv){ return Math.sign(n)*Math.floor((Math.abs(n)*2+dv)/(2*dv)); }
@@ -3430,7 +3483,7 @@ class Component extends DCLogic {
   DOC_TITLES = {'Faturë':'FATURË','Profaturë':'PROFATURË','Blerje':'BLERJE · FLETË-PRANIM','Kthim shitje':'NOTË KREDITI','Kthim blerje':'KTHIM BLERJE · NOTË DEBITI','Ofertë':'OFERTË','Porosi':'POROSI SHITJE','Porosi blerjeje':'POROSI BLERJEJE','Transferim':'FLETË-TRANSFERIM','Kupon POS':'KUPON POS · KOPJE'};
 
   PRINT_CSS = '@page{size:A4;margin:0}html,body{margin:0;padding:0;background:#fff}body{font-family:\'IBM Plex Sans\',\'Manrope\',system-ui,\'Segoe UI\',Arial,sans-serif;font-size:9.5pt;line-height:1.45;color:#152536;-webkit-print-color-adjust:exact;print-color-adjust:exact;font-variant-numeric:tabular-nums}.page{position:relative;box-sizing:border-box;width:210mm;height:297mm;padding:15mm 15mm 20mm 15mm;background:#fff;overflow:hidden;page-break-after:always;break-after:page}.page:last-child{page-break-after:auto;break-after:auto}.src{position:absolute;left:-9999mm;top:0;width:180mm;visibility:hidden}.accbar{position:absolute;left:15mm;top:15mm;width:.8mm;height:34mm;background:var(--ac)}.head,.cont{display:flow-root}.hd{display:grid;grid-template-columns:minmax(0,1fr) 62mm;gap:10mm;padding-left:5mm;align-items:start}.hd .co{display:flex;flex-direction:column;gap:3mm}.lg{width:10mm;height:10mm;background:#10243A;border-radius:1.2mm;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:12pt}.lgw{height:10mm;display:flex;align-items:center;font-weight:700;font-size:15pt;color:#10243A;letter-spacing:-.01em}.con{display:flex;flex-direction:column;gap:.4mm}.cn{font-weight:600;font-size:11.5pt;color:#10243A;line-height:1.3}.mut{color:#526477;font-size:8.5pt}.ttl{display:flex;flex-direction:column;align-items:flex-end;text-align:right;gap:1mm}.t1{font-size:24pt;font-weight:600;letter-spacing:.18em;color:#10243A;line-height:1.05;text-wrap:balance}.t1.sm{font-size:15pt;letter-spacing:.12em}.no{font-size:11pt;font-weight:600;color:var(--ac);width:46mm;text-align:center}.bc{width:46mm;height:7mm;display:block}.meta{display:grid;grid-template-columns:auto auto;column-gap:5mm;row-gap:.6mm;margin-top:2mm;font-size:8.5pt}.meta .k{color:#526477}.meta .v{font-weight:500}.band{display:grid;grid-template-columns:minmax(0,3fr) minmax(0,2fr);gap:10mm;border-top:.3mm solid #DCE5EF;border-bottom:.3mm solid #DCE5EF;padding:3mm 0;margin:4mm 0}.lab{font-size:7.5pt;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#526477}.lab.acc{color:var(--ac)}.pn{font-weight:600;font-size:10.5pt;color:#10243A}.kv{display:grid;grid-template-columns:auto minmax(0,1fr);column-gap:4mm;row-gap:.8mm;font-size:8.5pt}.kv .k{color:#526477}.kv .v{font-weight:500}.kv .v.ref{font-weight:600;color:var(--ac)}.cont{display:flex;justify-content:space-between;align-items:baseline;border-bottom:.3mm solid #DCE5EF;padding:0 0 3mm;margin-bottom:6mm}.cont .c1{font-weight:600;color:#10243A;font-size:10pt}.cont .c2{font-size:8.5pt;color:#526477}.cont .c2 b{color:var(--ac)}table.items{width:100%;table-layout:fixed;border-collapse:collapse;font-size:9pt}table.items th{background:var(--thbg);color:#10243A;font-size:7.5pt;letter-spacing:.1em;text-transform:uppercase;font-weight:600;text-align:left;padding:2mm 1.5mm;border-bottom:var(--thbd)}table.items td{padding:2mm 1.5mm;border-bottom:.25mm solid #DCE5EF;vertical-align:top}table.items .r{text-align:right}table.items .nr{width:7mm;color:#526477}table.items .un{width:14mm;color:#526477}table.items .qt{width:12mm}table.items .pr{width:22mm}table.items .di{width:14mm;color:#526477}table.items .vt{width:11mm;color:#526477}table.items .am{width:21mm;font-weight:500}table.items .d1{font-weight:500;color:#152536}table.items .d2{font-size:7.5pt;color:#526477;margin-top:.5mm}.more{margin-top:3mm;font-size:8pt;color:#526477;text-align:right}.tail{display:flow-root}.sum{display:grid;grid-template-columns:minmax(0,1fr) 78mm;gap:12mm;margin-top:5mm;align-items:start}.pay{display:flex;flex-direction:column;gap:2mm}.thx{color:#152536;font-weight:500}.terms{display:flex;flex-direction:column;gap:1.5mm;margin-top:2.5mm;padding-top:2.5mm;border-top:.25mm solid #DCE5EF;font-size:8.5pt;color:#526477}.terms b{color:#10243A}.tot{background:var(--totbg);border-top:var(--totbd);padding:4mm 5mm;display:flex;flex-direction:column;gap:1.2mm;font-size:9pt}.tot .l{display:flex;justify-content:space-between}.tot .l .k{color:#526477}.tot .big{display:flex;justify-content:space-between;align-items:baseline;border-top:.3mm solid #DCE5EF;margin-top:1.5mm;padding-top:2mm}.tot .big .k{font-size:7.5pt;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:#10243A}.tot .big .v{font-size:14pt;font-weight:600;color:var(--ac);letter-spacing:-.01em}.tot .rest{display:flex;justify-content:space-between;align-items:baseline;border-top:.5mm solid #10243A;margin-top:1.5mm;padding-top:2mm}.tot .rest .k{font-size:7.5pt;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:#10243A}.tot .rest .v{font-size:12pt;font-weight:700;color:#10243A}.sig{display:grid;grid-template-columns:1fr 1fr;gap:20mm;margin-top:5mm}.sig .ln{border-bottom:.3mm solid #526477;height:8mm}.note{margin-top:4mm;font-size:8.5pt;color:#526477;text-wrap:pretty}.warn{margin:4mm 0;padding:2mm 3mm;border:.4mm dashed #B45309;color:#B45309;font-weight:700;text-align:center;font-size:9pt}.foot{position:absolute;left:15mm;right:15mm;bottom:10mm;display:flex;justify-content:space-between;align-items:center;border-top:.25mm solid #DCE5EF;padding-top:2.5mm;font-size:7.5pt;color:#526477}.foot .br{display:flex;align-items:center;gap:1.8mm}.pg{font-variant-numeric:tabular-nums}.foot .wm{font-family:\'Manrope\',\'IBM Plex Sans\',system-ui,sans-serif;font-weight:800;font-size:9.5pt;color:#10243A;letter-spacing:-.01em;line-height:1}.foot .ws{font-family:\'Manrope\',\'IBM Plex Sans\',system-ui,sans-serif;font-weight:700;font-size:5.5pt;letter-spacing:.2em;color:#526477;line-height:1}';
-  PRINT_PAGER = '(function(){function mm(){var d=document.createElement(\'div\');d.style.cssText=\'position:absolute;visibility:hidden;height:100mm\';document.body.appendChild(d);var h=d.getBoundingClientRect().height/100;d.parentNode.removeChild(d);return h||3.7795;}function go(){try{build();}catch(e){var o=document.getElementById(\'out\');var sc=document.querySelector(\'.src\');if(o&&sc&&!o.children.length){sc.className=\'\';o.parentNode.removeChild(o);}}window.__ktbReady=1;if(window.__ktbPreview)return;setTimeout(function(){try{window.focus();window.print();window.__ktbPrinted=1;}catch(e){}},40);}function H(el){return el?el.getBoundingClientRect().height:0;}function build(){var M=mm(),USABLE=(297-15-20-2)*M,out=document.getElementById(\'out\');Array.prototype.forEach.call(document.querySelectorAll(\'.src .doc\'),function(doc){var head=doc.querySelector(\'.head\'),cont=doc.querySelector(\'.cont\'),tail=doc.querySelector(\'.tail\'),foot=doc.querySelector(\'.foot\'),tbl=doc.querySelector(\'table.items\'),thead=tbl?tbl.querySelector(\'thead\'):null,rows=tbl?[].slice.call(tbl.querySelectorAll(\'tbody>tr\')):[];var hHead=H(head)+4*M,hCont=H(cont)+6*M,hTh=H(thead),hTail=H(tail),hMore=9*M;var pages=[],cur={rows:[],first:true},avail=USABLE-hHead-(rows.length?hTh:0)-hMore;rows.forEach(function(tr){var h=H(tr);if(cur.rows.length&&h>avail){pages.push(cur);cur={rows:[],first:false};avail=USABLE-hCont-hTh-hMore;}cur.rows.push(tr);avail-=h;});pages.push(cur);if(hTail>0&&hTail>avail+hMore){var last=pages[pages.length-1],moved=last.rows.length>1?[last.rows.pop()]:[];if(!last.rows.length&&pages.length>1)pages.pop();pages.push({rows:moved,first:false});}pages.forEach(function(pg,i){var sec=document.createElement(\'section\');sec.className=\'page\';if(i===0){var a=document.createElement(\'div\');a.className=\'accbar\';sec.appendChild(a);if(head)sec.appendChild(head.cloneNode(true));}else if(cont)sec.appendChild(cont.cloneNode(true));if(pg.rows.length&&tbl){var t=tbl.cloneNode(false);if(thead)t.appendChild(thead.cloneNode(true));var tb=document.createElement(\'tbody\');pg.rows.forEach(function(r){tb.appendChild(r.cloneNode(true));});t.appendChild(tb);sec.appendChild(t);}if(i===pages.length-1){if(tail)sec.appendChild(tail.cloneNode(true));}else{var m=document.createElement(\'div\');m.className=\'more\';m.textContent=\'Vazhdon në faqen tjetër →\';sec.appendChild(m);}if(foot){var f=foot.cloneNode(true),l=f.querySelector(\'.pg\');if(l)l.textContent=\'Faqe \'+(i+1)+\' nga \'+pages.length;sec.appendChild(f);}out.appendChild(sec);});});var sc=document.querySelector(\'.src\');if(sc)sc.parentNode.removeChild(sc);}if(document.fonts&&document.fonts.ready&&document.fonts.ready.then)document.fonts.ready.then(go,go);else window.addEventListener(\'load\',go);})();';
+  PRINT_PAGER = '(function(){function mm(){var d=document.createElement(\'div\');d.style.cssText=\'position:absolute;visibility:hidden;height:100mm\';document.body.appendChild(d);var h=d.getBoundingClientRect().height/100;d.parentNode.removeChild(d);return h||3.7795;}function go(){try{build();}catch(e){var o=document.getElementById(\'out\');var sc=document.querySelector(\'.src\');if(o&&sc&&!o.children.length){sc.className=\'\';o.parentNode.removeChild(o);}}window.__ktbReady=1;if(window.__ktbPreview)return;setTimeout(function(){try{window.focus();window.print();window.__ktbPrinted=1;}catch(e){}},40);}function H(el){return el?el.getBoundingClientRect().height:0;}function build(){var M=mm(),USABLE=((window.__ktbPageH||297)-15-20-2)*M,out=document.getElementById(\'out\');Array.prototype.forEach.call(document.querySelectorAll(\'.src .doc\'),function(doc){var head=doc.querySelector(\'.head\'),cont=doc.querySelector(\'.cont\'),tail=doc.querySelector(\'.tail\'),foot=doc.querySelector(\'.foot\'),tbl=doc.querySelector(\'table.items\'),thead=tbl?tbl.querySelector(\'thead\'):null,rows=tbl?[].slice.call(tbl.querySelectorAll(\'tbody>tr\')):[];var hHead=H(head)+4*M,hCont=H(cont)+6*M,hTh=H(thead),hTail=H(tail),hMore=9*M;var pages=[],cur={rows:[],first:true},avail=USABLE-hHead-(rows.length?hTh:0)-hMore;rows.forEach(function(tr){var h=H(tr);if(cur.rows.length&&h>avail){pages.push(cur);cur={rows:[],first:false};avail=USABLE-hCont-hTh-hMore;}cur.rows.push(tr);avail-=h;});pages.push(cur);if(hTail>0&&hTail>avail+hMore){var last=pages[pages.length-1],moved=last.rows.length>1?[last.rows.pop()]:[];if(!last.rows.length&&pages.length>1)pages.pop();pages.push({rows:moved,first:false});}pages.forEach(function(pg,i){var sec=document.createElement(\'section\');sec.className=\'page\';if(i===0){var a=document.createElement(\'div\');a.className=\'accbar\';sec.appendChild(a);if(head)sec.appendChild(head.cloneNode(true));}else if(cont)sec.appendChild(cont.cloneNode(true));if(pg.rows.length&&tbl){var t=tbl.cloneNode(false);if(thead)t.appendChild(thead.cloneNode(true));var tb=document.createElement(\'tbody\');pg.rows.forEach(function(r){tb.appendChild(r.cloneNode(true));});t.appendChild(tb);sec.appendChild(t);}if(i===pages.length-1){if(tail)sec.appendChild(tail.cloneNode(true));}else{var m=document.createElement(\'div\');m.className=\'more\';m.textContent=\'Vazhdon në faqen tjetër →\';sec.appendChild(m);}if(foot){var f=foot.cloneNode(true),l=f.querySelector(\'.pg\');if(l)l.textContent=\'Faqe \'+(i+1)+\' nga \'+pages.length;sec.appendChild(f);}out.appendChild(sec);});});var sc=document.querySelector(\'.src\');if(sc)sc.parentNode.removeChild(sc);}if(document.fonts&&document.fonts.ready&&document.fonts.ready.then)document.fonts.ready.then(go,go);else window.addEventListener(\'load\',go);})();';
   /* ───────── Printimi A4 — formati “Precision Flow” (dizajni: “Kontabo ERP Fatura Dizajn”) ─────────
      Faqe A4 me margjina 15/15/20/15 mm, IBM Plex Sans 9,5 pt, numra me tabular-nums dhe formatin
      evropian (1.250,00 €). Faqezimi bëhet me matje reale në dokumentin e printimit (printPager):
@@ -4473,6 +4526,71 @@ class Component extends DCLogic {
     try{ const a=document.createElement('a'); a.href=URL.createObjectURL(new Blob(['﻿'+lines.join('\r\n')],{type:'text/csv;charset=utf-8'})); a.download=name; document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),2000); this.toast('U eksportua '+name+' · '+rows.length+' rreshta','#2563EB'); }
     catch(e){ this.toast('Shkarkimi nuk lejohet në këtë mjedis','#B45309'); }
   }
+  /* ───────── çdo raport në letër: NJË format i vetëm (A4, i njëjti motor si fatura) ─────────
+     Një pamje tabele (T: title, sub, period, kpis, cols, rows, foot) bëhet dokument i printueshëm: koka e firmës,
+     titulli, periudha, KPI-të, tabela me kokën që përsëritet në çdo faqe, rreshti i totaleve dhe “Faqe X nga Y”.
+     Kështu stoku, POS-i, blerjet, shitjet, pagesat dhe librat e TVSH-së dalin njësoj — dhe “Ruaje si PDF” te dialogu
+     i printimit jep skedarin. Tabelat e gjera (mbi 8 kolona, p.sh. librat e ATK-së) printohen A4 të shtrirë. */
+  reportRows(T){ return (T.fullRows?T.fullRows():T.rows)||[]; }   // një tabelë me faqe printon ÇDO rresht, jo vetëm ata në ekran
+  reportCss(o={}){
+    const n=Math.max(1,o.cols||1), fs=n>20?5.5:n>16?6:n>12?6.5:n>8?7.5:9;   // sa më shumë kolona, aq më i vogël shkrimi: A4 nuk zgjerohet
+    return (o.land?'@page{size:A4 landscape}.page{width:297mm;height:210mm}.src{width:267mm}':'')
+      +'.rep table.items{table-layout:auto;font-size:'+fs+'pt}'
+      +'.rep table.items th{white-space:normal;vertical-align:bottom;padding:1.6mm 1.2mm;line-height:1.2}'
+      +'.rep table.items td{padding:1.4mm 1.2mm}'
+      +'.rep table.items td.mono{font-family:\'JetBrains Mono\',Consolas,monospace;font-size:'+(fs-.5)+'pt}'
+      +'.rep table.items tr.sumrow td{border-top:.5mm solid #10243A;border-bottom:0;font-weight:700;background:var(--totbg)}'
+      +'.rep .kp{display:grid;grid-template-columns:repeat('+Math.min(4,Math.max(1,o.kpis||1))+',minmax(0,1fr));gap:6mm;'
+      +'border-top:.3mm solid #DCE5EF;border-bottom:.3mm solid #DCE5EF;padding:3mm 0;margin:4mm 0}'
+      +'.rep .kp .k{font-size:7pt;font-weight:600;letter-spacing:.12em;text-transform:uppercase;color:#526477}'
+      +'.rep .kp .v{font-size:12pt;font-weight:600;color:#10243A;margin-top:.6mm}'
+      +'.rep .kp .s{font-size:7.5pt;color:#526477;margin-top:.4mm}';
+  }
+  reportPrintHtml(T,o={}){
+    const db=this.state.db, co=db.company, is=this.invSet(), e=x=>this.esc(x);
+    const cols=T.cols||[], rows=this.reportRows(T);
+    const title=String(o.title||T.title||'Raport'), sub=o.sub!==undefined?o.sub:(T.sub||'');
+    const period=o.period!==undefined?o.period:(T.period||[]).filter(p=>p.on).map(p=>p.label).join(' ');
+    const td=(c,i,tot)=>{ c=c||{}; const al=(cols[i]&&cols[i].align==='right')||c.align==='right';
+      const cl=[al?'r':'',c.mono?'mono':''].filter(Boolean).join(' ');
+      return '<td'+(cl?' class="'+cl+'"':'')+'>'+((c.b||tot)?'<b>'+e(c.t)+'</b>':e(c.t))
+        +(c.sub?'<div class="d2">'+e(c.sub)+'</div>':'')+'</td>'; };
+    const th='<thead><tr>'+cols.map(c=>'<th'+(c.align==='right'?' class="r"':'')+'>'+e(c.label)+'</th>').join('')+'</tr></thead>';
+    const body=rows.map(r=>'<tr>'+(r.cells||[]).map((c,i)=>td(c,i,false)).join('')+'</tr>').join('')
+      +((T.foot&&T.foot.length)?'<tr class="sumrow">'+T.foot.map((c,i)=>td(c,i,true)).join('')+'</tr>':'');
+    const kp=(T.kpis||[]).length?'<div class="kp">'+T.kpis.map(k=>'<div><div class="k">'+e(k.label)+'</div><div class="v">'+e(k.value)+'</div>'
+      +(k.sub?'<div class="s">'+e(k.sub)+'</div>':'')+'</div>').join('')+'</div>':'';
+    const head='<div class="head"><header class="hd"><div class="co">'
+      +(is.logoStyle==='wordmark'?'<div class="lgw">'+e(co.name)+'</div>':is.logoStyle==='none'?'':'<div class="lg">'+e((co.name||'K').trim()[0]||'K')+'</div>')
+      +'<div class="con"><div class="cn">'+e(co.name)+'</div>'
+      +'<div class="mut">'+e([co.address,(co.zip?co.zip+' ':'')+(co.city||'')].filter(x=>String(x||'').trim()).join(', '))+'</div>'
+      +(co.nui&&co.nui!=='—'?'<div class="mut">NUI: '+e(co.nui)+'</div>':'')
+      +(db.taxSettings.vatRegistered&&co.vat&&co.vat!=='—'?'<div class="mut">Nr. TVSH: '+e(co.vat)+'</div>':'')
+      +'</div></div>'
+      +'<div class="ttl"><div class="t1 sm">'+e(title.toUpperCase())+'</div>'
+      +'<div class="meta">'+(period?'<div class="k">Periudha</div><div class="v">'+e(period)+'</div>':'')
+      +'<div class="k">Lëshuar</div><div class="v">'+e(this.stamp())+'</div>'
+      +'<div class="k">Rreshta</div><div class="v">'+rows.length+'</div></div></div></header>'
+      +(sub?'<div class="note">'+e(sub)+'</div>':'')+kp+'</div>';
+    const cont='<div class="cont"><div class="c1">'+e(title)+'</div><div class="c2">'+e([period,co.name].filter(Boolean).join(' · '))+'</div></div>';
+    const brand=is.showBranding?'<div class="br"><span>Gjeneruar me</span>'
+      +'<svg width="4.2mm" height="4.2mm" viewBox="0 0 96 96" fill="none" stroke-linecap="round" stroke-width="18" aria-hidden="true">'
+      +'<path d="M26 16V80" stroke="#10243A"></path><path d="M50 44 76 18" stroke="#10243A"></path><path d="M50 52 76 82" stroke="#38BDF8"></path></svg>'
+      +'<span><span class="wm">kontabo</span> <span class="ws">ERP</span></span></div>':'<div></div>';
+    return '<article class="doc rep">'+head+cont+'<table class="items">'+th+'<tbody>'+body+'</tbody></table>'
+      +'<div class="tail">'+(o.note?'<div class="note">'+e(o.note)+'</div>':'')+'</div>'
+      +'<div class="foot">'+brand+'<div>'+e(co.name)+'</div><div class="pg"></div></div></article>';
+  }
+  printReport(T,o={}){
+    const rows=this.reportRows(T); if(!rows.length){ this.toast('Asnjë rresht për të printuar','#8FA3B8'); return; }
+    const cols=(T.cols||[]).length, land=o.land!==undefined?o.land:cols>8;
+    const html='<!doctype html><html lang="sq"><head><meta charset="utf-8"><title>'+this.esc(T.title||'Raport')+'</title><style>'
+      +this.fontFaceCss()+this.printCss()+this.reportCss({land,cols,kpis:(T.kpis||[]).length})+'</style></head><body>'
+      +'<div class="src">'+this.reportPrintHtml(T,o)+'</div><div id="out"></div>'
+      +'<script>'+(land?'window.__ktbPageH=210;':'')+this.PRINT_PAGER+'<\/script></body></html>';
+    this._printHtml(html,'Dialogu i printimit u hap · '+(T.title||'Raport')+' · A4'+(land?' i shtrirë':'')
+      +' — për PDF zgjidhni “Save as PDF / Microsoft Print to PDF”',true);
+  }
   // reports (Raporte), org tables (Kompania), admin tables — continues pageTable()
   morePages(page,T,H){
     const {C,M,B,search,sum,plural,money,db,s,issued,sales,openDoc,receivedP,stockRows,today,thisMonth,monthsBack}=H;
@@ -5012,7 +5130,7 @@ class Component extends DCLogic {
     }
     T.hasKpis=T.kpis.length>0; T.hasTabs=T.tabs.length>0; T.hasRows=T.rows.length>0; T.hasFoot=T.foot.length>0;
     T.hasPeriod=!!T.period; T.period=T.period||[]; T.hasMore=!!T.more; T.more=T.more||null; T.moreLabel=T.moreLabel||''; T.filters=T.filters||[]; T.hasFilters=T.filters.length>0;
-    if(T.rows.length&&T.exportable!==false) T.actions=[...T.actions,{label:'Eksporto CSV',p:'',go:()=>this.exportCsv(T)}];
+    if(T.rows.length&&T.exportable!==false) T.actions=[...T.actions,{label:'Eksporto CSV',p:'',go:()=>this.exportCsv(T)},{label:'Printo / PDF',p:'',go:()=>this.printReport(T)}];
     T.kpis=T.kpis.map(k=>({...k,c:k.c||'#10243A',sub:k.sub||''})); T.rows=T.rows.map(r=>({...r,open:r.open||(()=>{}),cursor:r.open?'pointer':'default',cells:r.cells.map(c=>this.normCell(c))}));
     T.count=T.count===''?'':String(T.count);
     return T;
@@ -5384,6 +5502,12 @@ class Component extends DCLogic {
     let products=stockRows.map(p=>({...p,catName:p.cat,tax:p.tax+' · '+this.TAX[p.tax].rate+'%',price:this.fmtT(this.priceT(p)),priceGross:this.fmtT(this.grossT(p)),cost:this.fmt(p.cost),stock:this.fmtQ(p.qm)+' '+p.unit+(p.isRecipe?' · recetë':this.packEq(p,p.qm)?' '+this.packEq(p,p.qm):''),stockColor:p.low?'#B91C1C':'#10243A',open:()=>this.openProduct(p.sku)}));
     products=products.filter(p=>{ const f=s.pFilter; return f==='Të gjitha'||(f==='Nën minimum'?p.low:f==='Pa barkod'?(!p.barcode||p.barcode==='—'):p.catName===f); });
     products.sort({name:(a,b)=>a.name.localeCompare(b.name),stock:(a,b)=>a.qm-b.qm,price:(a,b)=>b.price_c-a.price_c,value:(a,b)=>b.value-a.value,sku:(a,b)=>a.sku.localeCompare(b.sku)}[s.pSort]||((a,b)=>a.name.localeCompare(b.name)));
+    // zgjedhja e shumëfishtë te Produktet: kutizat mbajnë SKU-të te `psel`; zgjedhja e fshehur nga filtri nuk numërohet
+    const pSelSkus=Object.keys(s.psel||{}).filter(sku=>products.some(p=>p.sku===sku));
+    const pAllSel=products.length>0&&products.every(p=>(s.psel||{})[p.sku]);
+    const pTog=sku=>this.setState(st=>{ const psel={...st.psel}; if(psel[sku]) delete psel[sku]; else psel[sku]=true; return {psel}; });
+    const pToggleAll=()=>this.setState(st=>{ const psel={...st.psel}; if(pAllSel) products.forEach(p=>delete psel[p.sku]); else products.forEach(p=>psel[p.sku]=true); return {psel}; });
+    products=products.map(p=>({...p,checked:!!(s.psel||{})[p.sku],toggle:()=>pTog(p.sku)}));
 
     /* ── Faturim masiv ── */
     const m=s.m;
@@ -5559,7 +5683,8 @@ class Component extends DCLogic {
       newInvoiceToast:()=>this.openForm('invoice'),importToast:()=>this.go('shitje','Faturim masiv'),newCustomerToast:()=>this.openForm('customer'),newProductToast:()=>this.openForm('product'),openQuote:()=>this.openForm('quote'),openReturn:()=>this.openForm('return',{docKind:'sale'}),
       genericAdd:()=>this.toast('Moduli “'+page+'” nuk është ende i ndërtuar — kërkon backend dhe modelin e të dhënave të tij','#B45309'),genericHint:{hr:'Punëtorët, prezenca, pushimet dhe pagat kërkojnë modulin HR (backend + të dhëna).',prodhim:'Recetat/BOM, urdhrat e punës dhe konsumi kërkojnë modulin Prodhim (backend + të dhëna).'}[s.section]||'Ky modul nuk është ende i ndërtuar.',
       customers,customerCount:customers.length,cSort:s.cSort,cSortOpts,setCSort:e=>this.setState({cSort:e.target.value}),cFilter:s.cFilter,cFilterOpts,setCFilter:e=>this.setState({cFilter:e.target.value}),exportCustomers:()=>this.exportCsv({title:'kliente',cols:['Emri','Lloji','NUI','Nr. fiskal','Qyteti','Kontakti','Adresa','Fatura','Borxhi'].map(label=>({label})),rows:customers.map(c=>({cells:[c.name,c.type,c.nui,c.fiscal,c.city,c.contact,c.address,c.invoices,this.fromC(c.debtC)].map(t=>({t:String(t)}))}))}),
-      products,productCount:products.length,pSort:s.pSort,pSortOpts,setPSort:e=>this.setState({pSort:e.target.value}),pFilter:s.pFilter,pFilterOpts,setPFilter:e=>this.setState({pFilter:e.target.value}),exportProducts:()=>this.exportCsv({title:'produkte',cols:['Produkti','SKU','Barkodi','Kategoria','Njësia','TVSH','Çmimi pa TVSH','Kosto mes.','Gjendja','Minimumi','Vlera'].map(label=>({label})),rows:products.map(p=>({cells:[p.name,p.sku,p.barcode,p.catName,p.unit,p.tax,this.fromT(this.priceT(p)),this.fromC(p.cost),this.fmtQ(p.qm),this.fmtQ(p.minStock),this.fromC(p.value)].map(t=>({t:String(t)}))}))}),printLabelsAll:()=>this.printLabels(products),
+      products,productCount:products.length,pHasSel:pSelSkus.length>0,pSelCount:pSelSkus.length,pAllSel,pToggleAll,
+      pClearSel:()=>this.setState({psel:{}}),deleteSelProducts:()=>this.deleteProducts(pSelSkus),pSort:s.pSort,pSortOpts,setPSort:e=>this.setState({pSort:e.target.value}),pFilter:s.pFilter,pFilterOpts,setPFilter:e=>this.setState({pFilter:e.target.value}),exportProducts:()=>this.exportCsv({title:'produkte',cols:['Produkti','SKU','Barkodi','Kategoria','Njësia','TVSH','Çmimi pa TVSH','Kosto mes.','Gjendja','Minimumi','Vlera'].map(label=>({label})),rows:products.map(p=>({cells:[p.name,p.sku,p.barcode,p.catName,p.unit,p.tax,this.fromT(this.priceT(p)),this.fromC(p.cost),this.fmtQ(p.qm),this.fmtQ(p.minStock),this.fromC(p.value)].map(t=>({t:String(t)}))}))}),printLabelsAll:()=>this.printLabels(products),
       openAdjust:()=>this.openForm('adjust'),
       hasDr:!!dr,dr:dr||{},closeDr:()=>this.setState({dr:null}),
       hasFrm:!!frm,frm:frm||{},closeFrm:()=>this.setState({frm:null}),

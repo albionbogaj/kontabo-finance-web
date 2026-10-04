@@ -549,7 +549,7 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
     : sel === 'table.items' ? n2.className === 'items'
     : n2.className.split(' ').includes(sel.replace(/^\./, ''));
   const find = (root, sel) => { const out = []; const walk = n2 => { n2.children.forEach(ch => { if (matches(ch, sel)) out.push(ch); walk(ch); }); }; walk(root); return out; };
-  const run = (docs) => {
+  const run = (docs, pageH) => {
     const body = el('body'), out = el('out'), src = el('src');
     body.appendChild(src); body.appendChild(out);
     docs.forEach(d => { const doc = el('doc');
@@ -564,7 +564,7 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
     const document2 = { body, createElement: t => el(t === 'section' ? 'section' : t === 'div' ? '' : t),
       getElementById: () => out, querySelector: sel => find(body, sel)[0] || null,
       querySelectorAll: sel => sel === '.src .doc' ? find(body, '.doc') : find(body, sel) };
-    const win = { __ktbPreview: 1, addEventListener: (_e, f) => f(), focus() {}, print() { throw new Error('nuk duhet printuar në parapamje'); } };
+    const win = { __ktbPreview: 1, __ktbPageH: pageH, addEventListener: (_e, f) => f(), focus() {}, print() { throw new Error('nuk duhet printuar në parapamje'); } };
     // probe-i i mm-it: elementi i parë me height:100mm
     const origCreate = document2.createElement;
     document2.createElement = t => { const e2 = origCreate(t); if (!document2._probed) { document2._probed = true; e2._h = 100 * MM; } return e2; };
@@ -590,6 +590,70 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
      'faqezuesi: dy dokumente në një punë printimi numërohen veç e veç dhe secili nis me kokën e vet');
   const tight = run([{ rows: 24, headH: 70, contH: 12, theadH: 7, tailH: 60 }]);
   eq(tight[tight.length - 1].rows > 0, true, 'faqezuesi: faqja e fundit nuk mbetet kurrë vetëm me totalet');
+  // A4 i shtrirë (raportet e gjera, p.sh. librat e ATK-së): faqezuesi merr lartësinë nga window.__ktbPageH
+  const land = run([{ rows: 40, headH: 70, contH: 12, theadH: 7, tailH: 20 }], 210);
+  const port = run([{ rows: 40, headH: 70, contH: 12, theadH: 7, tailH: 20 }]);
+  eq([land.length > port.length, land[0].head, land[land.length - 1].tail, land[land.length - 1].pg === 'Faqe ' + land.length + ' nga ' + land.length],
+     [true, true, true, true], 'faqezuesi: me __ktbPageH=210 (A4 i shtrirë) faqet janë më të ulëta, pra më shumë — gjithçka tjetër njësoj');
+}
+
+// ── fshirja e produkteve me zgjedhje të shumëfishtë (Produktet › kutizat → “Fshi”) ──
+{
+  const skuWithHistory = db().movements[0].sku;                       // ka lëvizje stoku, pra gjurmë
+  const fresh = { name: 'Artikull i ri pa gjurmë', sku: 'ZZ-NEW-1', unit: 'copë', cat: 'Të tjera', tax: 'E', price_c: 1000, cost: 0, qm: 0, minStock: 0, barcode: '—' };
+  c.commit(d => ({ products: [...d.products, fresh] }));
+  eq([c.productDeleteBlocker('ZZ-NEW-1'), /lëvizje stoku/.test(c.productDeleteBlocker(skuWithHistory))], ['', true],
+     'produkt pa gjurmë fshihet; një me lëvizje stoku jo — arsyeja thuhet me numra');
+  const usage = c.productUsage(skuWithHistory);
+  eq([usage.mv > 0, usage.docs > 0], [true, true], 'productUsage numëron lëvizjet dhe rreshtat e dokumenteve të një SKU-je');
+  // zgjedhja: kutizat mbajnë SKU-të te `psel`, dhe butoni shfaqet vetëm kur ka zgjedhje
+  c.state.section = 'stok'; c.state.page = 'Produktet'; c.state.psel = {};
+  let V = c.renderVals();
+  eq([V.pHasSel, V.pSelCount, V.products.some(p => p.checked)], [false, 0, false], 'Produktet: pa zgjedhje, pa shirit veprimi');
+  V.products.find(p => p.sku === 'ZZ-NEW-1').toggle();
+  V.products.find(p => p.sku === skuWithHistory).toggle();
+  V = c.renderVals();
+  eq([V.pHasSel, V.pSelCount, V.products.filter(p => p.checked).length], [true, 2, 2], 'Produktet: dy kutiza të zgjedhura numërohen te shiriti');
+  // fshirja: konfirmimi thotë saktësisht çfarë fshihet dhe çfarë jo; vetëm produkti pa gjurmë ikën
+  V.deleteSelProducts();
+  const cf = c.state.confirm;
+  eq([/Fshi produktin\?/.test(cf.title), /ZZ-NEW-1/.test(cf.body), /Nuk fshihen 1 produkte me gjurmë/.test(cf.body), cf.color], [true, true, true, '#B91C1C'],
+     'fshirja: konfirmimi emërton produktin që fshihet dhe thotë sa (dhe pse) nuk fshihen');
+  cf.ok();
+  eq([db().products.some(p => p.sku === 'ZZ-NEW-1'), db().products.some(p => p.sku === skuWithHistory), Object.keys(c.state.psel).length],
+     [false, true, 0], 'fshirja: ikën vetëm produkti pa gjurmë, ai me histori mbetet, zgjedhja pastrohet');
+  eq(db().audit[0].a.startsWith('U fshinë 1 produkte'), true, 'fshirja: shkruhet te regjistri i veprimeve (audit)');
+  // asgjë e zgjedhur, ose vetëm produkte me gjurmë → asnjë fshirje
+  c.state.psel = {};
+  c.deleteProducts([skuWithHistory]);
+  eq([/Nuk fshihet asnjë produkt/.test(c.state.confirm.title), db().products.some(p => p.sku === skuWithHistory)], [true, true],
+     'fshirja: kur çdo i zgjedhur ka gjurmë, dialogu e thotë dhe nuk fshihet asgjë');
+  c.state.confirm = null; c.state.section = 'paneli'; c.state.page = 'Paneli';
+}
+
+// ── çdo raport në NJË format letre: reportPrintHtml nga e njëjta pamje tabele që eksporton CSV-ja ──
+{
+  c.state.rp = 'all'; c.state.rTab = 'Libri i shitjes';
+  const T = c.pageTable('R:TVSH');
+  const h = c.reportPrintHtml(T);
+  const rowsIn = c.reportRows(T).length;
+  eq([h.startsWith('<article class="doc rep">'), h.includes('RAPORTI I TVSH-SË'), h.includes('<div class="kp">'),
+      (h.match(/<tbody><tr>|<\/tr><tr>/g) || []).length, h.includes('class="sumrow"'), h.includes('<div class="pg">'), h.includes('<thead>')],
+     [true, true, true, rowsIn, true, true, true],
+     'raporti në letër: dokument A4 me kokën e firmës, KPI-të, çdo rresht i tabelës, rreshtin e totaleve dhe “Faqe X nga Y”');
+  eq([T.actions.some(a => a.label === 'Printo / PDF'), T.actions.some(a => a.label === 'Eksporto CSV')], [true, true],
+     'çdo pamje tabele me rreshta e ka butonin “Printo / PDF” pranë eksportit CSV');
+  // asnjë klasë pa rregull: PRINT_CSS + shtesa e raportit (kështu u zhduk dikur shiriti i theksit)
+  const used = [...new Set([...h.matchAll(/class="([^"]+)"/g)].flatMap(m => m[1].split(' ')))].filter(x => x !== 'doc' && x !== 'rep');
+  const css = c.PRINT_CSS + c.reportCss({ cols: (T.cols || []).length, kpis: (T.kpis || []).length });
+  eq(used.filter(cl => !new RegExp('\\.' + cl + '[{ ,.:]').test(css)), [], 'raporti në letër: çdo klasë e dokumentit ka rregullin e vet në CSS');
+  // tabela e gjerë shtrihet dhe zvogëlon shkrimin; e ngushta mbetet portret
+  const wide = c.reportCss({ cols: 24, kpis: 4 }), narrow = c.reportCss({ cols: 5, kpis: 2 });
+  eq([/A4 landscape/.test(c.reportCss({ cols: 24, land: true })), /A4 landscape/.test(narrow), /font-size:5.5pt/.test(wide), /font-size:9pt/.test(narrow)],
+     [true, false, true, true], 'raporti në letër: mbi 8 kolona printohet A4 i shtrirë dhe shkrimi zvogëlohet sipas numrit të kolonave');
+  // një pamje me faqe printon ÇDO rresht, jo vetëm ata në ekran (si eksporti CSV)
+  const paged = { rows: [{ cells: [{ t: 'a' }] }], fullRows: () => [{ cells: [{ t: 'a' }] }, { cells: [{ t: 'b' }] }], cols: [{ label: 'X' }], title: 'Provë' };
+  eq(c.reportRows(paged).length, 2, 'raporti në letër: një tabelë me faqe printon çdo rresht (fullRows), si eksporti CSV');
 }
 
 { const inv = invOf('FSH-2026-00125'), ph = c.previewHtml(inv);
@@ -2179,7 +2243,7 @@ apiBlock.then(async () => {
     S.features = []; const T10 = mkT('t10', 'Relay SH.P.K.', legacyBook()); T10.terms = [{ id: 'k1', name: 'Arka Bar', branch: 'Qendra', posId: 'BAR-1', warehouse: 'W2', status: 'Aktiv', lastSeen: '' }];
     { const X = mkR(); await enter(X, 'own', 't10'); const k0 = S.calls.length, srvCalls = () => S.calls.slice(k0).filter(x => /^\/pos\/receipts|^\/api-keys|\/rotate$/.test(x.p)).map(x => x.m + ' ' + x.p);
       X.go('pos', 'Shitje'); await settle(X); const T = X.pageTable('P:Shitje');
-      eq([X._ledger, X.posListWant(), X.apiKeysOn(), X.state.posList, T.sub.startsWith('Kuponët e sinkronizuar nga POS-i desktop'), T.hasFilters, T.count, T.rows.map(r => r.cells[0].t), T.actions.map(a => a.label)], [null, null, false, null, true, false, '3', ['BAR-1/0004', 'BAR-1/0002', 'BAR-1/0001'], ['Sinkronizo tani', 'Eksporto CSV']], 'feature off: P:Shitje is the book\'s list (no server list, no filters)');
+      eq([X._ledger, X.posListWant(), X.apiKeysOn(), X.state.posList, T.sub.startsWith('Kuponët e sinkronizuar nga POS-i desktop'), T.hasFilters, T.count, T.rows.map(r => r.cells[0].t), T.actions.map(a => a.label)], [null, null, false, null, true, false, '3', ['BAR-1/0004', 'BAR-1/0002', 'BAR-1/0001'], ['Sinkronizo tani', 'Eksporto CSV', 'Printo / PDF']], 'feature off: P:Shitje is the book\'s list (no server list, no filters)');
       X.go('pos', 'Kthime'); await settle(X); eq(X.pageTable('P:Kthime').rows.map(r => r.cells[0].t), ['BAR-1/0003'], 'feature off: P:Kthime from the book');
       X.go('pos', 'Arkat'); await settle(X); const A = X.pageTable('P:Arkat'); eq([A.cols.length, A.rows.map(r => r.cells.length), A.kpis[1].label], [11, [11], 'Sinkronizimi nga serveri'], 'feature off: P:Arkat without "Rigjenero tokenin"');
       eq([X.pageTable('P:Operatorët').cols.length, X.pageTable('P:Mbyllja e arkës').cols.length, X.pageTable('P:Operatorët').hasPeriod], [10, 10, false], 'feature off: P:Operatorët and Mbyllja e arkës as before');
