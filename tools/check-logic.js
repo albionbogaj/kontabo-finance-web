@@ -653,6 +653,25 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
   pr = c.vatBook('purchase', all).rows.find(r => r.no === pur.no);
   eq([pr.cells.fermer_8, pr.cells.tvsh_8, pr.cells.vendore_18], [pnet, pvat, undefined], 'kategoria „Fermer”: [51] me bazën dhe TVSH-ja te [K2] (8%)');
   c.setVatCat(pur.no, 'purchase', 'vendore');
+  // lloji i dokumentit (mall · shërbim · shpenzim · mjete themelore) e ndryshon vetë kolonën e librit
+  eq([c.DOC_TYPES.sale.map(x => x[0]).join(), c.DOC_TYPES.purchase.map(x => x[0]).join()], ['mall,sherbim', 'mall,sherbim,mjete'],
+     'llojet: shitje malli/shërbimi · blerje malli, shpenzime/shërbime, mjete themelore');
+  c.commit(d => ({ purchases: d.purchases.map(x => x.no === pur.no ? { ...x, docType: 'mjete', vatCat: 'vendore' } : x) }));
+  pr = c.vatBook('purchase', all).rows.find(r => r.no === pur.no);
+  eq([pr.cells.vendore_inv_18, pr.cells.vendore_18, c.docTypeLabel(db().purchases.find(x => x.no === pur.no), 'purchase')],
+     [pnet, undefined, 'Mjete themelore'],
+     'MJETE THEMELORE: blerja vendore kalon vetvetiu te kolona investive [47], pa e detyruar përdoruesin të dijë kutinë');
+  c.commit(d => ({ purchases: d.purchases.map(x => x.no === pur.no ? { ...x, vatCat: 'import' } : x) }));
+  eq(c.vatBook('purchase', all).rows.find(r => r.no === pur.no).cells.import_inv_18, pnet, 'MJETE THEMELORE + import → [39] (import investiv)');
+  c.commit(d => ({ purchases: d.purchases.map(x => x.no === pur.no ? { ...x, docType: 'mall', vatCat: 'vendore' } : x) }));
+  // shitje shërbimi: eksporti i shërbimit është [10a], jo [11]
+  c.commit(d => ({ invoices: d.invoices.map(x => x.no === inv.no ? { ...x, docType: 'sherbim', vatCat: 'eksport' } : x) }));
+  row = c.vatBook('sale', all).rows.find(r => r.no === inv.no);
+  eq([row.cells.sherbime_jasht, row.cells.eksporti, row.fiskali], [net + vat, undefined, '2'],
+     'SHITJE SHËRBIMI + eksport → [10a] me kodin „2" (eksporti i MALLIT do të ishte [11] me kodin „3")');
+  c.commit(d => ({ invoices: d.invoices.map(x => x.no === inv.no ? { ...x, docType: 'mall' } : x) }));
+  eq(c.vatBook('sale', all).rows.find(r => r.no === inv.no).cells.eksporti, net + vat, 'SHITJE MALLI + eksport → [11]');
+  c.commit(d => ({ invoices: d.invoices.map(x => x.no === inv.no ? { ...x, vatCat: 'vendore' } : x) }));
   // notat: e lëshuara në librin e blerjes [53], e pranuara në librin e shitjes [16]
   const kthShitje = db().returns.find(r => r.kind === 'Kthim shitje'), kthBlerje = db().returns.find(r => r.kind === 'Kthim blerje');
   if (kthShitje) { const r2 = c.vatBook('purchase', all).rows.find(r => r.no === kthShitje.no);

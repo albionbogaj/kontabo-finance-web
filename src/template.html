@@ -516,6 +516,31 @@ input,select{font-family:inherit}
 .mf-drop{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:26px 16px;border:1.5px dashed rgba(37,99,235,.35);border-radius:12px;background:rgba(37,99,235,.03);cursor:pointer;text-align:center;transition:background .15s,border-color .15s}
 .mf-drop:hover,.mf-drop[data-over="1"]{background:rgba(37,99,235,.07);border-color:#2563EB}
 .mf-tag{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:7px;font-size:12px;font-weight:600}
+/* Artikujt si tabelë (mostra e pronarit): një rresht = një artikull, kolonat e llogaritura vetvetiu djathtas.
+   Rreshti është grid me të njëjtin kallëp si koka, që kolonat të rreshtohen pa <table>. */
+.mf-tbl{border:1px solid rgba(16,36,58,.12);border-radius:10px;overflow:hidden;background:rgba(255,255,255,.75)}
+.mf-tscroll{overflow-x:auto}
+.mf-ghead,.mf-grow{display:grid;grid-template-columns:30px 92px minmax(160px,1.3fr) 54px 72px 90px 62px 90px 66px 78px 94px 28px;min-width:940px;align-items:center}
+.mf-ghead{background:rgba(16,36,58,.05);font-size:11px;font-weight:700;letter-spacing:.02em;color:#3C5268;text-transform:uppercase}
+.mf-ghead>div{padding:7px 6px;border-right:1px solid rgba(16,36,58,.07)}
+.mf-ghead>div:last-child{border-right:0}
+.mf-grow{border-top:1px solid rgba(16,36,58,.08)}
+.mf-grow:nth-child(even){background:rgba(16,36,58,.015)}
+.mf-grow[data-err="1"]{background:rgba(220,38,38,.05)}
+.mf-grow>div{padding:4px 6px;border-right:1px solid rgba(16,36,58,.05);min-width:0}
+.mf-grow>div:last-child{border-right:0}
+.mf-gin{width:100%;padding:5px 7px;border:1px solid transparent;border-radius:6px;background:transparent;font-size:12.5px;color:#10243A;outline:none;font-variant-numeric:tabular-nums}
+.mf-gin:hover{border-color:rgba(16,36,58,.14)}
+.mf-gin:focus{border-color:#2563EB;background:#fff;box-shadow:0 0 0 3px rgba(37,99,235,.12)}
+.mf-gin[data-err="1"]{border-color:rgba(220,38,38,.5);background:rgba(220,38,38,.04)}
+.mf-gin:disabled{color:#8FA3B8;cursor:not-allowed}
+.mf-gnum{text-align:right}
+.mf-gcalc{text-align:right;font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums;color:#10243A;padding:5px 7px}
+.mf-gcalc.mut{font-weight:500;color:#526477}
+.mf-gsub{display:block;font-size:10.5px;color:#8FA3B8;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.mf-gx{border:0;background:none;color:#B91C1C;font-size:15px;line-height:1;cursor:pointer;padding:2px 4px;border-radius:6px}
+.mf-gfoot{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px 18px;padding:8px 12px;border-top:1px solid rgba(16,36,58,.12);background:rgba(16,36,58,.035);font-size:12.5px;color:#3C5268}
+.mf-gfoot b{color:#10243A;font-variant-numeric:tabular-nums}
 .mf-line{padding:12px 14px 14px;border-radius:12px;border:1px solid rgba(16,36,58,.09);background:rgba(255,255,255,.5)}
 .mf-line+.mf-line{margin-top:10px}
 .mf-line[data-err="1"]{border-color:rgba(220,38,38,.35)}
@@ -1644,7 +1669,71 @@ input,select{font-family:inherit}
       </div>
 
       <sc-if value="{{ frm.hasLines }}" hint-placeholder-val="{{ false }}">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px"><span style="font-weight:700;font-size:13.5px">{{ frm.linesTitle }}</span><span style="font-size:12.5px;color:#8FA3B8;font-weight:600">{{ frm.linesLabel }}</span></div>
+        <sc-if value="{{ !frm.grid }}" hint-placeholder-val="{{ false }}">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin:18px 0 8px"><span style="font-weight:700;font-size:13.5px">{{ frm.linesTitle }}</span><span style="font-size:12.5px;color:#8FA3B8;font-weight:600">{{ frm.linesLabel }}</span></div>
+        </sc-if>
+        <!-- Artikujt si TABELË (mostra e pronarit): kod · përshkrim · njësi · sasi · çmim · zbritje · vlerë · grup · TVSH · vlerë me TVSH.
+             Vlerat djathtas llogariten nga i njëjti rresht; çelësi „Çmimet me TVSH" e kthen kolonën e çmimit në bruto. -->
+        <sc-if value="{{ frm.grid }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;align-items:center;gap:10px;margin:18px 0 8px">
+            <span style="font-weight:700;font-size:13.5px">{{ frm.linesTitle }}</span>
+            <span style="font-size:12.5px;color:#8FA3B8;font-weight:600">{{ frm.linesLabel }}</span>
+            <div style="flex:1"></div>
+            <label style="display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:#3C5268;cursor:pointer">
+              <input type="checkbox" checked="{{ frm.priceGross }}" sc-camel-on-change="{{ frm.togglePriceGross }}" style="accent-color:#2563EB;cursor:pointer"> Çmimet me TVSH
+            </label>
+          </div>
+          <div class="mf-tbl">
+            <div class="mf-tscroll">
+              <div class="mf-ghead">
+                <div style="text-align:center">Nr.</div><div>Kodi</div><div>Përshkrimi</div><div>Njësi</div><div style="text-align:right">Sasia</div>
+                <div style="text-align:right">{{ frm.priceColLabel }}</div><div style="text-align:right">Zbritje %</div><div style="text-align:right">Vlera</div>
+                <div>Grupi</div><div style="text-align:right">TVSH</div><div style="text-align:right">Vl. me TVSH</div><div></div>
+              </div>
+              <sc-for list="{{ frm.lines }}" as="ln" hint-placeholder-count="1">
+                <div class="mf-grow" data-err="{{ ln.bad }}">
+                  <div style="text-align:center;font-size:11.5px;color:#8FA3B8">{{ ln.n }}</div>
+                  <div style="font-family:'JetBrains Mono',monospace;font-size:11.5px;color:#2563EB;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ ln.prod.sku }}</div>
+                  <div style="position:relative">
+                    <input class="mf-gin" value="{{ ln.L.artQ }}" sc-camel-on-change="{{ ln.artInput }}" sc-camel-on-focus="{{ ln.artFocus }}" sc-camel-on-blur="{{ ln.artBlur }}" sc-camel-on-key-down="{{ ln.artKey }}" sc-camel-auto-focus="{{ ln.L.fresh }}" placeholder="Kërko artikullin ose SKU-në…" autocomplete="off">
+                    <sc-if value="{{ ln.hasProd }}" hint-placeholder-val="{{ false }}"><span class="mf-gsub">{{ ln.stockTxt }}</span></sc-if>
+                    <sc-if value="{{ ln.open }}" hint-placeholder-val="{{ false }}">
+                      <div style="position:absolute;left:0;top:calc(100% + 4px);z-index:30;width:320px;max-height:240px;overflow-y:auto;padding:6px;border-radius:12px;background:rgba(255,255,255,.98);backdrop-filter:blur(24px);border:1px solid rgba(16,36,58,.1);box-shadow:0 20px 50px -20px rgba(16,36,58,.35)">
+                        <sc-for list="{{ ln.opts }}" as="p" hint-placeholder-count="5">
+                          <button sc-camel-on-mouse-down="{{ p.pick }}" class="mf-opt" style="background:{{ p.bg }}">
+                            <span style="min-width:0"><span style="display:block;font-weight:600;color:#10243A">{{ p.name }}</span><span style="display:block;font-size:11.5px;color:#526477;margin-top:1px;font-family:'JetBrains Mono',monospace">{{ p.sku }} · {{ p.cat }} · TVSH {{ p.rate }}%</span></span>
+                            <span style="flex:none;text-align:right"><span style="display:block;font-weight:700;font-variant-numeric:tabular-nums">{{ p.priceFmt }}</span><span style="display:block;font-size:11px;color:#8FA3B8">pa TVSH / {{ p.unit }}</span></span>
+                          </button>
+                        </sc-for>
+                        <sc-if value="{{ ln.optsEmpty }}" hint-placeholder-val="{{ false }}"><div style="padding:12px;font-size:12.5px;color:#8FA3B8;text-align:center">Asnjë artikull për “{{ ln.L.artQ }}”</div></sc-if>
+                      </div>
+                    </sc-if>
+                  </div>
+                  <div style="font-size:12px;color:#526477;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ ln.unitTxt }}</div>
+                  <div><input class="mf-gin mf-gnum" sc-camel-input-mode="decimal" value="{{ ln.L.qty }}" sc-camel-on-change="{{ ln.setQty }}" data-err="{{ ln.qtyErr }}"></div>
+                  <div><input class="mf-gin mf-gnum" sc-camel-input-mode="decimal" value="{{ ln.priceVal }}" sc-camel-on-change="{{ ln.setPrice }}" placeholder="{{ ln.pricePh }}" data-err="{{ ln.priceErr }}" disabled="{{ !ln.hasProd }}"></div>
+                  <div><input class="mf-gin mf-gnum" sc-camel-input-mode="decimal" value="{{ ln.L.disc }}" sc-camel-on-change="{{ ln.setDisc }}" data-err="{{ ln.discErr }}"></div>
+                  <div class="mf-gcalc">{{ ln.vleraFmt }}</div>
+                  <div><sc-raw-select value="{{ ln.taxCode }}" sc-camel-on-change="{{ ln.setTax }}" class="mf-gin" style="cursor:pointer"><sc-for list="{{ ln.taxOpts }}" as="t" hint-placeholder-count="4"><option value="{{ t.code }}">{{ t.code }} · {{ t.rate }}%</option></sc-for></sc-raw-select></div>
+                  <div class="mf-gcalc mut">{{ ln.tvshFmt }}</div>
+                  <div class="mf-gcalc">{{ ln.grossFmt }}</div>
+                  <div style="text-align:center"><sc-if value="{{ frm.canRemove }}" hint-placeholder-val="{{ false }}"><button sc-camel-on-click="{{ ln.remove }}" class="mf-gx" title="Hiq këtë artikull">×</button></sc-if></div>
+                </div>
+              </sc-for>
+            </div>
+            <sc-if value="{{ frm.hasSummary }}" hint-placeholder-val="{{ false }}">
+              <div class="mf-gfoot">
+                <span>{{ frm.summary.count }}</span>
+                <span>Vlera: <b>{{ frm.summary.subFmt }}</b></span>
+                <sc-if value="{{ frm.summary.hasDisc }}" hint-placeholder-val="{{ false }}"><span>Zbritja: <b>−{{ frm.summary.discFmt }}</b></span></sc-if>
+                <span>TVSH: <b>{{ frm.summary.vatFmt }}</b></span>
+                <span>Totali: <b>{{ frm.summary.totFmt }}</b></span>
+              </div>
+            </sc-if>
+          </div>
+          <button sc-camel-on-click="{{ frm.addLine }}" class="mf-btn" style="margin-top:10px;display:inline-flex;align-items:center;gap:6px;border-style:dashed;color:#2563EB;border-color:rgba(37,99,235,.35);background:rgba(37,99,235,.04)"><span style="font-size:15px;line-height:1">+</span> Shto artikull</button>
+        </sc-if>
+        <sc-if value="{{ !frm.grid }}" hint-placeholder-val="{{ false }}">
         <sc-for list="{{ frm.lines }}" as="ln" hint-placeholder-count="1">
           <div class="mf-line" data-err="{{ ln.bad }}">
             <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -1695,7 +1784,8 @@ input,select{font-family:inherit}
           </div>
         </sc-for>
         <button sc-camel-on-click="{{ frm.addLine }}" class="mf-btn" style="margin-top:10px;display:inline-flex;align-items:center;gap:6px;border-style:dashed;color:#2563EB;border-color:rgba(37,99,235,.35);background:rgba(37,99,235,.04)"><span style="font-size:15px;line-height:1">+</span> Shto artikull</button>
-        <sc-if value="{{ frm.hasSummary }}" hint-placeholder-val="{{ false }}">
+        </sc-if>
+        <sc-if value="{{ frm.hasSummaryCards }}" hint-placeholder-val="{{ false }}">
           <div style="display:flex;flex-wrap:wrap;gap:6px 18px;margin-top:14px;padding:10px 14px;border-radius:10px;background:rgba(16,36,58,.035);font-size:12.5px;color:#3C5268">
             <span>{{ frm.summary.count }}:</span>
             <span>Neto <b style="color:#10243A;font-variant-numeric:tabular-nums">{{ frm.summary.subFmt }}</b></span>
@@ -2157,6 +2247,18 @@ class Component extends DCLogic {
     {id:'jo-e-zbritshme',     label:'Me TVSH jo të zbritshme',                col:'I',  box:'33'},
     {id:'jo-e-zbritshme-inv', label:'Investive me TVSH jo të zbritshme',      col:'J',  box:'34'},
   ];
+  /* Lloji i dokumentit (`docType`) — ashtu si e kërkon ligji dhe pronari: shitje MALLI apo SHËRBIMI; blerje
+     MALLI, SHPENZIM/SHËRBIM apo MJETE THEMELORE. Nuk është etiketë: e ndryshon kutinë e librit.
+       · mjete themelore  → kolonat INVESTIVE ([47]/[49] vendore, [39]/[41] import, [32]/[34] pa TVSH e jo të zbritshme)
+       · eksport i shërbimit → [10a] (shërbime jashtë vendit), kurse eksporti i MALLIT → [11]
+     Parazgjedhja „mall" i lë dokumentet ekzistuese pikërisht aty ku ishin. */
+  DOC_TYPES = {
+    sale:[['mall','Shitje malli'],['sherbim','Shitje shërbimi']],
+    purchase:[['mall','Blerje malli'],['sherbim','Shpenzime / shërbime'],['mjete','Mjete themelore']],
+  };
+  docTypeOf(doc,kind){ const list=this.DOC_TYPES[kind==='purchase'?'purchase':'sale']; const id=(doc&&doc.docType)||'mall';
+    return list.find(x=>x[0]===id)||list[0]; }
+  docTypeLabel(doc,kind){ return this.docTypeOf(doc,kind)[1]; }
   vatCats(kind){ return kind==='purchase'?this.VAT_PUR_CATS:this.VAT_SALE_CATS; }
   /* ───────── Libri i Shitjes / Libri i Blerjes — formati zyrtar i ATK-së ─────────
      Kokat janë FJALË PËR FJALË ato të shabllonëve (TemplateLSh_AL / TemplateLB_AL): rreshti 1 grupet, rreshti 2
@@ -2460,7 +2562,19 @@ class Component extends DCLogic {
     this.commit(d=>{ const cur={...((d.vatDecl||{})[key]||{})}; delete cur[box]; return {vatDecl:{...(d.vatDecl||{}),[key]:cur}}; },'Kutia ['+box+'] u kthye te llogaritja','#8FA3B8');
   }
   vatCatDef(kind){ return (this.vatCats(kind).find(x=>x.def)||this.vatCats(kind)[0]).id; }
-  vatCatOf(doc,kind){ const list=this.vatCats(kind); const id=(doc&&doc.vatCat)||''; return list.find(x=>x.id===id)||list.find(x=>x.def)||list[0]; }
+  /* Kategoria e TVSH-së e një dokumenti, e lexuar BASHKË me llojin: mjetet themelore shkojnë vetvetiu te kolonat
+     investive, dhe eksporti i një shërbimi te [10a] në vend të [11] — pa e detyruar përdoruesin ta dijë hartën. */
+  vatCatOf(doc,kind){
+    const list=this.vatCats(kind); const id=(doc&&doc.vatCat)||'';
+    let cat=list.find(x=>x.id===id)||list.find(x=>x.def)||list[0];
+    const type=((doc&&doc.docType)||'mall');
+    if(kind==='purchase'&&type==='mjete'){
+      const inv={vendore:'vendore-investive',import:'import-investiv','pa-tvsh':'pa-tvsh-investive','jo-e-zbritshme':'jo-e-zbritshme-inv'}[cat.id];
+      if(inv) cat=list.find(x=>x.id===inv)||cat;
+    }
+    if(kind!=='purchase'&&type==='sherbim'&&cat.id==='eksport') cat=list.find(x=>x.id==='sherbim-jashte')||cat;
+    return cat;
+  }
   vatCatLabel(doc,kind){ return this.vatCatOf(doc,kind).label; }
   // ndryshimi i kategorisë së një dokumenti (sirtari ose libri): prek VETËM fushën `vatCat`, asgjë financiare
   setVatCat(no,kind,cat){
@@ -2785,12 +2899,12 @@ class Component extends DCLogic {
     return {};
   }
   // a purchase document from the form: Draft, or received straight away (books stock + payables)
-  createPurchase({supplier,items,date,due,note,receive,wh,fromPo}){
+  createPurchase({supplier,items,date,due,note,receive,wh,fromPo,docType}){
     { const rec=this.recipeSkus(this.state.db,items); if(rec.length){ this.toast('Blerja nuk u regjistrua: '+rec.join(', ')+' '+this.RECIPE_BUY,'#B45309'); return ''; } }
     const no=this.nextNo('BL')(1);
     this.commit(d=>{ const sup=d.suppliers.find(s=>s.name===supplier);
       const sub=items.reduce((a,i)=>a+i.sub,0), vat=items.reduce((a,i)=>a+i.vatc,0);
-      const p={kind:'Blerje',no,supplier:sup.name,nui:sup.nui,fiscalNo:sup.fiscal,address:sup.address,date:this.fmtDate(date),due:this.fmtDate(due),status:receive?'Pranuar':'Draft',items,sub,vat,total:sub+vat,paid:0,note:note||'',supplierRef:'—',fiscal:'—',wh:wh||this.mainWh(d),fromPo:fromPo||'',history:[{t:this.stamp(),a:'Blerja u regjistrua'+(fromPo?' nga porosia '+fromPo:''),u:this.who()}]};
+      const p={kind:'Blerje',no,supplier:sup.name,nui:sup.nui,fiscalNo:sup.fiscal,address:sup.address,date:this.fmtDate(date),due:this.fmtDate(due),status:receive?'Pranuar':'Draft',items,sub,vat,total:sub+vat,paid:0,note:note||'',supplierRef:'—',fiscal:'—',wh:wh||this.mainWh(d),fromPo:fromPo||'',docType:docType||'mall',history:[{t:this.stamp(),a:'Blerja u regjistrua'+(fromPo?' nga porosia '+fromPo:''),u:this.who()}]};
       const nd={...d,movements:[...d.movements]}; let products=d.products;
       if(receive){ this._pushMovements(nd,p,'purchase'); p.history.push({t:this.stamp(),a:'Malli u pranua · stoku u shtua · '+this.whName(p.wh,d),u:this.who()}); products=d.products.map(pr=>{const it=items.find(i=>i.sku===pr.sku);return it&&!this.isRecipe(pr)?this.boughtCost(pr,it):pr;}); }
       return {purchases:[p,...d.purchases],movements:nd.movements,products,...(fromPo?this._linkSource(d,'po',fromPo,no):{})}; },'Blerja '+no+' u '+(receive?'pranua · stoku u përditësua':'ruajt si draft'));
@@ -4137,7 +4251,7 @@ class Component extends DCLogic {
   // the article-line editor, shared by Faturim masiv and the invoice/purchase forms
   // modes: 'sale' (invoice / quote / order — every product), 'purchase' and 'transfer' (stock products only: a recipe has no stock of its own),
   // 'recipe' (the product form's ingredient lines: stock products that are not the product itself; qty in the ingredient's unit, no prices)
-  lineVals(lines,setLine,removeLine,mode,self){
+  lineVals(lines,setLine,removeLine,mode,self,o={}){
     const isP=mode==='purchase', isR=mode==='recipe', stockOnly=isP||isR||mode==='transfer';
     return lines.map((L,idx)=>{
       const e=isR?this.evalRecipeLine(L):this.evalLine(L,mode), prod=e.prod, id=L.id, set=p=>setLine(id,p);
@@ -4151,7 +4265,20 @@ class Component extends DCLogic {
       const pk=(isP||mode==='transfer')&&prod?this.packOf(prod):null, inPk=!!(pk&&e.pk), sw=on=>()=>{ if(on!==inPk) set(l=>this.linePackSwitch(l,prod,pk,on)); };
       const packFields={hasPack:!!pk,packOpts:pk?[{label:prod.unit,on:inPk?'':'1',go:sw(false)},{label:pk.unit+' ('+this.fmtQ(pk.qm)+' '+prod.unit+')',on:inPk?'1':'',go:sw(true)}]:[],
         packHint:inPk&&e.qm?'= '+this.fmtQ(e.qm)+' '+prod.unit+(e.unitT!=null?' · '+this.fmtT(e.unitT)+' / '+prod.unit:''):pk?'1 '+pk.unit+' = '+this.fmtQ(pk.qm)+' '+prod.unit:'',perLbl:inPk?' / '+pk.unit:''};
-      return {n:idx+1,L,prod:prod||{},hasProd:!!prod,open:L.artOpen&&!L.sku,opts,optsEmpty:opts.length===0,padR:prod?'118px':'11px',...packFields,
+      // kolonat e tabelës: çmimi shkruhet neto ose me TVSH (çelësi „Me TVSH"), kurse Vlera / TVSH / Vl. me TVSH
+      // llogariten vetvetiu nga i njëjti rresht — asnjë shumë nuk shkruhet dy herë
+      const gross=!!o.gross, line=e.line;
+      const grid={
+        priceVal:gross?(L.gross??''):(L.net??''), pricePh:gross?(prod?'katalogu: '+this.fromC(this.grossOf(inPk?Math.round(base*pk.qm/1000):base,e.rate)):''):(prod?'bosh = '+(isP?'kosto e fundit':'katalogu'):''),
+        priceErr:(gross?e.grossErr:e.netErr)?'1':'', unitTxt:prod?(inPk?pk.unit:prod.unit):'',
+        vleraFmt:line?this.fmt(line.sub):'', tvshFmt:line?this.fmt(line.vatc):'', grossFmt:line?this.fmt(line.tot):'',
+        rateTxt:prod?e.rate+'%':'', taxCode:e.taxCode||'',
+        stockTxt:prod&&!this.isRecipe(prod)?'Gjendje: '+this.fmtQ(this.stockOf(prod.sku))+' '+prod.unit:'',
+        setTax:ev=>{ const t=taxOpts.find(x=>x.code===ev.target.value); if(t) t.go(); },
+      };
+      grid.setPrice=gross?(ev=>{const v=ev.target.value,c=this.toC(v);set({gross:v,net:v===''?'':c===null?'':this.fromC(this.netOf(c,e.rate))});})
+        :(ev=>{const v=ev.target.value,c=this.toC(v);set({net:v,gross:v===''?'':c===null?'':this.fromC(this.grossOf(c,e.rate))});});
+      return {n:idx+1,L,prod:prod||{},hasProd:!!prod,open:L.artOpen&&!L.sku,opts,optsEmpty:opts.length===0,padR:prod?'118px':'11px',...packFields,...grid,
         artInput:ev=>set({artQ:ev.target.value,sku:'',artOpen:true,fresh:false}),artFocus:()=>set({artOpen:true}),artBlur:()=>set({artOpen:false,fresh:false}),
         artKey:ev=>{ if(ev.key==='Escape') set({artOpen:false}); if(ev.key==='Enter'&&!L.sku&&opts.length===1) opts[0].pick(ev); },
         artClear:ev=>{ev.preventDefault();set({sku:'',artQ:'',artOpen:true,net:'',gross:''});},
@@ -4193,7 +4320,7 @@ class Component extends DCLogic {
       width='760px'; hasLines=true;
       const isP=K==='purchase'||K==='po', isT=K==='transfer', partyKey=isP?'supplier':'customer';
       const list=isT?[]:(isP?this.SUPPLIERS:this.CUSTOMERS).map(c=>({id:c.name,label:c.name,sub:(c.nui!=='—'?'NUI '+c.nui+' · ':'')+c.city,tag:c.nui!=='—'?c.nui:''}));
-      lines=this.lineVals(f.lines,(id,p)=>this.setFormLine(id,p),id=>set(x=>x.lines.length>1?{lines:x.lines.filter(l=>l.id!==id)}:{}),isT?'transfer':isP?'purchase':'sale');
+      lines=this.lineVals(f.lines,(id,p)=>this.setFormLine(id,p),id=>set(x=>x.lines.length>1?{lines:x.lines.filter(l=>l.id!==id)}:{}),isT?'transfer':isP?'purchase':'sale',null,{gross:!!f.priceGross});
       if(isT){ noPrice=true; lines=lines.map(l=>{ const q=l.hasProd?this.stockOfWh(l.prod.sku,f.from):0, eq=l.hasProd?this.packEq(l.prod,q):''; return {...l,srcStock:l.hasProd?this.fmtQ(q)+' '+l.prod.unit+(eq?' '+eq:''):'—'}; }); }
       const ev=lines.map(l=>l.ev), ok=ev.length>0&&ev.every(e=>!e.err), partyOk=isT?(!!f.from&&!!f.to&&f.from!==f.to):!!f[partyKey];
       const tot=ok?ev.reduce((a,e)=>({sub:a.sub+e.line.sub+e.line.disc,disc:a.disc+e.line.disc,vatc:a.vatc+e.line.vatc,tot:a.tot+e.line.tot}),{sub:0,disc:0,vatc:0,tot:0}):null;
@@ -4203,6 +4330,8 @@ class Component extends DCLogic {
       fields=isT?[seg('from','Nga depoja',whOpts,{half:true}),seg('to','Në depon',whOpts,{half:true}),date('date','Data',{half:true}),txt('note','Shënim',{half:true,ph:'opsional'})]
         :[combo(partyKey,isP?'Furnitori':'Klienti',list,{ph:'kërko me emër ose NUI',hint:partyOk?'':'zgjidhni nga lista'}),date('date','Data',{half:true}),
           K==='quote'?date('valid','Vlen deri më',{half:true,err:f.valid&&f.date&&this.daysBetween(f.date,f.valid)<0}):date('due',K==='order'?'Afati i dorëzimit':K==='po'?'Pritet më':'Afati i pagesës',{half:true,err:dueErr}),txt('note','Shënim',{ph:'opsional'})];
+      if(K==='invoice'||K==='purchase') fields.push(seg('docType','Lloji i dokumentit',this.DOC_TYPES[isP?'purchase':'sale'],
+        {hint:isP?'„Mjete themelore" i çon shumat te kolonat investive të Librit të Blerjes':'„Shitje shërbimi" e dallon eksportin e shërbimit ([10a]) nga ai i mallit ([11])'}));
       if(isP&&(db.warehouses||[]).length>1) fields.push(seg('wh','Depoja',whOpts,{half:true}));
       if(K==='invoice'&&(db.warehouses||[]).length>1) fields.push(seg('wh','Depoja',whOpts,{half:true}));
       if(K==='purchase') fields.push(seg('receive','Pranimi i mallit',[[true,'Prano tani — stoku shtohet'],[false,'Ruaj si draft']]));
@@ -4215,10 +4344,10 @@ class Component extends DCLogic {
       // selling more than is on hand is allowed (the stock goes negative) but never silently
       // a recipe product is checked against what its ingredients allow (makeable quantity)
       if(ready&&!msg&&(K==='invoice'||K==='order')){ const low=ev.find(e=>e.qm>this.availQm(e.prod,db)-this.reservedOf(e.prod.sku)); if(low){ const av=this.availQm(low.prod,db)-this.reservedOf(low.prod.sku); msg='Kujdes: '+low.prod.name+' ka '+this.fmtQ(this.availQm(low.prod,db))+' '+low.prod.unit+(this.isRecipe(low.prod)?' për t’u përgatitur nga përbërësit':' në stok')+(this.reservedOf(low.prod.sku)?' ('+this.fmtQ(this.reservedOf(low.prod.sku))+' të rezervuara)':'')+' — '+(K==='order'?'porosia kalon të disponueshmen ('+this.fmtQ(av)+').':'fatura e çon stokun nën zero ('+this.fmtQ(av-low.qm)+').'); } }
-      if(K==='purchase'){ actions=[{label:f.receive?'Regjistro dhe prano':'Ruaj draftin',primary:true,disabled:!ready,go:()=>{ const no=this.createPurchase({supplier:f.supplier,items:this.linesToItems(ev),date:f.date,due:f.due,note:f.note,receive:!!f.receive,wh:f.wh,fromPo:f.fromPo}); this.setState({frm:null}); this.openPurchase(no); }}]; }
+      if(K==='purchase'){ actions=[{label:f.receive?'Regjistro dhe prano':'Ruaj draftin',primary:true,disabled:!ready,go:()=>{ const no=this.createPurchase({supplier:f.supplier,items:this.linesToItems(ev),date:f.date,due:f.due,note:f.note,receive:!!f.receive,wh:f.wh,fromPo:f.fromPo,docType:f.docType}); this.setState({frm:null}); this.openPurchase(no); }}]; }
       else if(K==='invoice'){
         const cust=this.CUSTOMERS.find(c=>c.name===f.customer);
-        const go=mode=>()=>{ const batch=[{cust,items:this.linesToItems(ev),note:(f.note||'').trim()}]; const nos=this.issueBatch(batch,mode,{date:f.date,due:f.due,wh:f.wh,fromOrder:f.fromOrder,fromQuote:f.fromQuote,fromProforma:f.fromProforma}); this.setState({frm:null,drawer:nos&&nos[0]||null}); };
+        const go=mode=>()=>{ const batch=[{cust,items:this.linesToItems(ev),note:(f.note||'').trim()}]; const nos=this.issueBatch(batch,mode,{date:f.date,due:f.due,wh:f.wh,fromOrder:f.fromOrder,fromQuote:f.fromQuote,fromProforma:f.fromProforma,docType:f.docType}); this.setState({frm:null,drawer:nos&&nos[0]||null}); };
         actions=[{label:'Ruaj si draft',disabled:!ready,go:go('draft')},{label:'Profaturë',disabled:!ready,go:go('proforma')},{label:'Lësho faturën',primary:true,disabled:!ready,go:go('issue')}];
       }
       else if(K==='quote'){ actions=[{label:'Ruaj si draft',disabled:!ready,go:()=>{ const no=this.createQuote({customer:f.customer,items:this.linesToItems(ev),date:f.date,valid:f.valid,note:f.note,send:false}); this.setState({frm:null}); this.openDr('quote',no); }},{label:'Ruaj dhe shëno të dërguar',primary:true,disabled:!ready,go:()=>{ const no=this.createQuote({customer:f.customer,items:this.linesToItems(ev),date:f.date,valid:f.valid,note:f.note,send:true}); this.setState({frm:null}); this.openDr('quote',no); }}]; }
@@ -4463,7 +4592,9 @@ class Component extends DCLogic {
         {key:'scopes',label:'Të drejtat (vetëm lexim)',isSeg:true,opts:[{label:'pos:read — kuponët dhe libri i POS-it',on:f.sPos?'1':'',go:()=>set({sPos:!f.sPos})},{label:'state:read — libri i kompanisë',on:f.sState?'1':'',go:()=>set({sState:!f.sState})}],span:'1 / -1',hint:scopes.length?scopes.join(', '):'zgjidhni të paktën një'}];
       actions=[{label:f.busy?'Po krijohet…':'Krijo çelësin',primary:true,disabled:!!f.busy||!nm||nm.length>80||!scopes.length,go:()=>{ set({busy:true}); this.apiKeyCreate(nm,scopes).then(j=>{ if(!j) set({busy:false}); }); }}];
     }
-    return {title,sub,fields,actions:actions.map(a=>({...a,p:a.primary?'1':''})),msg,hasLines,lines,linesTitle:K==='product'?'Përbërësit e recetës':'Artikujt',linesLabel:K==='product'?plural(lines.length,'përbërës','përbërës'):plural(lines.length,'artikull','artikuj'),canRemove:lines.length>1,addLine:()=>set(x=>({lines:[...x.lines.map(l=>({...l,fresh:false})),this.newLine()]})),hasSummary:!!summary,summary:summary||{},width,close,noPrice};
+    return {title,sub,fields,actions:actions.map(a=>({...a,p:a.primary?'1':''})),msg,hasLines,lines,
+      grid:hasLines&&!noPrice,hasSummaryCards:!!summary&&!(hasLines&&!noPrice),priceGross:!!f.priceGross,priceGrossS:f.priceGross?'1':'',
+      togglePriceGross:()=>set({priceGross:!f.priceGross}),priceColLabel:f.priceGross?'Çmimi me TVSH':'Çmimi pa TVSH',linesTitle:K==='product'?'Përbërësit e recetës':'Artikujt',linesLabel:K==='product'?plural(lines.length,'përbërës','përbërës'):plural(lines.length,'artikull','artikuj'),canRemove:lines.length>1,addLine:()=>set(x=>({lines:[...x.lines.map(l=>({...l,fresh:false})),this.newLine()]})),hasSummary:!!summary,summary:summary||{},width,close,noPrice};
   }
   // render object for the open detail drawer (purchase / product), or null
   drawerVals(){
@@ -5765,6 +5896,7 @@ class Component extends DCLogic {
         if(mode==='issue') history.push({t:stamp,a:'Fiskalizimi: në radhë te Fiscal Agent',u:'Sistemi'});
         return {no:no(i+1),kind:mode==='proforma'?'Profaturë':'Faturë',customer:b.cust.name,nui:b.cust.nui,fiscalNo:b.cust.fiscal,address:b.cust.address,date,due,
           status:mode==='draft'?'Draft':'Lëshuar',fiscal:mode==='issue'?'Në pritje':'—',items:b.items,sub,vat,total:sub+vat,paid:0,fiscalRef:'—',note:b.note||'',batch:single?'':batchId,wh:(single&&opts.wh)||this.mainWh(s.db),
+          docType:(single&&opts.docType)||'mall',
           ...(single&&opts.fromOrder?{fromOrder:opts.fromOrder}:{}),...(single&&opts.fromQuote?{fromQuote:opts.fromQuote}:{}),...(single&&opts.fromProforma?{fromProforma:opts.fromProforma}:{}),history};
       });
       const total=created.reduce((a,r)=>a+r.total,0);
