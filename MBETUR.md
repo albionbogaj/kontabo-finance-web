@@ -18,7 +18,10 @@
 | Librat e TVSH-së + deklarata | Seksion i vetin: libri i shitjes/blerjes në formatin e ATK-së, eksport nga VETË shablloni, deklarata [9]–[72] (04.10.2026) |
 | Artikujt për arkë | ERP › POS › *Artikujt e arkave* (matrica artikuj × arka) → katalogu mban `terms`; POS 0.15.0 e zbaton (04.10.2026) |
 | Kontot e artikullit | Konto e shitjes / e blerjes për çdo artikull, të përdorura vërtet nga ditari (blerja e shërbimit te 6000, aseti te 1500) (04.10.2026) |
-| Depo git + CI lokal | Katër depo git; `node tools/check-logic.js` (1278), `python kontabo_pos.py --check` (1017), `pytest` (237) |
+| Fiskalizimi i faturave | Statusi e thotë të vërtetën: „Deklarohet në libër" + Libri i shitjes; agjenti i trilluar u hoq (04.10.2026) |
+| Roja e serverit | `watch.sh` çdo 5 min + `GET /system/watch` + njoftimi te paneli (04.10.2026) |
+| Importi bankar | Financë › Import bankar: CSV/TSV ose MT940 → pagesa të përputhura me faturat/blerjet e hapura (04.10.2026) |
+| Depo git + CI lokal | Katër depo git; `node tools/check-logic.js` (1288), `python kontabo_pos.py --check` (1017), `pytest` (247) |
 | Storno pagese | Sirtari i faturës/blerjes → „Storno pagesën" (03.10.2026) |
 | SKU i produktit | Caktohet gjithmonë vetvetiu (03.10.2026) |
 | ERP në telefon | Shtresa `narrow` + `@media` (03.10.2026) |
@@ -46,15 +49,26 @@
 
 8. **Adapteri F-Link** (`FlinkProvider`) — Tremol-i është ndërtuar (`pos/tremol.py`, 0.14.0) dhe i mbetet vetëm
    prova në pajisje reale (`kontabo-pos/docs/HAPAT-E-TESTIMIT.md` §12); F-Link-u pret dokumentacionin e pikës 3.
-9. **Ekzekutimi i radhës fiskale te serveri** (hapi 4): `fiscal_queue` listohet dhe riprovohet, por asnjë proces
-   s'i dërgon transaksionet — faturat e ERP-së mbeten „Në pritje". Varet nga vendimi se cila rrugë fiskalizon
-   faturat e ERP-së (arka, agjenti i Windows-it, apo serveri me çelësat e tenantit).
-10. **Numërimi i dokumenteve te serveri** (tabela `sequences` është e rezervuar; numrat i jep ende klienti) —
-    kërkohet para se dy shfletues të lëshojnë fatura njëkohësisht.
+9. **Fiskalizimi elektronik i vetë faturës** — pret ATK-në, jo ne. Më 04.10.2026 u hoq gënjeshtra: ERP-ja nuk
+   shkruan më rreshta radhe te një „Fiscal Agent" që nuk ekziston dhe fatura nuk mbetet më „Në pritje"
+   përgjithmonë; statusi është „Deklarohet në libër" dhe dokumenti shkon te Libri i shitjes. Kuponët i
+   fiskalizon vetë arka. Rruga për faturën ndërtohet vetëm kur të kemi specifikimin SEF të saj: te
+   `kontabo-pos/dokumente_atk/` nuk ka asnjë, dhe `pos/atk.py` ndërton vetëm PosCoupon/CitizenCoupon.
+10. ~~Numërimi i dokumenteve te serveri~~ — **verifikuar më 04.10.2026: nuk është vrimë.** Serveri punon me
+    compare-and-set mbi gjendjen e tenantit (`app/routers/state.py`), prandaj shfletuesi i dytë merr 409, ndryshimi
+    i tij hidhet dhe dy fatura me të njëjtin numër nuk shkruhen dot. Mbetet vetëm rehatia: ai që humbet duhet ta
+    përsërisë veprimin. Tabela `sequences` përdoret sot nga propozimet e POS-it.
 11. **Verifikimi i PIN-eve te serveri ose KDF me pepper** — sot katalogu i terminalit mbart hash-et e PIN-eve;
     ndryshimi prek edhe arkën, sepse PIN-i duhet të vlerësohet edhe pa internet.
-12. **Monitorimi** (alarm kur shërbimi bie ose radha fiskale mbushet).
-13. **HR / Prodhim / CRM** — faqe „modul i pandërtuar"; hyjnë në punë vetëm me vendim të pronarit.
+12. ~~Monitorimi~~ — **bërë më 04.10.2026**: `deploy/onprem/watch.sh` + timer çdo 5 minuta kontrollon shërbimet,
+    `/health`-in, hapësirën e diskut dhe moshën e kopjes rezervë; gjendja lexohet nga `GET /system/watch` dhe
+    paneli i ERP-së nxjerr njoftimin „Serveri raporton problem". Njoftimi i jashtëm (Telegram a tjetër) ndizet
+    duke vendosur `WATCH_WEBHOOK` te `/etc/kontabo-finance/watch.env`.
+13. **HR / Prodhim / CRM** — 13 faqe meny pa asnjë model të dhënash (`genericAdd` → „nuk është ende i ndërtuar").
+    Kërkon vendimin e pronarit se çfarë duhet të mbajë secili (p.sh. HR: punëtorët, kontratat, pushimet, pagat me
+    tatimin dhe kontributet e Kosovës) — pa atë vendim do të ndërtohej diçka që nuk i shërben punës së tij.
+14. **Webhooks dhe SMS** — kartela „Së shpejti" te Integrimet; kërkojnë ofrues dhe backend. Importi bankar nuk
+    është më aty: u ndërtua më 04.10.2026 (Financë › Import bankar, CSV/TSV ose MT940).
 
 ---
 
