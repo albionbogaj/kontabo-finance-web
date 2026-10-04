@@ -2954,6 +2954,7 @@ class Component extends DCLogic {
   PROP_LBL = {name:'emri',cat:'kategoria',gross_t:'çmimi me TVSH',tax:'TVSH',unit:'njësia',active:'shfaqja në POS'};
   PROP_RATE = {'-1':'A','0':'C','8':'D','18':'E'}; // the bar's VAT rate (norma; -1 = exempt) → ATK letter, when the letter itself is missing / unknown
   PROP_KEEP = 1000; PROP_ROUNDS = 5; PROP_BACKOFF = 300000; // ids kept in the book · batches per tick (while `more`) · ms of rest after the server refused a batch
+  PROP_RESEND = 200; // the book's latest applied / partial verdicts a page sends again on its first run for a company (propUnacked)
   PROP_PAGES = 5; // pages of 200 read into ONE batch (× 200 ≤ PROP_KEEP: every id of a batch stays in posProposalsDone)
   PROP_TEXT = 200; // the server's limit on every text of a verdict (MAX_PROPOSAL_TEXT): a longer reason refused the WHOLE resolve on the first schema
   // a text of a verdict within PROP_TEXT: cut at the last word when that keeps at least half of it, with "…" (UTF-16 units — never fewer than the
@@ -2973,19 +2974,29 @@ class Component extends DCLogic {
   propLow(s){ return typeof s==='string'?s.trim().toLowerCase().replace(/\s+/g,' '):''; }
   // the next free 'BAR-<n>' (after the highest BAR-n there is; unique under the SKU rule — norm() of every SKU)
   propSku(P){ const taken=new Set(P.map(p=>this.norm(p.sku))); let n=0; for(const p of P){ const m=/^BAR-(\d{1,9})$/i.exec(String(p.sku||'').trim()); if(m) n=Math.max(n,parseInt(m[1],10)); } let s; do{ s='BAR-'+(++n); }while(taken.has(this.norm(s))); return s; }
+  // the SKU a bar proposes for a product it created: 'BAR-<the venue's 4-character token>-<its product id>' — the tills sell under it from the
+  // first sale, so a new product takes it when no product has it yet (the SKU rule, norm()); otherwise the next free 'BAR-<n>' (propSku)
+  PROP_SKU = /^BAR-[A-Z0-9]{4}-\d{1,9}$/;
   // a product proposal against the working book W (W.products / W.categories are replaced, never mutated; V = W's book + the POS ledger, for the
   // unit lock). Located by sku, else by barKey === key of the SAME terminal (barTerm — the bar's keys are its own product ids, unique per terminal
   // only: two bars of one company both send 'p:1'; a deleted terminal (id null) matches no barKey), else (only a proposal with no `before`) by the
-  // case-insensitive name; not found → created (barKey + barTerm) when `before` is null, else rejected. → {state, result:{sku, applied, kept, reason}, created}
+  // case-insensitive name (then bound to the bar: barKey + barTerm, when it has no barKey yet — the bar's later proposals of that key find it); not
+  // found → created (barKey + barTerm; the bar's SKU when PROP_SKU and free, else BAR-<n>) when `before` is null, else rejected.
+  // → {state, result:{sku (the SKU used / found), applied, kept, reason}, created}
   // A category this batch renamed (W.renamed: its old name → the new one) is read under its new name on both sides (a proposal queued before the
-  // rename still carries the old name — it is the same category, not a new one)
+  // rename still carries the old name — it is the same category, not a new one). A change of an existing product to a category the ERP does not have
+  // creates it, like the product form (a bar category never proposed: a link before 1.11.3, the demo menu) — unless this batch renamed / undid /
+  // refused a rename of the category the product was in, from the same terminal (W.touched): then the name is the bar's stale one (the product was
+  // saved between two renames: an intermediate name, a rename undone) — the product keeps its category; so does a product whose move is only a
+  // rename its own bar sent and this batch refused (W.refused). A new product still creates its category (by name alone a stale one is not told apart)
   propProduct(W,V,it){ const key=String(it.key||''), A=it.after&&typeof it.after==='object'?it.after:null, B=it.before&&typeof it.before==='object'?it.before:null, sku=typeof it.sku==='string'?it.sku.trim():'', P=W.products, L=this.PROP_LBL, tid=it.terminal&&typeof it.terminal==='object'&&typeof it.terminal.id==='string'?it.terminal.id:'';
     const no=reason=>({state:'rejected',result:{sku:sku||null,applied:[],kept:[],reason:this.propCut(reason)}}), rn=x=>{ const t=x.cat!==undefined&&W.renamed&&W.renamed.get(this.norm(x.cat)); if(t) x.cat=t; return x; };
     if(!A) return no('Propozimi nuk ka të dhënat e produktit.');
-    const a=rn(this.propSide(A)), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&tid&&P.find(x=>x.barKey===key&&x.barTerm===tid))||(!B&&lo&&P.find(x=>this.propLow(x.name)===lo))||null;
+    const a=rn(this.propSide(A)), lo=this.propLow(A.name); let p=(sku&&P.find(x=>x.sku===sku))||(key&&tid&&P.find(x=>x.barKey===key&&x.barTerm===tid))||null, byName=false;
+    if(!p&&!B&&lo){ p=P.find(x=>this.propLow(x.name)===lo)||null; byName=!!p; }
     if(!p){ if(B) return no('Produkti nuk gjendet në ERP'+(sku?' (SKU '+sku+')':'')+' — nuk krijohet sërish nga arka.');
       const miss=['name','cat','gross_t','tax','unit'].filter(f=>a[f]===undefined||(f==='unit'&&!this.UNITS.includes(a.unit))); if(miss.length) return no('Produkti i ri nuk u krijua: mungon ose është e pavlefshme '+miss.map(f=>L[f]).join(', ')+'.');
-      const nsku=this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
+      const nsku=this.PROP_SKU.test(sku)&&!P.some(x=>this.norm(x.sku)===this.norm(sku))?sku:this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
       W.products=[...P,{name:a.name,sku:nsku,barcode:'—',cat:this.canonCat(W,a.cat),unit:a.unit,tax:a.tax,price_t:pt,price_c:this.cOfT(pt),cost_t:0,cost_c:0,gross_t:a.gross_t,openCost_c:0,opening:0,minStock:0,pos:a.active!==false,barKey:key,barTerm:tid||null}]; W.categories=this.withCategory(W,a.cat);
       return {state:'applied',created:nsku,result:{sku:nsku,applied:this.PROP_FIELDS.slice(),kept:[],reason:''}}; }
     const b=B?rn(this.propSide(B)):{}, cur={name:p.name,cat:p.cat,gross_t:this.grossT(p,W),tax:p.tax,unit:p.unit,active:p.pos!==false}, applied=[], kept=[], erp=[], why=[], set={};
@@ -2995,10 +3006,12 @@ class Component extends DCLogic {
       if(ev!=null&&this.propEq(f,av,ev)){ applied.push(f); continue; } // the ERP already has the bar's value
       if(bv===undefined||!this.propEq(f,ev,bv)){ kept.push(f); erp.push(f); continue; } // changed in the ERP since the bar saw it (or no base): the ERP wins
       if(f==='unit'){ const e=this.productError(V,{...p,unit:av},p,{unit:av}); if(e){ kept.push(f); why.push(e); continue; } } // the unit lock (opening / movements incl. the POS ledger / recipe / draft) and the pack rule
+      if(f==='cat'){ const tk=tid+'\n'+this.norm(bv), rf=!!W.refused&&W.refused.get(tk)===this.norm(av); if(rf||(!this.findCategory(W.categories,av)&&!!W.touched&&W.touched.has(tk))){ kept.push(f); why.push((rf?'riemërimi i kategorisë “'+bv+'” u refuzua':'kategoria “'+av+'” nuk është në ERP (emër i vjetër nga arka)')+' — mbetet “'+ev+'”'); continue; } }
       set[f]=av; applied.push(f); }
-    if(Object.keys(set).length){ const q={};
+    const q=byName&&key&&tid&&!p.barKey?{barKey:key,barTerm:tid}:{}; // found by the name: bound to the bar's key (and terminal) from now on
+    if(Object.keys(set).length||q.barKey){
       if('name' in set) q.name=set.name; if('unit' in set) q.unit=set.unit; if('active' in set) q.pos=set.active;
-      if('cat' in set){ q.cat=this.canonCat(W,set.cat); W.categories=this.withCategory(W,set.cat); }
+      if('cat' in set){ q.cat=this.canonCat(W,set.cat); W.categories=this.withCategory(W,set.cat); } // a bar category the ERP does not have yet is created
       // the gross the till prints stays verbatim; the net (price_t / price_c, the books' base) is derived from it at the (new) letter's effective rate
       if('gross_t' in set||'tax' in set){ const tax=set.tax||p.tax, G='gross_t' in set?set.gross_t:cur.gross_t, pt=this.netOfT(G,this.effRate(tax,W)); Object.assign(q,{tax,gross_t:G,price_t:pt,price_c:this.cOfT(pt)}); }
       const np={...p,...q}; W.products=W.products.map(x=>x===p?np:x); }
@@ -3006,23 +3019,30 @@ class Component extends DCLogic {
     return {state:!kept.length?'applied':applied.length?'partial':'rejected',result:{sku:p.sku,applied,kept,reason:this.propCut(reason)}}; }
   // a category proposal: rename when the ERP still has the `before` name unchanged (the category and every product's `cat`); a `before` name the
   // ERP no longer has (renamed / removed there) is the ERP's change — refused, nothing created, unless the ERP has exactly the `after` name already;
-  // create only without a `before` name, when no category has the `after` name; else the ERP wins (rejected; nothing to do when it has that name)
+  // create only without a `before` name, when no category has the `after` name; else the ERP wins (rejected; nothing to do when it has that name).
+  // A rename found (applied, undone or refused) is noted per terminal for that bar's product proposals (W.touched: the category's name now; W.refused)
   propCategory(W,it){ const A=it.after&&typeof it.after==='object'?it.after:{}, nm=typeof A.name==='string'?A.name.trim():'', bn=it.before&&typeof it.before==='object'&&typeof it.before.name==='string'?it.before.name.trim():'', K=W.categories;
+    const tk=n=>(it.terminal&&typeof it.terminal==='object'&&typeof it.terminal.id==='string'?it.terminal.id:'')+'\n'+this.norm(n), touch=n=>(W.touched||(W.touched=new Set())).add(tk(n));
     const R=(state,reason,on)=>({state,result:{applied:state==='applied'&&on?['name']:[],kept:state==='rejected'?['name']:[],reason:this.propCut(reason)}});
     if(!nm||nm.length>200) return R('rejected','Emri i kategorisë mungon ose është më i gjatë se 200 shkronja.');
     const cur=bn?K.find(c=>String(c.name||'').trim()===bn)||null:null, ex=this.findCategory(K,nm);
     if(bn&&!cur) return ex&&ex.name===nm?R('applied','',false):R('rejected','Kategoria “'+bn+'” nuk është më në ERP (u riemërua ose u fshi atje) — fiton ERP-ja; “'+nm+'” nuk krijohet.');
-    if(cur){ if(cur.name===nm) return R('applied','',false); if(ex&&ex!==cur) return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.');
-      W.categories=K.map(c=>c===cur?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); (W.renamed||(W.renamed=new Map())).set(this.norm(cur.name),nm); return R('applied','',true); }
+    if(cur){ if(cur.name===nm){ touch(nm); return R('applied','',false); } if(ex&&ex!==cur){ touch(bn); (W.refused||(W.refused=new Map())).set(tk(bn),this.norm(nm)); return R('rejected','Kategoria “'+ex.name+'” ekziston tashmë në ERP.'); } // W.refused: a product moved by this rename stays
+      W.categories=K.map(c=>c===cur?{...c,name:nm}:c); W.products=W.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:nm}:p); (W.renamed||(W.renamed=new Map())).set(this.norm(cur.name),nm); touch(nm); return R('applied','',true); }
     if(!ex){ W.categories=[...K,this.newCategory(nm,K)]; if(W.renamed) W.renamed.delete(this.norm(nm)); return R('applied','',true); }
     if(ex.name===nm) return R('applied','',true);
     return R('rejected','Kategoria ekziston në ERP si “'+ex.name+'”.'); }
   // one batch against the book d: proposals already in posProposalsDone are only resolved again (`again`, their stored result); the others are
   // applied on one working copy — the categories first (a renamed category is renamed before a product of it is merged), each kind in the
   // server's order → {patch (products / categories / posProposalsDone, {} when nothing new), res, again}. An id of this batch already in
-  // posProposalsDone (`again`) moves to the end of it: never dropped (PROP_KEEP) while its verdict is still on its way
+  // posProposalsDone (`again`) moves to the end of it: never dropped (PROP_KEEP) while its verdict is still on its way. Two proposals of one key of
+  // one terminal in a batch (the bar pushed again between two pages read): only the later one (seq; else the one read later) — the server superseded
+  // the earlier one and gave the later one its (oldest) base; the earlier one is neither applied nor resolved
   propBatch(d,items){ const done=new Map((d.posProposalsDone||[]).filter(e=>e&&e.id).map(e=>[e.id,e])), P0=d.products||[], K0=d.categories||[], W={...d,products:P0,categories:K0}, V=this.view(d), res=[], again=[], seen=new Set(), isK=x=>!!x&&x.kind==='category';
-    for(const it of [...items.filter(isK),...items.filter(x=>!isK(x))]){ if(!it||!it.id||seen.has(it.id)) continue; seen.add(it.id); const old=done.get(it.id); if(old){ again.push({id:it.id,state:old.state,result:old.result}); continue; }
+    const gk=x=>!!x&&!!x.id&&!!x.key&&!!x.terminal&&typeof x.terminal.id==='string'&&!!x.terminal.id?x.terminal.id+'\n'+x.key:'', last=new Map();
+    for(const it of items){ const g=gk(it); if(g&&!(Number((last.get(g)||{}).seq)>Number(it.seq))) last.set(g,it); }
+    for(const it of [...items.filter(isK),...items.filter(x=>!isK(x))]){ if(!it||!it.id||seen.has(it.id)) continue; seen.add(it.id); const g=gk(it); if(g&&last.get(g).id!==it.id) continue;
+      const old=done.get(it.id); if(old){ again.push({id:it.id,state:old.state,result:old.result}); continue; }
       const r=it.kind==='product'?this.propProduct(W,V,it):it.kind==='category'?this.propCategory(W,it):{state:'rejected',result:{applied:[],kept:[],reason:'Lloj i panjohur propozimi.'}};
       res.push({id:it.id,kind:it.kind,key:it.key,terminal:it.terminal||null,state:r.state,result:r.result,created:r.created||''}); }
     if(!res.length) return {patch:{},res,again};
@@ -3030,14 +3050,15 @@ class Component extends DCLogic {
     if(W.products!==P0) patch.products=W.products; if(W.categories!==K0) patch.categories=W.categories; return {patch,res,again}; }
   // the second half of every ledger tick (only the `produkte` permission / the Pronar act): GET /pos/proposals?state=pending, every page
   // (propPending) → apply ALL → ONE commit → wait until it landed → POST /pos/proposals/resolve; again while `more` beyond PROP_PAGES. Single-flight, company-
-  // guarded; never while unsent changes wait (the book must be the server's before anything is resolved) or while the POS migration runs
+  // guarded; never while unsent changes wait (the book must be the server's before anything is resolved) or while the POS migration runs. Every
+  // round first resolves the verdicts not acknowledged yet (propUnacked) — before the pending list is read
   posPropTick(){ if(this._propP) return this._propP; const p=this._propRun().catch(e=>{ this._propErr=String((e&&e.message)||e); return 0; }).then(n=>{ if(this._propP===p) this._propP=null; return n; }); this._propP=p; return p; }
   async _propRun(){ const tid=this.apiCfg().tenantId, gen=this._propGen, ok=()=>this._propGen===gen&&this.apiCfg().tenantId===tid&&this.apiAuthed()&&this.propPerm();
     const go=()=>ok()&&this._propFeat===true&&!!this._ledger&&!this._entering&&!this._migrating&&!!this.state.db&&Date.now()-(this._propFail||0)>=this.PROP_BACKOFF, busy=()=>(this._pending||[]).length>0||!!this._flushing;
     let n=0;
     for(let round=0;round<this.PROP_ROUNDS;round++){
-      if(!go()) return n; const s=await this.propSettle(ok); if(!s) return n;
-      if(s.res){ n+=s.res.length; if(!await this.propResolve(this.propLanded(s.res),ok)) return n; } // a batch of an earlier run (its flush outlived posFlushed) that landed only now: its audit line + resolve now
+      if(!go()) return n; const s=await this.propSettle(ok); if(!s) return n; if(s.res) n+=s.res.length;
+      if((s.res||this.propUnacked().size)&&!await this.propResolve(s.res?this.propLanded(s.res):[],ok)) return n; // a batch of an earlier run (its flush outlived posFlushed) that landed only now: its audit line + resolve now; with it every verdict not acknowledged yet
       if(busy()||!go()) return n;
       const pg=await this.propPending(go); if(!pg) return n; const items=pg.items;
       if(!items.length||busy()) return n;
@@ -3056,16 +3077,36 @@ class Component extends DCLogic {
       const raw=((pg&&pg.items)||[]).filter(x=>x&&x.id); for(const x of raw) if(!seen.has(x.id)){ seen.add(x.id); items.push(x); } more=!!(pg&&pg.more);
       if(!more||!raw.length) break; after=raw[raw.length-1].id; }
     return {items,more}; }
-  // POST /pos/proposals/resolve in chunks of 200 (propWire). A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
+  // the verdicts this page resolves (per company, in this page's memory) until a POST /pos/proposals/resolve that carries them returns 200: each
+  // later resolve sends them again, also once their proposal is no longer pending — the bar superseded it meanwhile: the server keeps that late
+  // verdict and moves the successor's base to what the ERP applied (resolve is idempotent, a late verdict first-wins); _propRun sends them BEFORE
+  // it reads the pending list, so the successor is merged against that base and the bar's next edit is not taken for an ERP change. A page that
+  // closed (reload, crash, logout) between the commit and the 200 took them along: a page's first run for a company — nothing unsent, the book is
+  // the server's — starts from the book's latest PROP_RESEND applied / partial verdicts (posProposalsDone; one already resolved changes nothing;
+  // a rejected one moves no base, and one still pending is resolved again from the pending list anyway)
+  propUnacked(){ const M=this._propU||(this._propU=new Map()), t=this.apiCfg().tenantId||'', S=this._propSeed||(this._propSeed=new Set()); if(!M.has(t)) M.set(t,new Map()); const U=M.get(t);
+    if(!S.has(t)&&!(this._pending||[]).length&&!this._flushing){ S.add(t); for(const e of ((this.state.db||{}).posProposalsDone||[]).filter(e=>e&&e.id&&(e.state==='applied'||e.state==='partial')).slice(-this.PROP_RESEND)) if(!U.has(e.id)) U.set(e.id,e); } // unsent changes: seeded on a later run
+    return U; }
+  // before a resolve the catalogue with what was applied goes to the tills FIRST (the POS permission and the ledger live, as posSyncLedger; only
+  // when its hash changed): a bar that reads a verdict stops protecting those fields at once and would otherwise apply an older catalogue right
+  // after it (the old price, a product it just created hidden) until the next posSync. A PUT that fails for now (network, 5xx, 409…) stops the run
+  // (nothing resolved; next tick); one the server refuses for good (400 / 413 / 422: invalid, too big) is noted (lastError) and the verdicts go on —
+  // the tills would not get that catalogue anyway, and holding them back would stop every resolve of the company
+  async propCatalog(ok){ if(!this.posPerm()||!this.ledgerLive(this.state.db)) return true; const cat=this.posCatalogReady(false); if(!cat||cat.hash===this.posCfg().catalogHashSrv) return true; let c;
+    try{ c=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); }catch(e){ if(![400,413,422].includes(e&&e.status)) throw e; if(!ok()) return false; this.posRt({lastError:'Katalogu: '+String((e&&e.message)||e)}); return true; }
+    if(!ok()) return false; this.posRt({catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:(c&&c.version)||0}); return true; }
+  // POST /pos/proposals/resolve in chunks of 200 (propWire), after the catalogue (propCatalog): R (landed in the book) joins propUnacked, then every
+  // verdict there is sent and leaves it once acknowledged. A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a
   // time: a verdict it still refuses is left out for the rest of this session (this._propSkip — sent every tick it would block its chunk again),
   // the others are resolved. Any other error stops the run (the next tick sends them again). → false once another company / user is on the page
-  async propResolve(R,ok){ const skip=this._propSkip||(this._propSkip=new Set()), bad=e=>[400,413,422].includes(e&&e.status), post=L=>this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:L},timeout:30000});
-    const no=(r,e)=>{ skip.add(r.id); this._propErr='Serveri e refuzoi vendimin për propozimin '+r.id+' ('+((e&&e.message)||'HTTP '+(e&&e.status))+') — nuk dërgohet më në këtë seancë.'; };
-    const all=R.filter(x=>x&&x.id&&!skip.has(x.id)).map(x=>this.propWire(x));
+  async propResolve(R,ok){ const U=this.propUnacked(), skip=this._propSkip||(this._propSkip=new Set()), bad=e=>[400,413,422].includes(e&&e.status), post=L=>this.apiFetch('/pos/proposals/resolve',{method:'POST',body:{results:L},timeout:30000});
+    const no=(r,e)=>{ skip.add(r.id); U.delete(r.id); this._propErr='Serveri e refuzoi vendimin për propozimin '+r.id+' ('+((e&&e.message)||'HTTP '+(e&&e.status))+') — nuk dërgohet më në këtë seancë.'; };
+    for(const x of R) if(x&&x.id&&!skip.has(x.id)) U.set(x.id,x);
+    const all=[...U.values()].map(x=>this.propWire(x)); if(all.length&&!await this.propCatalog(ok)) return false;
     for(let i=0;i<all.length;i+=200){ const part=all.slice(i,i+200);
-      try{ await post(part); }
+      try{ await post(part); for(const r of part) U.delete(r.id); }
       catch(e){ if(!bad(e)) throw e; if(part.length===1){ no(part[0],e); continue; }
-        for(const r of part){ if(!ok()) return false; try{ await post([r]); }catch(e2){ if(!bad(e2)) throw e2; no(r,e2); } } }
+        for(const r of part){ if(!ok()) return false; try{ await post([r]); U.delete(r.id); }catch(e2){ if(!bad(e2)) throw e2; no(r,e2); } } }
       if(!ok()) return false; }
     return true; }
   // the batch this page committed and has not settled yet (this._propSent = {p: the queued patch, ids, res — kept across runs, so a batch whose
