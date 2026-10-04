@@ -16,7 +16,8 @@ const RealDate = Date, T0 = RealDate.now(), NOW0 = new RealDate(2026, 8, 20, 12,
 class FakeDate extends RealDate { constructor(...a) { super(...(a.length ? a : [clockNow()])); } static now() { return clockNow(); } }
 // query string of a mocked request: the vm has no URL / URLSearchParams — the app builds them with c.qs(), the mock server reads them with this
 const qsOf = (path) => Object.fromEntries((String(path).split('?')[1] || '').split('&').filter(Boolean).map(kv => { const [k, v = ''] = kv.split('='); return [decodeURIComponent(k), decodeURIComponent(v)]; }));
-const ctx = { window: {}, document: {}, localStorage: null, console, setTimeout, clearTimeout, TextEncoder, Date: FakeDate };
+// shfletuesi i vërtetë i ka këto: eksporti i librave të ATK-së lexon ZIP-in e shabllonit me to
+const ctx = { window: {}, document: {}, localStorage: null, console, setTimeout, clearTimeout, TextEncoder, TextDecoder, atob, Blob, Response, DecompressionStream, Date: FakeDate };
 vm.createContext(ctx);
 try {
   vm.runInContext('class DCLogic{constructor(p){this.props=p||{};this.state={}} setState(u){const p=typeof u==="function"?u(this.state):u;this.state={...this.state,...p}} forceUpdate(){} }\n' + src + '\n;globalThis.C=Component;', ctx, { filename: 'template.html#logic' });
@@ -3109,3 +3110,36 @@ apiBlock.then(async () => {
       eq([S.bad.slice(bad0), S.noHdr, TP.commits.every(c => Object.keys(c).every(k => ['products', 'categories', 'posProposalsDone'].includes(k)))], [[], [], true], 'mock server (proposals): no commit carried `_srv` rows or posSync runtime fields — only products / categories / posProposalsDone; every call had X-Kontabo-Client: 2');
     } finally { S.features = feat0; }
   }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+
+// ── skedari i ATK-së del NGA VETË SHABLLONI: çdo pjesë tjetër bajt për bajt e pandryshuar ──
+// Rregulli i pronarit: as një presje, as një pikë, as një stil i shabllonit nuk ndryshon. Prandaj krahasohet
+// paketa e prodhuar me shabllonin e ngulitur: vetëm sheet1.xml dhe sharedStrings.xml guxojnë të ndryshojnë,
+// dhe te sheet1.xml gjithçka para rreshtit 4 duhet të mbetet identike.
+(async () => {
+  const zlib = require('zlib');
+  const unzip = bytes => { const b = Buffer.from(bytes); const out = {}; let i = 0;
+    while (i + 30 <= b.length && b.readUInt32LE(i) === 0x04034b50) {
+      const method = b.readUInt16LE(i + 8), csize = b.readUInt32LE(i + 18), nlen = b.readUInt16LE(i + 26), elen = b.readUInt16LE(i + 28);
+      const name = b.slice(i + 30, i + 30 + nlen).toString('utf8'), start = i + 30 + nlen + elen, raw = b.slice(start, start + csize);
+      out[name] = method === 0 ? raw : zlib.inflateRawSync(raw);
+      i = start + csize; }
+    return out; };
+  const all = () => true;
+  for (const kind of ['sale', 'purchase']) {
+    const book = c.vatBook(kind, all);
+    const bytes = await c.atkBookBytes(book);
+    if (!bytes) { eq(true, false, 'atkBookBytes: shablloni nuk u lexua në Node'); continue; }
+    const tpl = unzip(c.b64bytes(c.ATK_TPL[kind])), got = unzip(bytes);
+    const changed = Object.keys(tpl).filter(k => !got[k] || !got[k].equals(tpl[k]));
+    eq([Object.keys(got).sort().join(), Object.keys(tpl).sort().join()], [Object.keys(tpl).sort().join(), Object.keys(tpl).sort().join()],
+       'libri ' + kind + ': paketa ka saktësisht të njëjtat pjesë si shablloni');
+    eq(changed.sort(), ['xl/sharedStrings.xml', 'xl/worksheets/sheet1.xml'],
+       'libri ' + kind + ': VETËM fleta dhe vargjet ndryshojnë — stilet, bashkimet, tema dhe docProps kalojnë bajt për bajt');
+    const t0 = tpl['xl/worksheets/sheet1.xml'].toString('utf8'), g0 = got['xl/worksheets/sheet1.xml'].toString('utf8');
+    const cut = x => x.slice(0, x.indexOf('<row r="4"') > 0 ? x.indexOf('<row r="4"') : x.indexOf('</sheetData>'));
+    eq(cut(g0).replace(/<dimension[^>]*\/>/, ''), cut(t0).replace(/<dimension[^>]*\/>/, ''),
+       'libri ' + kind + ': tri rreshtat e kokës dhe gjithçka para të dhënave mbeten fjalë për fjalë të shabllonit');
+    eq([/<mergeCells count="8">/.test(g0), /t="s"/.test(g0.slice(g0.indexOf('<row r="4"') + 1) || ''), book.rows.length > 0],
+       [true, true, true], 'libri ' + kind + ': bashkimet e shabllonit rrinë dhe rreshtat e rinj shkruhen si sharedStrings');
+  }
+})().catch(e => { console.log('FAIL prova e shabllonit dështoi: ' + (e && e.stack || e)); process.exitCode = 1; });
