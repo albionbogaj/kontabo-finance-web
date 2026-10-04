@@ -417,9 +417,24 @@
   /* 1. ÇDO rrjetë inline bëhet një kolonë. Enumërimi i modeleve ishte i brishtë: shfletuesi e rishkruan vlerën
      (`minmax(0,1.5fr)` → `minmax(0px, 1.5fr)`), prandaj një rregull i vetëm e zë gjithë aplikacionin. Përjashtohen
      vetëm rrjetat që janë tashmë të vogla ose vetë-përshtatëse (çiftet etiketë/vlerë dhe auto-fill). */
-  [style*="grid-template-columns"]:not([style*="auto-fill"]):not([style*="auto auto"]):not([style*="auto 1fr"]):not([style*="auto minmax"]) {
+  /* `:not(.chartg)` është pjesë e vetë rregullit, jo një rregull i dytë: katër `:not()`-at e mësipërm e ngrenë
+     specificitetin te (0,5,0), prandaj një rregull i mëvonshëm me klasë (0,1,0) nuk e mundte dot — grafiku mbetej
+     i shtypur edhe pse ishte shkruar përjashtimi. */
+  [style*="grid-template-columns"]:not(.chartg):not([style*="auto-fill"]):not([style*="auto auto"]):not([style*="auto 1fr"]):not([style*="auto minmax"]) {
     grid-template-columns: 1fr !important;
   }
+  /* GRAFIKU mbetet grafik edhe në telefon: kolonat qëndrojnë, vetëm hapësira dhe lartësia zbuten. */
+  .chartg { gap: 4px !important; height: 150px !important; }
+  /* Shiriti i periudhave: pesë pilula nuk hyjnë te 375 px dhe tre prej tyre thyheshin në dy rreshta
+     („Këtë / javë"). Në telefon rrëshqet anash dhe çdo etiketë mbetet në një rresht. */
+  .perbar { overflow-x: auto !important; flex-wrap: nowrap !important; -webkit-overflow-scrolling: touch; scrollbar-width: none; }
+  .perbar::-webkit-scrollbar { display: none; }
+  .perbar > button { white-space: nowrap !important; flex: none !important; }
+  .chartg span { font-size: 9.5px !important; }
+  /* Njoftimet: në desktop janë një panel 380 px i ankoruar djathtas; në telefon ai dilte jashtë ekranit
+     (gjerësi 380 me majtas −81). Këtu bëhet fletë sa gjerësia e ekranit, me lartësi të kufizuar dhe rrëshqitje. */
+  .notifp { left: 8px !important; right: 8px !important; width: auto !important; top: 56px !important;
+            max-height: calc(100vh - 72px) !important; overflow-y: auto !important; }
 
   /* 2. titujt e mëdhenj dhe hapësirat e gjera zbuten */
   main h1 { font-size: 24px !important; line-height: 1.15 !important; }
@@ -655,7 +670,7 @@ input,select{font-family:inherit}
             <h1 style="margin:0;font-family:Manrope,sans-serif;letter-spacing:-.025em;font-weight:800;font-size:30px;letter-spacing:-.01em">{{ greeting }}</h1>
             <div style="color:#526477;font-size:13.5px;margin-top:2px">{{ dashLine }}</div>
           </div>
-          <div style="display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(16,36,58,.05)">
+          <div class="perbar" style="display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(16,36,58,.05)">
             <sc-for list="{{ ranges }}" as="r" hint-placeholder-count="5">
               <button sc-camel-on-click="{{ r.go }}" style="padding:6px 12px;border:0;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ r.bg }};color:{{ r.fg }};box-shadow:{{ r.sh }}">{{ r.label }}</button>
             </sc-for>
@@ -676,7 +691,7 @@ input,select{font-family:inherit}
               <div><div style="font-weight:700;font-size:14px">Shitjet dhe shpenzimet</div><div style="font-size:11.5px;color:#8FA3B8;margin-top:1px">{{ chartNote }}</div></div>
               <div style="display:flex;gap:14px;font-size:12px;color:#526477"><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:#2563EB;margin-right:6px"></span>Shitje neto</span><span><span style="display:inline-block;width:8px;height:8px;border-radius:2px;background:rgba(16,36,58,.18);margin-right:6px"></span>Blerje + shpenzime</span></div>
             </div>
-            <div style="display:grid;grid-template-columns:repeat(9,1fr);gap:10px;align-items:end;height:180px;margin-top:18px">
+            <div class="chartg" style="display:grid;grid-template-columns:repeat(9,1fr);gap:10px;align-items:end;height:180px;margin-top:18px">
               <sc-for list="{{ chart }}" as="c" hint-placeholder-count="9">
                 <div style="display:flex;flex-direction:column;align-items:center;gap:6px;height:100%;justify-content:flex-end">
                   <div style="display:flex;gap:3px;align-items:end;width:100%;height:100%">
@@ -1052,7 +1067,7 @@ input,select{font-family:inherit}
           <h1 style="margin:0;font-family:Manrope,sans-serif;letter-spacing:-.025em;font-weight:800;font-size:28px">Fiskalizimi — vetëm lexim</h1>
           <span style="padding:3px 9px;border-radius:7px;font-size:12px;font-weight:700;background:rgba(37,99,235,.10);color:#2563EB">konfigurohet në secilën arkë</span>
           <div style="flex:1"></div>
-          <div style="display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(16,36,58,.05)">
+          <div class="perbar" style="display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(16,36,58,.05)">
             <sc-for list="{{ fiscalTabs }}" as="t" hint-placeholder-count="3"><button sc-camel-on-click="{{ t.go }}" style="padding:6px 12px;border:0;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;background:{{ t.bg }};color:{{ t.fg }};box-shadow:{{ t.sh }}">{{ t.label }}</button></sc-for>
           </div>
         </div>
@@ -1268,7 +1283,7 @@ input,select{font-family:inherit}
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap">
           <div style="min-width:0"><div style="display:flex;align-items:center;gap:8px"><h1 style="margin:0;font-family:Manrope,sans-serif;letter-spacing:-.025em;font-weight:800;font-size:28px">{{ tbl.title }}</h1><sc-if value="{{ tbl.count }}" hint-placeholder-val="{{ false }}"><span style="padding:3px 8px;border-radius:7px;background:rgba(16,36,58,.06);font-size:12px;font-weight:600;color:#3C5268">{{ tbl.count }}</span></sc-if></div><sc-if value="{{ tbl.sub }}" hint-placeholder-val="{{ false }}"><div style="color:#526477;font-size:13px;margin-top:2px">{{ tbl.sub }}</div></sc-if></div>
           <div style="flex:1"></div>
-          <sc-if value="{{ tbl.hasPeriod }}" hint-placeholder-val="{{ false }}"><div style="display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(16,36,58,.05)"><sc-for list="{{ tbl.period }}" as="p" hint-placeholder-count="4"><button sc-camel-on-click="{{ p.go }}" data-on="{{ p.on }}" style="padding:6px 12px;border:0;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;background:transparent;color:#526477" class="mf-per">{{ p.label }}</button></sc-for></div></sc-if>
+          <sc-if value="{{ tbl.hasPeriod }}" hint-placeholder-val="{{ false }}"><div class="perbar" style="display:flex;gap:2px;padding:3px;border-radius:10px;background:rgba(16,36,58,.05)"><sc-for list="{{ tbl.period }}" as="p" hint-placeholder-count="4"><button sc-camel-on-click="{{ p.go }}" data-on="{{ p.on }}" style="padding:6px 12px;border:0;border-radius:8px;font-size:12.5px;font-weight:600;cursor:pointer;background:transparent;color:#526477" class="mf-per">{{ p.label }}</button></sc-for></div></sc-if>
           <sc-if value="{{ tbl.hasFilters }}" hint-placeholder-val="{{ false }}"><sc-for list="{{ tbl.filters }}" as="f" hint-placeholder-count="2"><sc-if value="{{ f.isDate }}" hint-placeholder-val="{{ false }}"><input class="mf-in" type="date" value="{{ f.value }}" sc-camel-on-change="{{ f.set }}" title="{{ f.title }}" style="width:150px;padding:7px 10px"></sc-if><sc-if value="{{ f.isSel }}" hint-placeholder-val="{{ false }}"><sc-raw-select value="{{ f.value }}" sc-camel-on-change="{{ f.set }}" class="mf-sel" title="{{ f.title }}"><sc-for list="{{ f.opts }}" as="o" hint-placeholder-count="3"><option value="{{ o.id }}">{{ o.label }}</option></sc-for></sc-raw-select></sc-if></sc-for></sc-if>
           <sc-if value="{{ tbl.hasSearch }}" hint-placeholder-val="{{ false }}"><input value="{{ tbl.q }}" sc-camel-on-change="{{ tbl.setQ }}" placeholder="Kërko…" style="padding:8px 12px;border:1px solid rgba(16,36,58,.1);border-radius:9px;background:rgba(255,255,255,.8);font-size:13px;width:200px;outline:none"></sc-if>
           <sc-for list="{{ tbl.actions }}" as="a" hint-placeholder-count="1"><button sc-camel-on-click="{{ a.go }}" class="mf-btn" data-p="{{ a.p }}">{{ a.label }}</button></sc-for>
@@ -1859,7 +1874,7 @@ input,select{font-family:inherit}
 <!-- NOTIFICATIONS -->
 <sc-if value="{{ showNotif }}" hint-placeholder-val="{{ false }}">
   <div sc-camel-on-click="{{ closeModal }}" style="position:fixed;inset:0;z-index:40"></div>
-  <div style="position:fixed;top:60px;right:76px;width:380px;z-index:41;border-radius:16px;background:rgba(255,255,255,.9);backdrop-filter:blur(30px);border:1px solid rgba(255,255,255,.9);box-shadow:0 30px 80px -30px rgba(16,36,58,.45);overflow:hidden">
+  <div class="notifp" style="position:fixed;top:60px;right:76px;width:380px;z-index:41;border-radius:16px;background:rgba(255,255,255,.9);backdrop-filter:blur(30px);border:1px solid rgba(255,255,255,.9);box-shadow:0 30px 80px -30px rgba(16,36,58,.45);overflow:hidden">
     <div style="padding:14px 18px;border-bottom:1px solid rgba(16,36,58,.06);font-weight:700;font-size:14px;display:flex;justify-content:space-between"><span>Njoftimet <sc-if value="{{ hasUnread }}" hint-placeholder-val="{{ true }}"><span style="color:#8FA3B8;font-weight:500">{{ alertCount }} të palexuara</span></sc-if></span><button sc-camel-on-click="{{ readAlerts }}" disabled="{{ !hasUnread }}" style="border:0;background:none;color:#2563EB;font-size:12px;font-weight:600;cursor:pointer">Shëno të lexuara</button></div>
     <sc-for list="{{ alerts }}" as="a" hint-placeholder-count="5">
       <button sc-camel-on-click="{{ a.go }}" style="display:flex;gap:10px;width:100%;text-align:left;padding:12px 18px;border:0;border-top:1px solid rgba(16,36,58,.05);background:none;cursor:pointer;opacity:{{ a.op }}" style-hover="background:rgba(37,99,235,.05)"><span style="width:8px;height:8px;border-radius:50%;margin-top:5px;background:{{ a.c }};flex:none"></span><span><span style="display:block;font-size:13px;font-weight:600">{{ a.t }}</span><span style="display:block;font-size:12px;color:#526477">{{ a.s }}</span></span></button>
@@ -1977,7 +1992,7 @@ class Component extends DCLogic {
   ST = {
     'Draft':{bg:'rgba(16,36,58,.06)',fg:'#3C5268'},'Lëshuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Paguar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     'Pjesërisht':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Vonuar':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Anuluar':{bg:'rgba(16,36,58,.06)',fg:'#8FA3B8'},'Kthyer':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},
-    'Fiskalizuar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Në pritje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Dështoi':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Ritentim':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pa fiskalizim':{bg:'rgba(16,36,58,.06)',fg:'#526477'},'Në proces':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'E suksesshme':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
+    'Fiskalizuar':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Në pritje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Dështoi':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Ritentim':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pa fiskalizim':{bg:'rgba(16,36,58,.06)',fg:'#526477'},'Fiskalizuar (TEST)':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Në proces':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'E suksesshme':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     'Aktiv':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Ftuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Pezulluar':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'—':{bg:'transparent',fg:'#8FA3B8'},'Vëmendje':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Në rregull':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},
     // purchases, stock, finance, accounting
     'Pranuar':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Hyrje':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Dalje':{bg:'rgba(220,38,38,.10)',fg:'#B91C1C'},'Blerje':{bg:'rgba(21,128,61,.10)',fg:'#15803D'},'Shitje':{bg:'rgba(37,99,235,.10)',fg:'#2563EB'},'Rregullim':{bg:'rgba(217,119,6,.12)',fg:'#B45309'},'Hapje':{bg:'rgba(16,36,58,.06)',fg:'#3C5268'},'Anulim shitje':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},'Anulim blerje':{bg:'rgba(124,58,237,.10)',fg:'#6D28D9'},
@@ -3314,7 +3329,10 @@ class Component extends DCLogic {
   LEDGER_POLL = 2000; // ms between "is the server's POS book ready?" polls during the migration
   // a shift id as the lists show it: a UUID (KONTABO BAR before 1.11.3) is cut to its first 8 characters + “…” — still a real part of the id
   shiftLabel(id){ const s=String(id||''); return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s)?s.slice(0,8)+'…':s; }
-  LEDGER_FS = {fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',processing:'Në pritje',failed:'Dështoi',error:'Dështoi',unknown:'Pa fiskalizim',cancelled:'Anuluar'}; // unknown = the till sold without fiscalizing (fiscalization off there)
+  // Një kupon i fiskalizuar në mjedisin TEST (ose nga simulatori) ËSHTË i fiskalizuar — por pa vlerë fiskale.
+  // Më parë shfaqej si „Në proces", që lexohej sikur fiskalizimi s'kishte përfunduar; tani thuhet ashtu si është.
+  simFiscal(x){ return /\((?:SIM|TEST)\)/.test(String(x||'')); }
+  LEDGER_FS = {fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (TEST)',pending:'Në pritje',processing:'Në pritje',failed:'Dështoi',error:'Dështoi',unknown:'Pa fiskalizim',cancelled:'Anuluar'}; // unknown = the till sold without fiscalizing (fiscalization off there)
   ledgerFresh(tenantId){ this._ledGen=(this._ledGen||0)+1; return {tenantId:tenantId||'',epoch:null,rev:0,rows:new Map(),shifts:new Map(),ready:false,mode:'off',pending:0,loaded:false,gen:this._ledGen,ver:0}; }
   // GET /health → true (posLedger:1) / false (a server without it) / null (no answer; with `retry` asked again after HEALTH_RETRY ms);
   // every answer also says whether the server takes KONTABO BAR's product proposals (posProposals:1 → this._propFeat)
@@ -3718,7 +3736,7 @@ class Component extends DCLogic {
     if(!receipts.length&&!shifts.length) return n;
     this.commit(d=>{
       const nd={...d,movements:[...d.movements],payments:[...d.payments],queue:[...d.queue],posReceipts:[...(d.posReceipts||[])],posShifts:[...(d.posShifts||[])]};
-      const FS={fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (SIM)',pending:'Në pritje',processing:'Në pritje',failed:'Dështoi',error:'Dështoi',unknown:'Pa fiskalizim',cancelled:'Anuluar'}, QS={fiscalized:'E suksesshme',fiscalized_sim:'E suksesshme',pending:'Në pritje',failed:'Dështoi'};
+      const FS={fiscalized:'Fiskalizuar',fiscalized_sim:'Fiskalizuar (TEST)',pending:'Në pritje',processing:'Në pritje',failed:'Dështoi',error:'Dështoi',unknown:'Pa fiskalizim',cancelled:'Anuluar'}, QS={fiscalized:'E suksesshme',fiscalized_sim:'E suksesshme',pending:'Në pritje',failed:'Dështoi'};
       const acctFor=posId=>this.cashAccountFor(posId,nd);
       const txOf=r=>String(r.atk_transaction_id||r.atk_tx_id||r.transaction_id||'');
       const qReason=(r,doc)=>doc.status==='Anulim'?('Anulim i kuponit '+(doc.origNo||'—')+(doc.atkTx?' · ATK '+doc.atkTx:'')+(doc.cancelReason?' · Arsyeja: '+doc.cancelReason:'')+(r.fiscal_status==='fiscalized_sim'?' · SIMULATOR — pa vlerë fiskale':r.fiscal_error?' · '+r.fiscal_error:'')):((doc.source==='block'?this.posBlockLabel(doc)+' · ':'')+(r.fiscal_status==='fiscalized_sim'?'SIMULATOR — pa vlerë fiskale':(r.fiscal_error||'—')));
@@ -4062,7 +4080,7 @@ class Component extends DCLogic {
         +'</div>'
       :'<div><div class="lab acc">DOKUMENTI</div><div class="pn">'+e(title)+'</div></div>';
     const band='<div class="band">'+partyBlock+'<div><div class="lab">REFERENCA</div><div class="kv">'+refs+'</div></div></div>';
-    const sim=/SIM/.test(doc.fiscal||'')?'<div class="warn">KUPON TEST — SIMULATOR · PA VLERË FISKALE</div>':'';
+    const sim=this.simFiscal(doc.fiscal)?'<div class="warn">KUPON TEST — SIMULATOR · PA VLERË FISKALE</div>':'';
     const th='<thead><tr><th class="nr">Nr.</th><th>Përshkrimi</th><th class="un">Njësia</th><th class="qt r">Sasia</th>'
       +(money?'<th class="pr r">Çmimi/njësi</th>':'')+(showDisc?'<th class="di r">Zbritja</th>':'')
       +(money?'<th class="vt r">TVSH</th>':'')+'<th class="am r">Shuma</th></tr></thead>';
@@ -4775,7 +4793,7 @@ class Component extends DCLogic {
       if(ret) actions.push({label:'Kthimi '+ret.no,kind:'',go:()=>this.openDr('pos',ret.id)});
       if(canc) actions.push({label:'Anulimi '+canc.no,kind:'',go:()=>this.openDr('pos',canc.id)});
       actions.push({label:'Radha fiskale',kind:'',go:()=>this.setState({dr:null,section:'settings',page:'Fiskalizimi',fiscalTab:'Radha'})});
-      const fsColor=/SIM/.test(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':'#B91C1C';
+      const fsColor=this.simFiscal(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':'#B91C1C';
       return {title:r.customer,subtitle:(r.status==='Kthim'?'Kupon kthimi':r.status==='Anulim'?'Anulim i kuponit '+(r.origNo||'—')+' (ATK CANCEL)':r.status==='Anuluar'?'Kupon POS · anuluar'+(r.cancelNo?' me '+r.cancelNo:''):'Kupon POS')+(r.source==='block'?' · '+this.posBlockLabel(r):'')+' · '+r.posName+' · '+r.branch+' · '+r.operator,no:r.no,badge:{text:this.posBadge(r.status),...this.st(this.posBadge(r.status))},actions,close,
         meta:[{k:'Data / ora',v:r.date+' '+r.time},...(r.source==='block'?[{k:'Blloku tatimor',v:'nr. '+(r.blockNo||'—')+(r.blockCode?' · kodi '+r.blockCode:'')+(r.blockTs?' · lëshuar '+r.blockTs:''),color:'#B45309'}]:[]),...(r.cancelReason?[{k:'Arsyeja e anulimit',v:r.cancelReason,color:'#B91C1C'}]:[]),{k:'Fiskalizimi',v:r.fiscal,color:fsColor},{k:'Referenca fiskale',v:r.fiscalRef,mono:true},{k:'Konfigurimi fiskal',v:(r.fiscalMode||'—')+' · v'+(r.fiscalVersion||0),mono:true},{k:'Para',v:this.fmt(r.cash_c)+(r.change_c?' (kusur '+this.fmt(r.change_c)+')':'')},{k:'Kartë',v:this.fmt(r.card_c)},{k:'Ndërrimi',v:r.shift||'—',mono:true},...(r.atkTx?[{k:'Transaksioni ATK',v:r.atkTx,mono:true}]:[]),{k:'Importuar',v:r.importedAt}],
         sections:[{title:'Artikujt',cols:[{label:'Artikulli'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Çmimi',align:'right'},{label:'Zbritje',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'}],
@@ -4831,7 +4849,7 @@ class Component extends DCLogic {
     for(const x of r.returns) actions.push({label:'Kthimi '+(x.no||x.id),kind:'',go:()=>this.openPosReceipt(x.id,relOf(x.id))});
     if(r.cancelId) actions.push({label:'Anulimi '+(r.cancelNo||r.cancelId),kind:'',go:()=>this.openPosReceipt(r.cancelId,relOf(r.cancelId))});
     actions.push({label:'Statuset fiskale',kind:'',go:()=>this.setState({dr:null,section:'settings',page:'Fiskalizimi',fiscalTab:'Kuponët'})});
-    const fsColor=/SIM/.test(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':'#B91C1C', acc=x=>(this.accountsOf(db).find(a=>a.id===x)||{name:x||'—'}).name;
+    const fsColor=this.simFiscal(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':'#B91C1C', acc=x=>(this.accountsOf(db).find(a=>a.id===x)||{name:x||'—'}).name;
     const ls=r.ledgerState?(this.LEDGER_RS[r.ledgerState]||r.ledgerState):'pa përpunuar ende', badge=this.posBadge(r.status);
     return {title:r.customer,subtitle:(r.status==='Kthim'?'Kupon kthimi'+(r.origNo?' i '+r.origNo:''):r.status==='Anulim'?'Anulim i kuponit '+(r.origNo||'—')+' (ATK CANCEL)':r.status==='Anuluar'?'Kupon POS · anuluar'+(r.cancelNo?' me '+r.cancelNo:''):r.status==='Kthyer'?'Kupon POS · me kthim':'Kupon POS')+(r.source==='block'?' · '+this.posBlockLabel(r):'')+' · '+r.posName+(r.branch?' · '+r.branch:'')+' · '+r.operator,no:r.no,badge:{text:badge,...this.st(badge)},actions,close,
       meta:[{k:'Data / ora',v:r.date+' '+r.time},...(r.source==='block'?[{k:'Blloku tatimor',v:'nr. '+(r.blockNo||'—')+(r.blockCode?' · kodi '+r.blockCode:'')+(r.blockTs?' · lëshuar '+r.blockTs:''),color:'#B45309'}]:[]),...(r.cancelReason?[{k:'Arsyeja e anulimit',v:r.cancelReason,color:'#B91C1C'}]:[]),
@@ -4849,7 +4867,7 @@ class Component extends DCLogic {
   posSummaryDrawer(r,db,close){ const N=v=>Number(v)||0, c=r.counts||{}, C=(t,o)=>this.cell(t,o), M=(v,o)=>this.moneyCell(v,o), dash=C('—',{align:'right',color:'#8FA3B8'});
     const ops=Object.entries(r.operators||{}).sort((a,b)=>N(b[1].total_c)-N(a[1].total_c)), fc=Object.entries(r.fiscalCounts||{}).filter(([,n])=>N(n)>0), fo=r.fiscalOpen||[];
     const pays=(db.payments||[]).filter(p=>p._srv&&p.docId===r.id), acc=x=>(this.accountsOf(db).find(a=>a.id===x)||{name:x||'—'}).name, failed=fo.some(x=>x.status==='failed');
-    const fsColor=/SIM/.test(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':r.fiscal==='Dështoi'?'#B91C1C':'#526477';
+    const fsColor=this.simFiscal(r.fiscal)?'#B45309':r.fiscal==='Fiskalizuar'?'#15803D':r.fiscal==='Në pritje'?'#B45309':r.fiscal==='Dështoi'?'#B91C1C':'#526477';
     // a MONTH summary (the server merged the closed month's days): the month instead of the day, its first–last receipt date, "Shiko kuponat e muajit"
     const mon=!!r.month, mLbl=mon?this.monthLabel(r.isoMonth||this.toIso(r.date).slice(0,7)):'', span=mon?(r.firstDate&&r.lastDate?this.fmtDate(r.firstDate).slice(0,5)+'–'+this.fmtDate(r.lastDate).slice(0,5):''):(r.firstTime?r.firstTime+'–'+r.time:'');
     return {title:(mon?'Përmbledhje mujore · ':'Përmbledhje ditore · ')+r.posName,subtitle:(mon?mLbl:r.date)+(r.branch?' · '+r.branch:'')+' · '+N(r.n)+(N(r.n)===1?' kupon':' kupona')+(span?' · '+span:''),no:r.no,
@@ -5284,7 +5302,7 @@ class Component extends DCLogic {
           const rows=group(sales.slice().sort((a,b)=>this.toIso(b.date).localeCompare(this.toIso(a.date))),r=>this.monthOf(r.date)).map(([ym,rs])=>({ym,n:docN(rs),sub:sum(rs,'sub'),vat:sum(rs,'vat'),tot:sum(rs,'total'),gp:sum(rs,'sub')-sum(rs.map(cogsOf))}));
           T.rows=rows.map(r=>({cells:[C(this.monthLabel(r.ym),{b:true}),C(String(r.n),{align:'right'}),M(r.sub),M(r.vat,{color:'#526477'}),M(r.tot,{b:true}),M(r.gp,{color:'#15803D'})]})); T.sub='Të gjithë muajt · faturat e lëshuara'; }
         else { T.cols=[{label:'Numri'},{label:'Lloji'},{label:'Data'},{label:'Klienti'},{label:'NUI'},{label:'Neto',align:'right'},{label:'TVSH',align:'right'},{label:'Totali',align:'right'},{label:'Statusi'},{label:'Fiskalizimi'}];
-          T.rows=inv.map(r=>({open:()=>openDoc(r),cells:[C(r.no,{mono:true}),B(r.src==='pos'?'Kupon POS':r.src==='ret'?'Notë krediti':'Faturë',{}),C(r.date,{color:'#526477'}),C(r.customer,{b:true}),C(r.nui,{mono:true,color:'#526477'}),M(r.sub),M(r.vat,{color:'#526477'}),M(r.total,{b:true}),B(r.src==='pos'?this.posBadge(r.status):r.src==='ret'?'Kthyer':this.docStatus(r)),B(/SIM/.test(r.fiscal)?'Në proces':r.fiscal)]})); }
+          T.rows=inv.map(r=>({open:()=>openDoc(r),cells:[C(r.no,{mono:true}),B(r.src==='pos'?'Kupon POS':r.src==='ret'?'Notë krediti':'Faturë',{}),C(r.date,{color:'#526477'}),C(r.customer,{b:true}),C(r.nui,{mono:true,color:'#526477'}),M(r.sub),M(r.vat,{color:'#526477'}),M(r.total,{b:true}),B(r.src==='pos'?this.posBadge(r.status):r.src==='ret'?'Kthyer':this.docStatus(r)),B(r.fiscal,{sub:this.simFiscal(r.fiscal)?'mjedisi TEST':''})]})); }
         break; }
       case 'R:Blerje': {
         period(); const cur=tabs(['Sipas furnitorit','Sipas artikullit','Sipas muajit','Blerjet']);
@@ -5437,9 +5455,9 @@ class Component extends DCLogic {
         T.title=isRet?'Kthimet nga POS-i':'Shitjet nga POS-i'; T.sub='Kuponët e sinkronizuar nga POS-i desktop. Çdo kupon ka zbritur stokun, ka hyrë në arkë/bankë dhe në radhën fiskale.'; T.count=list.length;
         T.actions=[{label:'Sinkronizo tani',p:'1',go:()=>this.posSync(true)}];
         const todayS=this.fmtDate(this.today()), td=list.filter(r=>r.date===todayS);
-        T.kpis=[{label:isRet?'Kthime sot':'Shitje sot',value:money(td.reduce((a,r)=>a+r.total,0)),sub:plural(td.length,'kupon','kupona')+(td.some(r=>r.status==='Anulim')?' · neto nga '+td.filter(r=>r.status==='Anulim').length+' anulime':'')},{label:'Para',value:money(td.reduce((a,r)=>a+r.cash_c,0))},{label:'Kartë',value:money(td.reduce((a,r)=>a+r.card_c,0))},{label:'Fiskalizimi',value:String(list.filter(r=>r.fiscal==='Në pritje').length)+' në pritje',c:list.some(r=>r.fiscal==='Në pritje')?'#B45309':'#15803D',sub:list.some(r=>/SIM/.test(r.fiscal))?'SIMULATOR — pa vlerë fiskale':''}];
+        T.kpis=[{label:isRet?'Kthime sot':'Shitje sot',value:money(td.reduce((a,r)=>a+r.total,0)),sub:plural(td.length,'kupon','kupona')+(td.some(r=>r.status==='Anulim')?' · neto nga '+td.filter(r=>r.status==='Anulim').length+' anulime':'')},{label:'Para',value:money(td.reduce((a,r)=>a+r.cash_c,0))},{label:'Kartë',value:money(td.reduce((a,r)=>a+r.card_c,0))},{label:'Fiskalizimi',value:String(list.filter(r=>r.fiscal==='Në pritje').length)+' në pritje',c:list.some(r=>r.fiscal==='Në pritje')?'#B45309':'#15803D',sub:list.some(r=>this.simFiscal(r.fiscal))?'mjedisi TEST — pa vlerë fiskale':''}];
         T.cols=[{label:'Kuponi'},{label:'Data'},{label:'Arka'},{label:'Operatori'},{label:'Klienti'},{label:'Artikuj',align:'right'},{label:'Para',align:'right'},{label:'Kartë',align:'right'},{label:'Totali',align:'right'},{label:'Statusi'},{label:'Fiskalizimi'},{label:'Fatura A4'}];
-        T.rows=list.map(r=>({open:()=>this.openDr('pos',r.id),cells:[C(r.no,{mono:true,sub:this.posBlockLabel(r)}),C(r.date+' '+r.time,{color:'#526477'}),C(r.posName,{sub:r.branch}),C(r.operator),C(r.customer,{b:true}),C(String(r.items.length),{align:'right'}),M(r.cash_c),M(r.card_c),M(r.total,{b:true}),B(this.posBadge(r.status),{sub:r.status==='Anulim'?'anulim i '+(r.origNo||''):r.status==='Anuluar'?'anuluar'+(r.cancelNo?' me '+r.cancelNo:''):''}),B(r.fiscal==='Fiskalizuar (SIM)'?'Në proces':r.fiscal,{}),r.invoiceNo?C(r.invoiceNo,{mono:true,color:'#2563EB'}):C('—',{color:'#8FA3B8'})]}));
+        T.rows=list.map(r=>({open:()=>this.openDr('pos',r.id),cells:[C(r.no,{mono:true,sub:this.posBlockLabel(r)}),C(r.date+' '+r.time,{color:'#526477'}),C(r.posName,{sub:r.branch}),C(r.operator),C(r.customer,{b:true}),C(String(r.items.length),{align:'right'}),M(r.cash_c),M(r.card_c),M(r.total,{b:true}),B(this.posBadge(r.status),{sub:r.status==='Anulim'?'anulim i '+(r.origNo||''):r.status==='Anuluar'?'anuluar'+(r.cancelNo?' me '+r.cancelNo:''):''}),B(r.fiscal,{sub:this.simFiscal(r.fiscal)?'mjedisi TEST — pa vlerë fiskale':''}),r.invoiceNo?C(r.invoiceNo,{mono:true,color:'#2563EB'}):C('—',{color:'#8FA3B8'})]}));
         T.footer=plural(list.length,'kupon','kupona')+' · '+money(list.reduce((a,r)=>a+r.total,0)); T.empty=isRet?'Asnjë kthim i sinkronizuar.':'Asnjë kupon ende — hapni POS-in (run-pos.bat), bëni një shitje dhe ERP-ja e merr automatikisht.';
         break; }
       case 'P:Operatorët': {

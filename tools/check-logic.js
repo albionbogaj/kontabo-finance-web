@@ -272,7 +272,7 @@ const J3 = c.journal(); eq(J3.reduce((a, e) => a + e.lines.reduce((x, l) => x + 
 eq(J3.filter(e => e.ref === 'POS-0001/000001').length, 2, 'journal: POS receipt posts sale + COGS');
 // idempotent re-pull: same receipt again (now fiscalised) only updates status
 let n2 = c.importPosSales([{ ...R1, fiscal_status: 'fiscalized_sim', fiscal_ref: 'SIM-9' }], []);
-eq([n2.receipts, n2.updated, stock('LED-18'), c.accountBalance('cash1') - cashB0, db().posReceipts.find(r => r.id === 'r-1').fiscal], [0, 1, ledBefore - 5, 3781, 'Fiskalizuar (SIM)'], 'pos import: re-pull is idempotent (no stock/cash twice), fiscal status refreshed');
+eq([n2.receipts, n2.updated, stock('LED-18'), c.accountBalance('cash1') - cashB0, db().posReceipts.find(r => r.id === 'r-1').fiscal], [0, 1, ledBefore - 5, 3781, 'Fiskalizuar (TEST)'], 'pos import: re-pull is idempotent (no stock/cash twice), fiscal status refreshed');
 // return receipt
 const RR = rcpt('r-3', 'POS-0001/000003', 'return', 'fiscalized_sim', [it('LED-18', 'Ndriçues LED 18W', -2000, 890, 1000)], -1890, 0, { orig_id: 'r-1' });
 c.importPosSales([RR, { ...R1, status: 'returned' }], []);
@@ -284,7 +284,7 @@ c.state.section = 'dashboard'; c.state.page = 'Paneli';
 const led3 = stock('LED-18'), cash3 = c.accountBalance('cash1'), j3 = c.journal().length;
 c.invoiceFromReceipt('r-2');
 const a4 = db().invoices[0];
-eq([a4.fromPos, a4.posNo, a4.status, a4.paid === a4.total, a4.fiscal, stock('LED-18'), c.accountBalance('cash1'), c.journal().length], ['r-2', 'POS-0001/000002', 'Paguar', true, 'Fiskalizuar (SIM)', led3, cash3, j3], 'A4 from receipt: linked & paid, no new stock/cash/journal');
+eq([a4.fromPos, a4.posNo, a4.status, a4.paid === a4.total, a4.fiscal, stock('LED-18'), c.accountBalance('cash1'), c.journal().length], ['r-2', 'POS-0001/000002', 'Paguar', true, 'Fiskalizuar (TEST)', led3, cash3, j3], 'A4 from receipt: linked & paid, no new stock/cash/journal');
 eq(db().posReceipts.find(r => r.id === 'r-2').invoiceNo, a4.no, 'A4 from receipt: receipt links back');
 eq(c.salesDocs().filter(x => x.no === a4.no).length, 0, 'A4 from receipt: not counted as a second sale');
 eq(c.posCatalogPayload().products.find(p => p.sku === 'LED-18').stock_qm, stock('LED-18') * 1000, 'catalog payload carries live stock');
@@ -325,7 +325,7 @@ c.openDr('pos', 'r-1'); eq(c.drawerVals().actions.some(a => /Kthimi/.test(a.labe
   { const sd = c.salesDocs().filter(x => x.no === 'POS-0001/000005' || x.no === 'POS-0001/000006'); eq([sd.length, sd.reduce((a, x) => a + x.total, 0), sd.reduce((a, x) => a + x.vat, 0)], [2, 0, 0], 'salesDocs / dashboard / TVSH: sale + cancel net to zero'); }
   // re-sync of the same payloads (now the cancel is fiscalised): idempotent, only the fiscal fields move
   const nR = c.importPosSales([{ ...RC, fiscal_status: 'fiscalized_sim', fiscal_ref: 'SIM-C6' }, { ...R5, status: 'void' }], []);
-  eq([nR.receipts, nR.updated, stock('LED-18'), c.accountBalance('cash1') - cash0, db().posReceipts.find(r => r.id === 'r-5c').status, db().posReceipts.find(r => r.id === 'r-5').status, db().posReceipts.find(r => r.id === 'r-5c').fiscal, db().queue[0].status, db().movements.filter(m => m.ref === 'POS-0001/000006').length], [0, 2, led0, 0, 'Anulim', 'Anuluar', 'Fiskalizuar (SIM)', 'E suksesshme', 1], 'cancel: re-sync is idempotent (no double reversal), statuses kept, fiscal refreshed');
+  eq([nR.receipts, nR.updated, stock('LED-18'), c.accountBalance('cash1') - cash0, db().posReceipts.find(r => r.id === 'r-5c').status, db().posReceipts.find(r => r.id === 'r-5').status, db().posReceipts.find(r => r.id === 'r-5c').fiscal, db().queue[0].status, db().movements.filter(m => m.ref === 'POS-0001/000006').length], [0, 2, led0, 0, 'Anulim', 'Anuluar', 'Fiskalizuar (TEST)', 'E suksesshme', 1], 'cancel: re-sync is idempotent (no double reversal), statuses kept, fiscal refreshed');
   // even if the original is re-sent as "final" later (old POS build), it stays cancelled
   c.importPosSales([R5], []); eq(db().posReceipts.find(r => r.id === 'r-5').status, 'Anuluar', 'cancel: original never reverts from Anuluar');
   // POS › Shitje shows both with the badge "Anuluar"; the drawer links both ways
@@ -596,6 +596,32 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
   const port = run([{ rows: 40, headH: 70, contH: 12, theadH: 7, tailH: 20 }]);
   eq([land.length > port.length, land[0].head, land[land.length - 1].tail, land[land.length - 1].pg === 'Faqe ' + land.length + ' nga ' + land.length],
      [true, true, true, true], 'faqezuesi: me __ktbPageH=210 (A4 i shtrirë) faqet janë më të ulëta, pra më shumë — gjithçka tjetër njësoj');
+}
+
+// ── telefoni: grafiku, njoftimet dhe shiriti i periudhave (rregullat e shtresës `narrow` lexohen nga vetë HTML-ja) ──
+{
+  const css = (html.match(/@media \(max-width: 899px\)[\s\S]*?\r?\n\}/) || [])[0] || '';
+  eq([/:not\(\.chartg\)/.test(css), /\.chartg\s*\{[^}]*gap/.test(css), /\.notifp\s*\{[^}]*width:\s*auto/.test(css), /\.perbar\s*\{[^}]*overflow-x/.test(css), /\.perbar > button\s*\{[^}]*nowrap/.test(css)],
+     [true, true, true, true, true],
+     'telefoni: grafiku përjashtohet nga shtypja në një kolonë, njoftimet bëhen sa ekrani, shiriti i periudhave rrëshqet');
+  eq([/class="chartg"/.test(html), /class="notifp"/.test(html), (html.match(/class="perbar"/g) || []).length],
+     [true, true, 3], 'markup-i i mban klasat: grafiku, paneli i njoftimeve dhe të tre shiritat e periudhave');
+  // specificiteti: `:not(.chartg)` DUHET të jetë brenda vetë rregullit të përgjithshëm, përndryshe (0,5,0) e mund klasën
+  eq(/\[style\*="grid-template-columns"\]:not\(\.chartg\)/.test(css), true,
+     'përjashtimi i grafikut rri BRENDA selektorit të përgjithshëm — një rregull i dytë me klasë nuk do ta mundte dot');
+}
+
+// ── fiskalizimi i mjedisit TEST lexohet si i fiskalizuar (në TEST), kurrë si „Në proces" ──
+// Bari e dërgon `fiscalized_sim` kur arka punon te mjedisi TEST i ATK-së; më parë ERP-ja e shfaqte „Në proces",
+// çka lexohej sikur fiskalizimi s'kishte mbaruar — ndërsa te bari kuponi dukej i fiskalizuar.
+{
+  eq([c.LEDGER_FS.fiscalized_sim, c.LEDGER_FS.fiscalized, c.LEDGER_FS.pending, c.LEDGER_FS.unknown],
+     ['Fiskalizuar (TEST)', 'Fiskalizuar', 'Në pritje', 'Pa fiskalizim'],
+     'statuset e librit të POS-it: TEST-i quhet „Fiskalizuar (TEST)", jo „Në proces"');
+  eq([c.simFiscal('Fiskalizuar (TEST)'), c.simFiscal('Fiskalizuar (SIM)'), c.simFiscal('Fiskalizuar'), c.simFiscal('Në pritje'), c.simFiscal('')],
+     [true, true, false, false, false], 'simFiscal: njeh TEST-in dhe simulatorin, jo fiskalizimin e vërtetë');
+  eq([!!c.ST['Fiskalizuar (TEST)'], c.ST['Fiskalizuar (TEST)'].fg], [true, '#B45309'],
+     'shenja e TEST-it ka ngjyrën e vet (portokalli), jo të gjelbrën e fiskalizimit të vërtetë');
 }
 
 // ── lloji i produktit (mall · shërbim · aset) dhe periudhat e parazgjedhura të kompanisë ──
