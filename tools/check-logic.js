@@ -674,6 +674,20 @@ c.openDr('transfer', tr1); eq(c.drawerVals().sections[0].rows.length, 1, 'transf
      ['object', true, inv.date, (net / 100).toFixed(2), '', ''],
      '.xlsx: nr. rendor si numër, data dhe shumat si tekst me dy dhjetore, kutitë pa lëvizje krejt bosh');
   eq(c.fmtBook(254237), '2542.37', 'fmtBook: pikë dhjetore, dy dhjetore, pa ndarës mijëshesh');
+  // RREGULLI I ATK-SË: asnjë 0 askund — as te skedari, as te pamja, as kur një kuti shuhet nga mbledhja
+  const anyZero = sh => sh.slice(3).some(r => r.some(x => typeof x === 'string' && /^-?0(\.00)?$/.test(x)));
+  eq(anyZero(sheet), false, 'xlsx: asnjë qelizë nuk përmban 0 — kutitë pa vlerë lihen krejt bosh');
+  { // një shitje dhe një notë krediti e barabartë e shuajnë kutinë: totali duhet të ZHDUKET, jo të dalë 0.00
+    const d0 = db(), one = d0.invoices.find(r => r.status !== 'Draft' && r.status !== 'Anuluar');
+    const mirror = { ...one, no: 'TEST-NULL-1', kind: 'Kthim blerje', supplier: one.customer,
+      items: one.items.map(i => ({ ...i, sub: -i.sub, vatc: -i.vatc })) };
+    c.commit(dd => ({ returns: [...(dd.returns || []), mirror] }));
+    const bk = c.vatBook('sale', r2 => r2 === one.date || true);
+    const z = c.vatBookSheet(bk);
+    eq([bk.totals.nota_18 === undefined || bk.totals.nota_18 !== 0, anyZero(z)], [true, true === false ? true : false],
+       'një kuti që shuhet nga nota kreditore nuk shkruhet si 0 — thjesht mbetet bosh');
+    c.commit(dd => ({ returns: (dd.returns || []).filter(r2 => r2.no !== 'TEST-NULL-1') }));
+  }
   // libri pa lëvizje: një rresht i vetëm me kodin „0"
   const zero = c.vatBookSheet(c.vatBook('sale', () => false), { firstDay: '01.01.2026' });
   eq([zero.length, zero[3][0].n, zero[3][1], zero[3][2], zero[3][4], zero[3][6]], [4, 1, '01.01.2026', '1', '0', ''],

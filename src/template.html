@@ -2276,6 +2276,7 @@ class Component extends DCLogic {
     const rows=src.map((x,i)=>({...(kind==='sale'?this.saleBookRow(x):this.purchaseBookRow(x)),nr:i+1}));
     const totals={};
     for(const r of rows) for(const k in r.cells) totals[k]=(totals[k]||0)+r.cells[k];
+    for(const k in totals) if(!totals[k]) delete totals[k];   // ATK: kuti pa vlerë = BOSH; as një 0 i dalë nga mbledhja nuk shkruhet
     return {kind,head:BK,rows,totals,empty:rows.length===0};
   }
   // '355.93' — pikë dhjetore, dy dhjetore, pa ndarës mijëshesh (si te librat realë të pranuar nga ATK-ja)
@@ -2288,7 +2289,7 @@ class Component extends DCLogic {
     const co=(this.state.db||{}).company||{};
     const line=r=>{ const out=new Array(BK.cols).fill('');
       out[0]={n:r.nr}; out[1]=r.data; out[2]=String(r.numri||r.no||''); out[3]=r.pale||''; out[4]=String(r.fiskali||''); out[5]=r.vatNo||'';
-      for(const k in r.cells) out[this.bookIdx(book.kind,k)]=this.fmtBook(r.cells[k]);
+      for(const k in r.cells) if(r.cells[k]) out[this.bookIdx(book.kind,k)]=this.fmtBook(r.cells[k]);   // zeroja nuk shkruhet kurrë
       return out; };
     const body=book.rows.length?book.rows.map(line)
       :[[{n:1},o.firstDay||this.fmtDate(this.today()),'1',co.name||'—','0',...new Array(BK.cols-5).fill('')]];
@@ -2338,23 +2339,23 @@ class Component extends DCLogic {
     const feed=(list,book)=>{ let vatSum=0;
       for(const [box,k,rate,vatBox,title] of list){
         const base=book.totals[k];
-        if(base!=null){ v[box]=base; if(vatBox){ v[vatBox]=Math.round(base*rate/100); vatSum+=v[vatBox]; } }
+        if(base){ v[box]=base; if(vatBox){ const t=Math.round(base*rate/100); if(t){ v[vatBox]=t; vatSum+=t; } } }
         lines.push({box,vatBox:vatBox||0,title});
       }
       return vatSum; };
     lines.push({section:true,title:'Shitjet dhe TVSH-ja e llogaritur'});
     const out=feed(this.DECL_SALE,sale);
-    v[30]=out; lines.push({box:0,vatBox:30,title:'Totali i TVSH-së së llogaritur',strong:true});
+    if(out) v[30]=out; lines.push({box:0,vatBox:30,title:'Totali i TVSH-së së llogaritur',strong:true});
     lines.push({section:true,title:'Blerjet dhe TVSH-ja e zbritshme'});
     const inn=feed(this.DECL_PUR,pur);
-    v[67]=inn; lines.push({box:0,vatBox:67,title:'Totali i TVSH-së së zbritshme',strong:true});
+    if(inn) v[67]=inn; lines.push({box:0,vatBox:67,title:'Totali i TVSH-së së zbritshme',strong:true});
     lines.push({section:true,title:'Përfundimi'});
     calc[68]=0;                                   // propozimi: [71] i periudhës paraprake — e vendos pronari
     v[68]=manual[68]!=null?manual[68]:calc[68];
-    v[69]=Math.max(0,v[67]+v[68]-v[30]);
-    v[70]=manual[70]!=null?manual[70]:0;
-    v[71]=Math.max(0,v[69]-v[70]);
-    v[72]=Math.max(0,v[30]-v[67]-v[68]);
+    v[69]=Math.max(0,(v[67]||0)+(v[68]||0)-(v[30]||0));
+    v[70]=manual[70]!=null?manual[70]:0;   // vetëm kur e vendos pronari; zeroja fshihet më poshtë
+    v[71]=Math.max(0,(v[69]||0)-(v[70]||0));
+    v[72]=Math.max(0,(v[30]||0)-(v[67]||0)-(v[68]||0));
     lines.push({box:68,vatBox:0,title:'Kreditimi i TVSH-së i bartur nga periudha paraprake',sub:manual[68]!=null?'vendosur me dorë':''},
       {box:69,vatBox:0,title:'Balanca kreditore e mbetur',sub:'[69] = (67+68−30) > 0',strong:true},
       {box:70,vatBox:0,title:'Kërkesa për rimbursim',sub:manual[70]!=null?'vendosur me dorë':''},
@@ -5105,9 +5106,9 @@ class Component extends DCLogic {
         T.rows=book.rows.map(r=>({open:r.what==='invoice'||r.what==='purchase'?()=>this.openForm('vatcat',{no:r.no,bookKind:kind,cat:this.vatCatOf(r.doc,kind).id,party:r.pale}):null,
           cells:[C(String(r.nr),{align:'right',color:'#8FA3B8'}),C(r.date,{color:'#526477'}),C(String(r.numri||r.no),{mono:true}),C(r.pale,{b:true}),
             C(String(r.fiskali||'—'),{mono:true,color:r.fiskali&&r.fiskali.length<=2?'#B45309':'#526477'}),C(r.vatNo||'—',{mono:true,color:'#526477'}),B(catOf(r)),
-            ...KEYS.map(k=>r.cells[k]!=null?M(r.cells[k]):C('',{align:'right'}))]}));
+            ...KEYS.map(k=>r.cells[k]?M(r.cells[k]):C('',{align:'right'}))]}));
         T.foot=[C('Gjithsej',{b:true}),C(''),C(''),C(''),C(''),C(''),C(''),
-          ...KEYS.map(k=>book.totals[k]!=null?M(book.totals[k],{b:true}):C('',{align:'right'}))];
+          ...KEYS.map(k=>book.totals[k]?M(book.totals[k],{b:true}):C('',{align:'right'}))];
         T.empty='Asnjë dokument në këtë periudhë — skedari i ATK-së do të dalë si „libër me zero" (një rresht me kodin 0).';
         break; }
       case 'Deklarata e TVSH-së': {
@@ -5127,8 +5128,8 @@ class Component extends DCLogic {
         T.cols=[{label:'Kutia'},{label:'Përshkrimi'},{label:'Vlera',align:'right'},{label:'TVSH',align:'right'}];
         T.rows=decl.lines.map(ln=>({cells:[C(ln.box?'['+ln.box+']':'',{mono:true,b:ln.strong}),
           C(ln.title,{b:ln.strong||ln.section,color:ln.section?'#10243A':'#152536',sub:ln.sub||''}),
-          ln.box&&decl.v[ln.box]!=null?M(decl.v[ln.box],{b:ln.strong}):C('',{align:'right'}),
-          ln.vatBox&&decl.v[ln.vatBox]!=null?M(decl.v[ln.vatBox],{b:ln.strong}):C('',{align:'right'})]}));
+          ln.box&&decl.v[ln.box]?M(decl.v[ln.box],{b:ln.strong}):C('',{align:'right'}),
+          ln.vatBox&&decl.v[ln.vatBox]?M(decl.v[ln.vatBox],{b:ln.strong}):C('',{align:'right'})]}));
         T.empty='Asnjë dokument në këtë periudhë.';
         break; }
       case 'P:Arkat': {
