@@ -218,15 +218,18 @@ teknike faqe 87). Kategoria vendoset **te produktet në ERP**, jo te faqja e fis
   vendmbajtës te formulari i produktit) → ndryshe „**pa kategori ATK**”.
 - **Roja — asnjë produkt i shfaqur në POS pa kod:** formulari i produktit nuk ruhet me „Po — shitet në arkë” pa kod efektiv (mesazhi emërton
   fushën), `addProduct`/`updateProduct` (`productError`) refuzojnë krijimin ose kalimin në kategori pa parazgjedhje, ndezja „Në PoS” nga tabela
-  refuzohet, dhe parazgjedhja e një kategorie nuk hiqet sa kohë produkte të shfaqura në POS varen prej saj. Produktet pa kod mund të ruhen
-  vetëm „Jo — vetëm në ERP”.
+  dhe ndezja e një arke te POS › „Artikujt e arkave” (`setProdTerm`) refuzohen, dhe parazgjedhja e një kategorie nuk hiqet sa kohë produkte
+  të shfaqura në POS varen prej saj. Produktet pa kod mund të ruhen vetëm „Jo — vetëm në ERP”.
 - **Produktet**: kolona **ATK** (kodi i vetin blu, nga kategoria gri, mungesa e kuqe), çipi **„N produkte pa kategori ATK”** (klikimi filtron)
   dhe filtri „Pa kategori ATK”; sirtari i produktit ka rreshtin „Kategoria ATK” me burimin; CSV-ja e produkteve ka kolonën.
-- **Katalogu i arkave** (`posCatalogPayload`): çdo produkt dërgon `atk` (kodi efektiv; `""` vetëm për një libër të prekur jashtë rojës — arka e
-  mban produktin të fikur „pa kategori ATK”), `categories[].atk` vetëm kur kategoria ka parazgjedhje.
+- **Katalogu i arkave** (`posCatalogPayload`): çdo produkt dërgon `atk` (kodi efektiv; `null` vetëm për një libër të prekur jashtë rojës — arka
+  e mban produktin të fikur „pa kategori ATK”; **kurrë `""`**: backend-i pranon vetëm kod 1–8 shkronja A–Z ose `null` dhe e refuzon GJITHË
+  `PUT /pos/catalog` me 400 për një vlerë të vetme), `categories[].atk` vetëm kur kategoria ka parazgjedhje. Gabimi i katalogut te „Sinkronizo”
+  dhe te propozimet emërton produktin (`apiErrText`: mesazhi + `details[0].msg` i serverit).
 - **Propozimet e barit** (`PROP_FIELDS` + `atk`, etiketa „kategoria ATK”): produkti i ri ruan kodin e barit; pa kod merr parazgjedhjen e
   kategorisë, pa asnjërën krijohet **i fshehur** nga POS-i (verdikti `partial`, `active` e mbajtur me arsye). Te redaktimi `atk` bashkohet me tri
-  anë si çdo fushë (ana e ERP-së = kodi efektiv); ndezja në POS e një produkti pa kod ose kalimi në kategori pa parazgjedhje mbetet si në ERP.
+  anë si çdo fushë (ana e ERP-së = kodi efektiv); baza pa kod (`before.atk` null) me ERP-në ende pa kod = asnjë ndryshim në ERP, kodi i barit
+  zbatohet; ndezja në POS e një produkti pa kod ose kalimi në kategori pa parazgjedhje mbetet si në ERP.
 - **Migrimi NJË HERË** (`migrateAtk`, `db.atkMigrated`): libri i një versioni më të vjetër — produktet e shfaqura në POS pa asnjë kod marrin
   **shprehimisht `UR`** (parazgjedhja e vjetër e barit), që menyja e barit të mos fiket me përditësimin; të fshehurit mbeten pa kod (shenja);
   rresht në audit („Sistemi”); me server: `POST /state/commit {products, atkMigrated:true}` + `POST /audit`. `seedDb`/`seedEmpty` lindin të

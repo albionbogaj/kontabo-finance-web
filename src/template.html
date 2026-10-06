@@ -2374,6 +2374,8 @@ class Component extends DCLogic {
        · kur mbeten të ndezura TË GJITHA arkat, lista ruhet BOSH — kështu një arkë e re e marrë vetvetiu;
        · kur fiket arka e FUNDIT, artikulli thjesht del nga POS-i (`pos:false`) — „në asnjë arkë" nuk ekziston si gjendje. */
   setProdTerm(sku,termId,on){
+    // e njëjta roje si setProdFlag('pos'): një arkë më shumë = produkti në POS — jo pa kategori ATK (fikja lejohet gjithmonë)
+    if(on){ const p0=this.prodOf(this.state.db,sku); const e=p0&&this.atkError(this.state.db,{...p0,pos:true}); if(e){ this.toast(e,'#B45309'); return; } }
     const all=((this.view().terminals)||[]).map(t=>t.id);
     let out='';
     this.commit(d=>({products:(d.products||[]).map(p=>{
@@ -3312,7 +3314,7 @@ class Component extends DCLogic {
       const r=await fetch(cfg.url.replace(/\/$/,'')+path,{method:opts.method||'GET',body:opts.body===undefined?undefined:JSON.stringify(opts.body),signal:ctl.signal,headers:{'Content-Type':'application/json','X-Kontabo-Client':'2',...(cfg.accessToken&&!opts.noAuth?{Authorization:'Bearer '+cfg.accessToken}:{})}});
       const j=await r.json().catch(()=>({}));
       if(r.status===401&&retry&&cfg.refreshToken&&!opts.noAuth){ if(await this.apiRefresh()) return this.apiFetch(path,opts,false); }
-      if(!r.ok){ const e=new Error(j.message||j.error||('HTTP '+r.status)); e.status=r.status; e.code=j.error; e.data=j; throw e; }
+      if(!r.ok){ const e=new Error(j.message||j.error||('HTTP '+r.status)); e.status=r.status; e.code=j.error; e.data=j; e.detail=(Array.isArray(j.details)&&j.details[0]&&typeof j.details[0].msg==='string')?j.details[0].msg:''; throw e; }
       this.apiStatus('online',''); return j;
     }catch(e){
       if(e.name==='AbortError'){ const x=new Error('Serveri nuk u përgjigj ('+Math.round(ms/1000)+' s)'); x.status=0; this.apiStatus('offline',x.message); throw x; }
@@ -3475,8 +3477,10 @@ class Component extends DCLogic {
     // gross_t = the gross shelf price the till prints, verbatim (grossT: the typed 4-decimal gross, else derived from price_t at the effective rate)
     // only products shown on the tills (p.pos!==false); a recipe product's stock = what its ingredients allow (per warehouse); recipe / pack never leave the ERP
     // vetëm artikujt AKTIVË që shiten në arkë; `terms` = arkat ku shitet (bosh = te të gjitha, sjellja e deritanishme)
-    products:d.products.filter(p=>p.pos!==false&&this.prodActive(p)).map(p=>{ const rec=this.isRecipe(p), terms=this.prodTerms(p).map(id=>((d.terminals||[]).find(t=>t.id===id)||{}).posId).filter(Boolean); return {sku:p.sku,name:p.name,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,atk:this.prodAtk(p,d),unit:p.unit,tax:p.tax,rate:this.TAX[p.tax].rate,price_c:p.price_c,price_t:this.priceT(p),gross_t:this.grossT(p,d),...(terms.length?{terms}:{}),stock_qm:rec?this.makeQm(p,d):this.stockOf(p.sku,d),stock_by_wh:Object.fromEntries((d.warehouses||[]).map(w=>[w.id,rec?this.makeQm(p,d,w.id):this.stockOfWh(p.sku,w.id,d)]))}; }),
-    // atk = the product's EFFECTIVE kategoria ATK (its own, else the category's default; '' = pa kategori ATK — the till keeps such a product off sale);
+    products:d.products.filter(p=>p.pos!==false&&this.prodActive(p)).map(p=>{ const rec=this.isRecipe(p), terms=this.prodTerms(p).map(id=>((d.terminals||[]).find(t=>t.id===id)||{}).posId).filter(Boolean); return {sku:p.sku,name:p.name,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,atk:this.prodAtk(p,d)||null,unit:p.unit,tax:p.tax,rate:this.TAX[p.tax].rate,price_c:p.price_c,price_t:this.priceT(p),gross_t:this.grossT(p,d),...(terms.length?{terms}:{}),stock_qm:rec?this.makeQm(p,d):this.stockOf(p.sku,d),stock_by_wh:Object.fromEntries((d.warehouses||[]).map(w=>[w.id,rec?this.makeQm(p,d,w.id):this.stockOfWh(p.sku,w.id,d)]))}; }),
+    // atk = the product's EFFECTIVE kategoria ATK (its own, else the category's default); null = pa kategori ATK — the till keeps such a product
+    // off sale ("fikur: pa kategori ATK"). NEVER '': the backend accepts only a code (1-8 letters A-Z) or null, and refuses the WHOLE PUT /pos/catalog
+    // with 400 for one bad value — every till would stop getting prices and products;
     // categories[].atk only when the category has a default (the till's fallback for products of it that carry none)
     categories:(d.categories||[]).map(c=>({id:c.id,name:c.name,...(this.atkCode(c.atk)?{atk:this.atkCode(c.atk)}:{})})), // the managed list; each product still carries its `cat` name (unchanged contract)
     warehouses:(d.warehouses||[]).map(w=>({id:w.id,name:w.name,branch:w.branch,main:!!w.main})),
@@ -3516,7 +3520,7 @@ class Component extends DCLogic {
     if(this._entering&&this.apiAuthed()){ this._syncing=false; return; } // a company's books are loading: the book in state is still the previous one
     if(this.ledgerUnsure()){ try{ if(this.state.db&&this.state.db.posLedgerV===1) this.ledgerEnable(); else await this.ledgerReprobe(); }catch(e){} // never the old relay on a book that may be on the ledger
       if(!this.ledgerOn()){ this._syncing=false; if(manual) this.toast('Serveri nuk u përgjigj për librin e POS-it — sinkronizimi provohet sërish','#B45309'); return; } }
-    if(this.apiAuthed()&&this.ledgerOn()){ try{ await this.posSyncLedger(manual); }catch(e){ this.posRt({lastError:String(e.message||e)}); if(manual) this.toast('Sinkronizimi me serverin dështoi: '+(e.message||e),'#B91C1C'); } finally{ this._syncing=false; } return; } // never a commit
+    if(this.apiAuthed()&&this.ledgerOn()){ try{ await this.posSyncLedger(manual); }catch(e){ this.posRt({lastError:this.apiErrText(e)}); if(manual) this.toast('Sinkronizimi me serverin dështoi: '+this.apiErrText(e),'#B91C1C'); } finally{ this._syncing=false; } return; } // never a commit
     if(this.apiAuthed()){ try{ await this.posSyncServer(manual); }catch(e){ this.setIn('posSync',{lastError:String(e.message||e)}); if(manual) this.toast('Sinkronizimi me serverin dështoi: '+(e.message||e),'#B91C1C'); } finally{ this._syncing=false; } return; }
     try{
       const h=await this.posHealth(); if(!h){ if(manual) this.toast('POS-i nuk u gjet në '+this.posCfg().url+' — nisni run-pos.bat në kompjuterin e arkës','#B45309'); return; }
@@ -3771,6 +3775,9 @@ class Component extends DCLogic {
       if(av===undefined||(f==='unit'&&!this.UNITS.includes(av))){ kept.push(f); why.push('vlerë e pavlefshme: '+L[f]); continue; }
       if(bv!==undefined&&this.propEq(f,av,bv)) continue; // the bar did not change it
       if(ev!=null&&this.propEq(f,av,ev)){ applied.push(f); continue; } // the ERP already has the bar's value
+      // kategoria ATK: the bar saw NO code (before.atk null / missing) and the ERP still has none — nothing changed here since; the bar's code is
+      // applied (otherwise a product the bar created without a code could never get one from the bar: "ndryshuar në ERP" on every retry)
+      if(f==='atk'&&bv===undefined&&!ev){ set[f]=av; applied.push(f); continue; }
       if(bv===undefined||!this.propEq(f,ev,bv)){ kept.push(f); erp.push(f); continue; } // changed in the ERP since the bar saw it (or no base): the ERP wins
       if(f==='unit'){ const e=this.productError(V,{...p,unit:av},p,{unit:av}); if(e){ kept.push(f); why.push(e); continue; } } // the unit lock (opening / movements incl. the POS ledger / recipe / draft) and the pack rule
       if(f==='cat'){ const tk=tid+'\n'+this.norm(bv), rf=!!W.refused&&W.refused.get(tk)===this.norm(av); if(rf||(!this.findCategory(W.categories,av)&&!!W.touched&&W.touched.has(tk))){ kept.push(f); why.push((rf?'riemërimi i kategorisë “'+bv+'” u refuzua':'kategoria “'+av+'” nuk është në ERP (emër i vjetër nga arka)')+' — mbetet “'+ev+'”'); continue; } }
@@ -3863,8 +3870,10 @@ class Component extends DCLogic {
   // after it (the old price, a product it just created hidden) until the next posSync. A PUT that fails for now (network, 5xx, 409…) stops the run
   // (nothing resolved; next tick); one the server refuses for good (400 / 413 / 422: invalid, too big) is noted (lastError) and the verdicts go on —
   // the tills would not get that catalogue anyway, and holding them back would stop every resolve of the company
+  // the server's message plus its first validation detail (which product / field it refused) — "Të dhënat … janë të pavlefshme" alone names nothing
+  apiErrText(e){ const m=String((e&&e.message)||e); return e&&e.detail?m+' — '+e.detail:m; }
   async propCatalog(ok){ if(!this.posPerm()||!this.ledgerLive(this.state.db)) return true; const cat=this.posCatalogReady(false); if(!cat||cat.hash===this.posCfg().catalogHashSrv) return true; let c;
-    try{ c=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); }catch(e){ if(![400,413,422].includes(e&&e.status)) throw e; if(!ok()) return false; this.posRt({lastError:'Katalogu: '+String((e&&e.message)||e)}); return true; }
+    try{ c=await this.apiFetch('/pos/catalog',{method:'PUT',body:{catalog:cat.payload}}); }catch(e){ if(![400,413,422].includes(e&&e.status)) throw e; if(!ok()) return false; this.posRt({lastError:'Katalogu: '+this.apiErrText(e)}); return true; }
     if(!ok()) return false; this.posRt({catalogHashSrv:cat.hash,lastPush:this.stamp(),catalogVersionSrv:(c&&c.version)||0}); return true; }
   // POST /pos/proposals/resolve in chunks of 200 (propWire), after the catalogue (propCatalog): R (landed in the book) joins propUnacked, then every
   // verdict there is sent and leaves it once acknowledged. A chunk the server refuses as invalid (400 / 413 / 422) is sent one verdict at a

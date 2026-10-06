@@ -3596,9 +3596,22 @@ apiBlock.then(async () => {
     c.openForm('category', { edit: id, name: 'Ushqime', note: '' }); eq([c.state.frm.atk, fld('atk').value, c.formVals().fields.map(f => f.label)], ['AU', 'AU · Artikuj ushqimorë', ['Emri', 'Shënim', 'Produkte që e përdorin', 'Kategoria ATK (parazgjedhje)']], 'forma e kategorisë (redaktim pa atk në init): parazgjedhja e tanishme mbetet');
     fld('atk').clear({ preventDefault() {} }); eq([fld('atk').err, c.formVals().actions.find(a => a.label === 'Ruaj').disabled, /1 produkte të shfaqura në POS/.test(fld('atk').hint)], ['1', true, true], 'forma e kategorisë: pastrimi i parazgjedhjes me produkte të varura → bllokuar me shpjegim'); c.state.frm = null;
     c.updateProduct('SUP', { pos: false }); eq(c.renameCategory(id, 'Ushqime', '', ''), true, 'renameCategory: pa produkte të varura (SUP u fsheh nga POS) parazgjedhja hiqet'); }
-  // mbrojtje në thellësi: një libër i prekur jashtë rojës (ndërtim i vjetër) — produkti i shfaqur pa kod dërgon atk "" dhe arka e mban të fikur
+  // mbrojtje në thellësi: një libër i prekur jashtë rojës (ndërtim i vjetër) — produkti i shfaqur pa kod dërgon atk null dhe arka e mban të fikur
   c.commit(dd => ({ products: dd.products.map(p => p.sku === 'PAK5' ? { ...p, pos: true } : p) }));
-  eq([c.posCatalogPayload().products.find(p => p.sku === 'PAK5').atk, c.noAtk().map(p => p.sku)], ['', ['PAK5', 'SUP']], 'katalogu: produkti i shfaqur pa kod dërgon atk "" — arka e mban të fikur (mbrojtje në thellësi); noAtk i numëron (edhe SUP, pa parazgjedhje tani)');
+  eq([c.posCatalogPayload().products.find(p => p.sku === 'PAK5').atk, c.noAtk().map(p => p.sku)], [null, ['PAK5', 'SUP']], 'katalogu: produkti i shfaqur pa kod dërgon atk null — arka e mban të fikur (mbrojtje në thellësi); noAtk i numëron (edhe SUP, pa parazgjedhje tani)');
+  // kontrata me backend-in (schemas.py: kod 1–8 shkronja A–Z ose null): një "" e vetme e refuzonte GJITHË PUT /pos/catalog me 400 —
+  // asnjë arkë s'merrte më çmime e produkte
+  eq([c.posCatalogPayload().products.length > 3, c.posCatalogPayload().products.every(p => p.atk === null || (typeof p.atk === 'string' && /^[A-Z]{1,8}$/.test(p.atk))), c.posCatalogPayload().products.some(p => p.atk === '')], [true, true, false], 'katalogu: çdo products[].atk është null ose kod 1–8 shkronja A–Z — kurrë "" (backend-i e refuzon gjithë katalogun)');
+  // gabimi i katalogut emërton produktin: mesazhi i serverit + details[0].msg (apiFetch → e.detail)
+  { const e = new Error('Të dhënat e kërkesës janë të pavlefshme'); e.detail = 'Katalogu: produkti VER-001 me `atk` të pavlefshëm'; eq([c.apiErrText(e), c.apiErrText(new Error('HTTP 500')), c.apiErrText('x')], ['Të dhënat e kërkesës janë të pavlefshme — Katalogu: produkti VER-001 me `atk` të pavlefshëm', 'HTTP 500', 'x'], 'apiErrText: mesazhi i serverit me hollësinë e parë (cili produkt / cila fushë)'); }
+  // POS › Artikujt e arkave (setProdTerm): ndezja e një arke e nxjerr produktin në POS — jo pa kategori ATK (si setProdFlag); fikja lejohet
+  c.commit(dd => ({ terminals: [{ id: 't1', name: 'Arka 1', posId: 'POS-0001', branch: 'Dega Prishtinë', warehouse: 'W1', status: 'Aktiv' }, { id: 't2', name: 'Bari', posId: 'POS-0002', branch: 'Dega Prishtinë', warehouse: 'W1', status: 'Aktiv' }],
+    products: dd.products.map(p => p.sku === 'PAK5' ? { ...p, pos: false, posTerms: [] } : p) }));
+  c.state.toast = null; c.setProdTerm('PAK5', 't1', true);
+  eq([c.prodOf(db(), 'PAK5').pos, c.prodTerms(c.prodOf(db(), 'PAK5')), /Kategoria ATK/.test(String(c.state.toast || '')), /“Pa kod 5”/.test(String(c.state.toast || '')), c.posCatalogPayload().products.some(p => p.sku === 'PAK5')], [false, [], true, true, false], 'setProdTerm: ndezja e një arke nuk e nxjerr në POS produktin pa kategori ATK — mesazhi emërton produktin dhe fushën; katalogu s\'e dërgon');
+  c.updateProduct('PAK5', { atk: 'tt' }); c.state.toast = null; c.setProdTerm('PAK5', 't1', true);
+  eq([c.prodOf(db(), 'PAK5').pos, c.posCatalogPayload().products.find(p => p.sku === 'PAK5').atk], [true, 'TT'], 'setProdTerm: me kod të vetin ndizet te arkat dhe katalogu e dërgon me kodin');
+  c.setProdTerm('PAK5', 't1', false); eq([c.prodOf(db(), 'PAK5').pos, c.prodTerms(c.prodOf(db(), 'PAK5'))], [true, ['t2']], 'setProdTerm: fikja e një arke lejohet gjithmonë');
   // propozimet e barit (pa server): fusha `atk`, produkti i ri, bashkimi me tri anë, roja e POS-it
   { const Z = new C({}), T = { id: 'tb', name: 'Arka', posId: 'B1' }, pr = (id, o) => ({ id, kind: 'product', key: 'p:' + id, terminal: T, before: null, sku: null, createdAt: '2026-09-20T10:00:00Z', ...o });
     const Q = (sku, name, o = {}) => ({ name, sku, barcode: '—', cat: 'Pije', unit: 'copë', tax: 'E', price_t: 21186, price_c: 212, gross_t: 25000, cost_t: 10000, cost_c: 100, openCost_c: 100, opening: 0, minStock: 0, ...o });
@@ -3619,7 +3632,15 @@ apiBlock.then(async () => {
           ['rejected', { sku: 'HID', applied: [], kept: ['active'], reason: 'pa kategori ATK — shfaqja në POS mbetet si në ERP (caktoni kategorinë ATK te produkti ose te kategoria)' }], false,
           ['partial', { sku: 'KF', applied: ['gross_t'], kept: ['cat'], reason: 'pa kategori ATK — kategoria mbetet si në ERP (caktoni kategorinë ATK te produkti ose te kategoria)' }], ['Ushqim', 26000],
           ['rejected', { sku: 'KF', applied: [], kept: ['atk'], reason: 'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: kategoria ATK' }], 'TT', ['applied', { sku: 'LP', applied: ['gross_t'], kept: [], reason: '' }], 'UR'],
-        'propozimet, bashkimi me tri anë për `atk`: ndryshimi i barit zbatohet si kod i vetin (edhe mbi parazgjedhjen e kategorisë); ndezja në POS e një produkti pa kod dhe kalimi në kategori pa parazgjedhje mbeten si në ERP (arsyeja emërton fushën); ERP-ja fiton kur e ndryshoi vetë; atk "" nga bari = s\'u dërgua'); } }
+        'propozimet, bashkimi me tri anë për `atk`: ndryshimi i barit zbatohet si kod i vetin (edhe mbi parazgjedhjen e kategorisë); ndezja në POS e një produkti pa kod dhe kalimi në kategori pa parazgjedhje mbeten si në ERP (arsyeja emërton fushën); ERP-ja fiton kur e ndryshoi vetë; atk "" nga bari = s\'u dërgua'); }
+    // baza pa kod (before.atk null — bari e pa produktin pa kod, p.sh. e krijoi të fshehur): ERP-ja ende pa kod = asgjë s'ndryshoi këtu, kodi i
+    // barit zbatohet (dhe produkti mund të ndizet në POS me të); ERP-ja me kod që nga atëherë = fiton ERP-ja
+    { const h0 = seen(d0, 'HID'), b0 = { ...h0, atk: null }, d2 = { ...d0, products: d0.products.map(p => p.sku === 'HID' ? { ...p, atk: 'UR' } : p) };
+      const x = apply(d0, [pr('e7', { sku: 'HID', before: b0, after: { ...b0, atk: 'TT', active: true } })]), y = apply(d2, [pr('e8', { sku: 'HID', before: b0, after: { ...b0, atk: 'TT' } })]);
+      eq([x.r.e7, prod(x.d, 'HID').atk, prod(x.d, 'HID').pos, y.r.e8, prod(y.d, 'HID').atk],
+        [['applied', { sku: 'HID', applied: ['active', 'atk'], kept: [], reason: '' }], 'TT', true,
+          ['rejected', { sku: 'HID', applied: [], kept: ['atk'], reason: 'ndryshuar në ERP pasi e pa arka — mbetet vlera e ERP-së: kategoria ATK' }], 'UR'],
+        'propozimet, `atk` mbi bazën pa kod (before.atk null): ERP-ja pa kod → kodi i barit zbatohet dhe produkti ndizet në POS; ERP-ja me kod që nga atëherë → fiton ERP-ja'); } }
   // migrimi NJË HERË i një libri para këtij versioni
   { const old = c.seedDb(); delete old.atkMigrated; old.categories = old.categories.map(({ atk, ...r }) => r); old.categories[2] = { ...old.categories[2], atk: 'MN' }; old.audit = []; // vetëm Materiale mban parazgjedhje
     old.products = old.products.map((p, i) => i === 0 ? { ...p, pos: false } : i === 1 ? { ...p, atk: 'TT' } : p); // PS-050 i fshehur, LM-008 me kod të vetin
