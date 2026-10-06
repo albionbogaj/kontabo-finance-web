@@ -1024,6 +1024,9 @@ input,select{font-family:inherit}
       <sc-if value="{{ isProdukte }}" hint-placeholder-val="{{ false }}">
         <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px">
           <h1 style="margin:0;font-family:Manrope,sans-serif;letter-spacing:-.025em;font-weight:800;font-size:28px">Produktet</h1><span style="padding:3px 8px;border-radius:7px;background:rgba(16,36,58,.06);font-size:12px;font-weight:600;color:#3C5268">{{ productCount }}</span>
+          <sc-if value="{{ pNoAtk }}" hint-placeholder-val="{{ false }}">
+            <button sc-camel-on-click="{{ pFilterNoAtk }}" title="Këto produkte nuk mund të shfaqen në POS derisa të marrin kategorinë ATK (CouponItem.Type) — kliko për t’i filtruar" style="padding:4px 10px;border:0;border-radius:7px;background:rgba(185,28,28,.1);color:#B91C1C;font-size:12px;font-weight:700;cursor:pointer">{{ pNoAtkLabel }}</button>
+          </sc-if>
           <sc-if value="{{ pHasSel }}" hint-placeholder-val="{{ false }}">
             <div style="display:flex;align-items:center;gap:8px;padding:4px 6px 4px 12px;border-radius:9px;background:rgba(185,28,28,.08)">
               <span style="font-size:12.5px;font-weight:700;color:#B91C1C">{{ pSelCount }} të zgjedhura</span>
@@ -1041,7 +1044,7 @@ input,select{font-family:inherit}
         </div>
         <div style="border-radius:14px;background:rgba(255,255,255,.72);backdrop-filter:blur(20px);border:1px solid rgba(16,36,58,.07);overflow:hidden">
           <sc-raw-table style="width:100%;border-collapse:collapse;font-size:13px">
-            <sc-raw-thead><sc-raw-tr style="color:#526477;font-size:11.5px;text-align:left;background:rgba(16,36,58,.02)"><sc-raw-th style="padding:10px 16px;width:36px"><input type="checkbox" aria-label="Zgjidh të gjitha" checked="{{ pAllSel }}" sc-camel-on-change="{{ pToggleAll }}" style="accent-color:#B91C1C;cursor:pointer"></sc-raw-th><sc-raw-th style="padding:10px 8px;font-weight:600">Emri</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Tipi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Kodi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Njësia matëse</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Norma e TVSH</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:right">Çmimi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:center">Aktiv</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:center">Në PoS</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Konto e blerjes</sc-raw-th><sc-raw-th style="padding:10px 16px;font-weight:600">Konto e shitjes</sc-raw-th></sc-raw-tr></sc-raw-thead>
+            <sc-raw-thead><sc-raw-tr style="color:#526477;font-size:11.5px;text-align:left;background:rgba(16,36,58,.02)"><sc-raw-th style="padding:10px 16px;width:36px"><input type="checkbox" aria-label="Zgjidh të gjitha" checked="{{ pAllSel }}" sc-camel-on-change="{{ pToggleAll }}" style="accent-color:#B91C1C;cursor:pointer"></sc-raw-th><sc-raw-th style="padding:10px 8px;font-weight:600">Emri</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Tipi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Kodi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Njësia matëse</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Norma e TVSH</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600" title="Kategoria ATK (CouponItem.Type): kodi i produktit ose parazgjedhja e kategorisë">ATK</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:right">Çmimi</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:center">Aktiv</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600;text-align:center">Në PoS</sc-raw-th><sc-raw-th style="padding:10px 12px;font-weight:600">Konto e blerjes</sc-raw-th><sc-raw-th style="padding:10px 16px;font-weight:600">Konto e shitjes</sc-raw-th></sc-raw-tr></sc-raw-thead>
             <sc-raw-tbody>
               <sc-for list="{{ products }}" as="p" hint-placeholder-count="8">
                 <sc-raw-tr sc-camel-on-click="{{ p.open }}" style="border-top:1px solid rgba(16,36,58,.05);cursor:pointer" style-hover="background:rgba(37,99,235,.04)">
@@ -1051,6 +1054,7 @@ input,select{font-family:inherit}
                   <sc-raw-td style="padding:10px 12px;font-family:'JetBrains Mono',monospace;font-size:12px;color:#3C5268">{{ p.sku }}</sc-raw-td>
                   <sc-raw-td style="padding:10px 12px;color:#526477">{{ p.unit }}</sc-raw-td>
                   <sc-raw-td style="padding:10px 12px"><span style="padding:3px 8px;border-radius:7px;font-size:11.5px;font-weight:700;font-family:'JetBrains Mono',monospace;background:rgba(37,99,235,.08);color:#2563EB">{{ p.tax }}</span></sc-raw-td>
+                  <sc-raw-td style="padding:10px 12px"><span title="{{ p.atkT }}" style="padding:3px 8px;border-radius:7px;font-size:11.5px;font-weight:700;font-family:'JetBrains Mono',monospace;white-space:nowrap;background:{{ p.atkBg }};color:{{ p.atkFg }}">{{ p.atkS }}</span></sc-raw-td>
                   <sc-raw-td style="padding:10px 12px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600">{{ p.price }}<div style="font-size:11.5px;font-weight:500;color:#2563EB;margin-top:1px">{{ p.priceGross }} me TVSH</div></sc-raw-td>
                   <sc-raw-td sc-camel-on-click="{{ stop }}" style="padding:10px 12px;text-align:center;cursor:default"><button sc-camel-on-click="{{ p.toggleActive }}" class="mf-sw" data-on="{{ p.activeS }}" title="{{ p.activeT }}"><span></span></button></sc-raw-td>
                   <sc-raw-td sc-camel-on-click="{{ stop }}" style="padding:10px 12px;text-align:center;cursor:default"><button sc-camel-on-click="{{ p.togglePos }}" class="mf-sw" data-on="{{ p.posS }}" title="{{ p.posT }}"><span></span></button></sc-raw-td>
@@ -1923,6 +1927,42 @@ class Component extends DCLogic {
   TAX = { A:{name:'E liruar nga TVSH',rate:0}, C:{name:'Norma 0%',rate:0}, D:{name:'Norma e reduktuar (8%)',rate:8}, E:{name:'Norma standarde (18%)',rate:18} };
   // One-time migration from the pre-ATK letter map (C was 8%, D was 18%, E was "out of scope" 0%): letters move by their OLD rate, rates never change. db.taxV===2 marks migrated books.
   TAX_MIGRATE = { A:'A', C:'D', D:'E', E:'C' };
+  /* ───────── Kategoria ATK (kodi i mallrave / shërbimeve, Kërkesat teknike faqe 87): shkon te CouponItem.Type i çdo rreshti të kuponit fiskal.
+     E NJËJTA listë si KATEGORITE_ATK e KONTABO BAR (kontrata e tri repove): katalogu dërgon `atk` për çdo produkt (products[].atk) dhe parazgjedhjen
+     e kategorisë (categories[].atk) kur ka; propozimet e barit mbajnë `atk`. Kodi efektiv i një produkti = kodi i vetin (p.atk) ose parazgjedhja e
+     kategorisë së tij (categories[].atk); pa asnjërin produkti është „pa kategori ATK” — nuk shfaqet në POS, nuk shitet dhe nuk fiskalizohet.
+     Asnjë kod i heshtur: produkti i ri nuk merr kurrë kod pa e zgjedhur pronari (ose pa parazgjedhjen e kategorisë). ───────── */
+  ATK_CATS = [['UR','Ushqime restoranti'],['AU','Artikuj ushqimorë'],['TT','Të tjera'],['HT','Hoteleri dhe turizëm'],['ST','Shërbime të tjera'],['KS','Klube sportive'],
+    ['VM','Veshmbathje'],['KO','Kozmetikë'],['AP','Autopjesë'],['BM','Barna mjekësore'],['PM','Pajisje mjekësore'],['PP','Pemë dhe perime'],['PE','Pajisje elektronike'],
+    ['PS','Pajisje shtëpiake'],['PB','Pajisje bujqësore'],['BB','Barna bujqësore'],['KB','Karburante'],['EE','Energji elektrike'],['PSE','Pajisje speciale elektrike'],
+    ['SM','Shërbime mjekësore'],['SJ','Shërbime juridike'],['SK','Shërbime të kontabilitetit'],['SMK','Shërbime mekanike'],['STR','Shërbime transporti'],['PI','Pajisje industriale'],
+    ['PT','Pajisje transporti'],['SEA','Shërbime edukative dhe arsimore'],['MN','Materiale ndërtimore'],['SHN','Shërbime ndërtimore'],['SDG','Shtyp dhe dizajn grafik'],
+    ['SHB','Shërbime bankare'],['STI','Shërbime të TI-së'],['SHT','Shërbime të telekomunikimit'],['PBS','Prodhimi bimor dhe shtazor'],['MPM','Mish dhe produkte të mishit']];
+  ATK_NAME = Object.fromEntries(this.ATK_CATS);
+  ATK_MISSING = 'pa kategori ATK';
+  // a code as stored / sent: upper-case, from the list — anything else is NO code ('')
+  atkCode(v){ const s=String(v==null?'':v).trim().toUpperCase(); return this.ATK_NAME[s]?s:''; }
+  atkLabel(code){ const c=this.atkCode(code); return c?c+' · '+this.ATK_NAME[c]:''; }
+  atkOpts(){ return this.ATK_CATS.map(([id,name])=>({id,label:id+' · '+name,sub:''})); }
+  // the category's default code (categories[].atk) for a category name; the product's EFFECTIVE code: its own, else its category's default
+  catAtk(d,name){ const c=this.findCategory(((d||this.state.db)||{}).categories,name); return c?this.atkCode(c.atk):''; }
+  prodAtk(p,d){ return this.atkCode(p&&p.atk)||this.catAtk(d||this.state.db,p&&p.cat); }
+  noAtk(d){ d=d||this.state.db; return ((d&&d.products)||[]).filter(p=>!this.prodAtk(p,d)); }
+  // the products shown on the tills that take their code from this category's default (they have none of their own)
+  catAtkDeps(d,name){ d=d||this.state.db; const q=this.norm(name); return ((d&&d.products)||[]).filter(p=>p.pos!==false&&!this.atkCode(p.atk)&&this.norm(p.cat)===q); }
+  // the guard: a product shown on the tills (pos !== false) must have an effective code — the message names the field and the way out
+  atkError(d,next){ if(!next||next.pos===false||this.prodAtk(next,d)) return '';
+    return '“'+(next.name||next.sku||'Produkti')+'” nuk mund të shfaqet në POS pa kategori ATK: zgjidhni „Kategoria ATK” te produkti ose jepini kategorisë “'+String(next.cat||'').trim()+'” një parazgjedhje te Produkte › Kategoritë (ose „Jo — vetëm në ERP”).'; }
+  // ONE-TIME migration (d.atkMigrated): a book from before this version has products shown on the tills with no code at all — they take 'UR'
+  // (the bar's old business-wide default) EXPLICITLY, so a deployed bar's menu is not switched off by the update; a product hidden from the tills
+  // stays without a code (the badge shows it); products created from now on never take a code the owner did not choose. Idempotent: the SAME
+  // object comes back for a migrated book. The note goes to the activity log (db.audit) when the book carries one
+  atkMigrationPlan(d){ const skus=((d&&Array.isArray(d.products))?d.products:[]).filter(p=>p&&p.pos!==false&&!this.prodAtk(p,d)).map(p=>p.sku);
+    return {skus,note:skus.length?'Kategoria ATK (migrimi i versionit): '+skus.length+' produkte të shfaqura në POS pa kod morën „UR · Ushqime restoranti” — kontrollojini te Produktet › filtri „Pa kategori ATK”: '+skus.slice(0,30).join(', ')+(skus.length>30?' …':''):''}; }
+  migrateAtk(d){ if(!d||d.atkMigrated||!Array.isArray(d.products)) return d;
+    const plan=this.atkMigrationPlan(d), hit=new Set(plan.skus), out={...d,atkMigrated:true};
+    if(hit.size){ out.products=d.products.map(p=>hit.has(p.sku)?{...p,atk:'UR'}:p); if(Array.isArray(d.audit)) out.audit=[{t:this.stamp(),u:'Sistemi',a:plan.note},...d.audit]; }
+    return out; }
   /* Databazat e krijuara para 04.10.2026 mbajnë fatura e nota me `fiscal: 'Në pritje'` — pritje për një agjent që
      nuk ekzistoi kurrë. Ato kalojnë NJË HERË te statusi i vërtetë; dokumentet që i ka fiskalizuar vërtet arka
      (kopjet A4 të kuponëve, që mbajnë „Fiskalizuar" ose rrjedhin nga `fromPos`) nuk preken. */
@@ -2124,7 +2164,7 @@ class Component extends DCLogic {
 
   /* ───────── local persistence (single-file build: browser storage stands in for the backend) ───────── */
   persist(db){ try{ localStorage.setItem(this.KEY,JSON.stringify({...(db||this.state.db),savedAt:Date.now()})); this.setState({saved:true}); }catch(e){ /* storage unavailable (sandbox / private mode) */ } }
-  load(){ try{ const d=JSON.parse(localStorage.getItem(this.KEY)||'null'); if(!(d&&d.v===2&&Array.isArray(d.invoices))) return null; const x=this.seedExtras(); for(const k in x) if(d[k]===undefined) d[k]=x[k]; d.users=this.ensurePasswords(this.ensurePins(d.users)); return this.migrateFiscal(this.migrateCats(this.migrateTax(d))); }catch(e){ return null; } }
+  load(){ try{ const d=JSON.parse(localStorage.getItem(this.KEY)||'null'); if(!(d&&d.v===2&&Array.isArray(d.invoices))) return null; const x=this.seedExtras(); for(const k in x) if(d[k]===undefined) d[k]=x[k]; d.users=this.ensurePasswords(this.ensurePins(d.users)); return this.migrateAtk(this.migrateFiscal(this.migrateCats(this.migrateTax(d)))); }catch(e){ return null; } }
   // permissions used by the roles matrix and the invite form
   PERMS = [['fatura_shiko','Shiko fatura'],['fatura_krijo','Krijo & lësho fatura'],['pagesa','Menaxho pagesat'],['blerje','Blerje & furnitorë'],['stok','Stok & inventar'],['produkte','Produkte & çmime'],['finance','Shiko financën'],['raporte','Raporte'],['kontab','Kontabilitet'],['pos','POS & arka'],['hr','HR'],['perdorues','Menaxho përdoruesit'],['abonimi','Ndrysho abonimin'],['fiskal','Cilësimet e fiskalizimit'],['kompania','Të dhënat e kompanisë']];
   ROLES = ['Pronar','Admin','Financë','Kontabilist','Shitje','Kasier','Magazinier','HR','Prodhim','Punëtor'];
@@ -2179,7 +2219,7 @@ class Component extends DCLogic {
   // a new company on the server starts empty — company header from the tenant, one main warehouse, one bank + one cash account
   seedEmpty(t={}){
     const x=this.seedExtras(); for(const k of this.SERVER_KEYS) delete x[k];
-    return {v:2,taxV:2,customers:[],suppliers:[],products:[],categories:[],invoices:[],purchases:[],expenses:[],payments:[],movements:[],queue:[],
+    return {v:2,taxV:2,atkMigrated:true,customers:[],suppliers:[],products:[],categories:[],invoices:[],purchases:[],expenses:[],payments:[],movements:[],queue:[],
       returns:[],quotes:[],orders:[],purchaseOrders:[],transfers:[],posReceipts:[],posShifts:[],pos:[],billing:[],terminals:[],
       company:{...x.company,name:t.name||'',legal:'',nui:t.nui||'',fiscalNo:'',vat:'',address:'',city:t.city||'',zip:'',phone:'',email:'',web:'',bank:'',iban:'',activity:''},
       branches:[{id:'BR-0001',name:'Dega kryesore',address:t.city||'—',phone:'—',manager:'—',main:true,status:'Aktive',unitNo:'',licence:''}],
@@ -2206,7 +2246,8 @@ class Component extends DCLogic {
 
   /* ───────── seed: the demo company's books, all derived consistently from documents ───────── */
   seedDb(){
-    const db={v:2,taxV:2,customers:this.seedCustomers(),suppliers:this.seedSuppliers(),products:this.seedProducts(),categories:this.migrateCats({products:this.seedProducts()}).categories,invoices:this.seedInvoices(),purchases:this.seedPurchases(),expenses:this.seedExpenses(),payments:[],movements:[],queue:this.seedQueue(),...this.seedExtras()};
+    // the demo (a building-materials company) files every category under MN · Materiale ndërtimore — its products take the code from the category; a fresh book of this version is born migrated
+    const db={v:2,taxV:2,atkMigrated:true,customers:this.seedCustomers(),suppliers:this.seedSuppliers(),products:this.seedProducts(),categories:this.migrateCats({products:this.seedProducts()}).categories.map(c=>({...c,atk:'MN'})),invoices:this.seedInvoices(),purchases:this.seedPurchases(),expenses:this.seedExpenses(),payments:[],movements:[],queue:this.seedQueue(),...this.seedExtras()};
     // stock movements + payments implied by the seed documents (so every number on every page reconciles)
     for(const inv of db.invoices){ if(inv.status!=='Draft'&&inv.status!=='Anuluar') this._pushMovements(db,inv,'sale'); }
     for(const p of db.purchases){ if(p.status!=='Draft'&&p.status!=='Anuluar') this._pushMovements(db,p,'purchase'); }
@@ -2325,6 +2366,7 @@ class Component extends DCLogic {
     return names.length<=2?names.join(' · '):names.length+' arka'; }
   // ndezja/fikja e një fushe logjike te artikulli (Aktiv, Në PoS) — drejt nga tabela, pa hapur formën
   setProdFlag(sku,key,on){ const p=this.prodOf(this.state.db,sku); if(!p) return;
+    if(key==='pos'&&on){ const e=this.atkError(this.state.db,{...p,pos:true}); if(e){ this.toast(e,'#B45309'); return; } } // never on the tills without a kategoria ATK
     const L={active:['Aktiv','Joaktiv'],pos:['Në PoS','Jo në PoS']}[key]||[key,key];
     this.commit(d=>({products:(d.products||[]).map(x=>x.sku===sku?{...x,[key]:on}:x)}),p.name+' · '+(on?L[0]:L[1]),on?'#22C55E':'#8FA3B8'); }
   /* Ndezja/fikja e një artikulli te një arkë e caktuar (matrica Artikuj × Arka).
@@ -2835,7 +2877,9 @@ class Component extends DCLogic {
   // a product change as a whole: recipe rules (when the recipe is set) and the unit lock (when the unit changes)
   productError(d,next,cur,patch){ const P=patch||next; if(P.recipe!==undefined&&this.isRecipe(next)){ const e=this.recipeError(d,next.sku,next.recipe,next.opening); if(e) return e; }
     if(next.pack!=null&&!this.isRecipe(next)&&(P.pack!==undefined||P.unit!==undefined)){ const e=this.packError(next.pack,next.unit); if(e) return e; } // a pack set now, or a unit change under a kept pack
-    if(cur&&P.unit!==undefined&&next.unit!==cur.unit&&this.unitLocked(d,cur)) return 'Njësia nuk ndryshohet: produkti ka gjendje fillestare, lëvizje stoku, përdoret në një recetë ose është në një dokument draft.'; return ''; }
+    if(cur&&P.unit!==undefined&&next.unit!==cur.unit&&this.unitLocked(d,cur)) return 'Njësia nuk ndryshohet: produkti ka gjendje fillestare, lëvizje stoku, përdoret në një recetë ose është në një dokument draft.';
+    // kategoria ATK: a new product, or a change of what decides it (pos / atk / cat) — never a price edit of a product the migration left without a code
+    if(!cur||P.pos!==undefined||P.atk!==undefined||P.cat!==undefined){ const e=this.atkError(d,next); if(e) return e; } return ''; }
   // rows for every stock-type page: a recipe row carries makeable qty, the recipe cost, no stock value and is never "low"
   stockRowsOf(db){ return db.products.map(p=>{
     if(this.isRecipe(p)) return {...p,qm:this.makeQm(p,db),cost:this.recipeCost(p,db),value:0,low:false,isRecipe:true,isService:false};
@@ -2989,10 +3033,10 @@ class Component extends DCLogic {
   addProduct(p){ const err=this.productError(this.view(),p,null); if(err){ this.toast(err,'#B45309'); return false; } // the rules see the POS ledger's movements too (view)
     this.commit(d=>{ const used=new Set(d.products.map(x=>String(x.sku||'').trim().toUpperCase())), want=String(p.sku||'').trim().toUpperCase();
       const sku=want&&!used.has(want)?want:this.newSku([...d.products,...this.view().products],p.name,p.cat);
-      return {products:[...d.products,this._recipeNorm({...p,sku,cat:this.canonCat(d,p.cat)})],categories:this.withCategory(d,p.cat)}; },'Produkti “'+p.name+'” u shtua'); return true; }
+      return {products:[...d.products,this._recipeNorm({...p,sku,cat:this.canonCat(d,p.cat),...(p.atk!==undefined?{atk:this.atkCode(p.atk)}:{})})],categories:this.withCategory(d,p.cat)}; },'Produkti “'+p.name+'” u shtua'); return true; }
   // edit of the master data (price/cost stay NET cents; sku is the key of every movement, so it is never changed here); recipe:null / [] removes the recipe
   updateProduct(sku,patch){ const V=this.view(), cur=this.prodOf(V,sku); if(cur){ const err=this.productError(V,{...cur,...patch},cur,patch); if(err){ this.toast(err,'#B45309'); return false; } }
-    this.commit(d=>{ const q=patch.cat!==undefined?{...patch,cat:this.canonCat(d,patch.cat)}:patch; return {products:d.products.map(p=>p.sku===sku?this._recipeNorm({...p,...q}):p),categories:this.withCategory(d,patch.cat)}; },'Produkti u përditësua'); return true; }
+    this.commit(d=>{ const q={...patch,...(patch.cat!==undefined?{cat:this.canonCat(d,patch.cat)}:{}),...(patch.atk!==undefined?{atk:this.atkCode(patch.atk)}:{})}; return {products:d.products.map(p=>p.sku===sku?this._recipeNorm({...p,...q}):p),categories:this.withCategory(d,patch.cat)}; },'Produkti u përditësua'); return true; }
   /* ───────── SKU: caktohet GJITHMONË vetvetiu (kërkesa e pronarit, 03.10.2026) — kasieri / kontabilisti nuk shkruan kurrë kod ─────────
      Prefiksi: fjala e parë e emrit që ka shkronjë, 3 shkronja ASCII (ë→e, ç→c si te norm()); pa emër → nga kategoria → 'ART'.
      Pastaj numri rendor i PREFIKSIT +1, me zero deri në 3 shifra: 'PAN-001', 'PAN-002'. Deterministik dhe unik — kërkohet
@@ -3020,10 +3064,14 @@ class Component extends DCLogic {
     return (Array.isArray(d.categories)&&!add.length)?d:{...d,categories:[...list,...add]};
   }
   catUsage(id,d){ d=d||this.state.db; const c=(d.categories||[]).find(x=>x.id===id); return c?d.products.filter(p=>this.norm(p.cat)===this.norm(c.name)).length:0; }
-  addCategory(name,note){ const n=String(name||'').trim(); if(!n) return null; if(this.findCategory(this.CATEGORIES,n)){ this.toast('Kategoria “'+n+'” ekziston','#B45309'); return null; } const rec={...this.newCategory(n,this.CATEGORIES),note:note||''}; this.commit(d=>({categories:[...(d.categories||[]),rec]}),'Kategoria “'+n+'” u shtua'); this.logAudit('Kategori e re: '+n); return rec; }
-  // rename propagates to every product that carries the old name (documents keep their snapshots)
-  renameCategory(id,name,note){ const n=String(name||'').trim(); const cur=this.CATEGORIES.find(c=>c.id===id); if(!cur||!n) return false; const clash=this.findCategory(this.CATEGORIES,n); if(clash&&clash.id!==id){ this.toast('Kategoria “'+n+'” ekziston','#B45309'); return false; }
-    this.commit(d=>({categories:d.categories.map(c=>c.id===id?{...c,name:n,note:note??c.note??''}:c),products:d.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:n}:p)}),'Kategoria u përditësua'); if(cur.name!==n) this.logAudit('Kategoria “'+cur.name+'” u riemërua në “'+n+'”'); return true; }
+  // `atk` = the category's default kategoria ATK (optional): the code of every product of it that has none of its own
+  addCategory(name,note,atk){ const n=String(name||'').trim(); if(!n) return null; if(this.findCategory(this.CATEGORIES,n)){ this.toast('Kategoria “'+n+'” ekziston','#B45309'); return null; } const code=this.atkCode(atk), rec={...this.newCategory(n,this.CATEGORIES),note:note||'',...(code?{atk:code}:{})}; this.commit(d=>({categories:[...(d.categories||[]),rec]}),'Kategoria “'+n+'” u shtua'); this.logAudit('Kategori e re: '+n+(code?' · kategoria ATK '+this.atkLabel(code):'')); return rec; }
+  // rename propagates to every product that carries the old name (documents keep their snapshots); atk undefined = unchanged. The default is never
+  // taken away from under products shown on the tills that have no code of their own (they would be sold without a kategoria ATK)
+  renameCategory(id,name,note,atk){ const n=String(name||'').trim(); const cur=this.CATEGORIES.find(c=>c.id===id); if(!cur||!n) return false; const clash=this.findCategory(this.CATEGORIES,n); if(clash&&clash.id!==id){ this.toast('Kategoria “'+n+'” ekziston','#B45309'); return false; }
+    const code=atk===undefined?this.atkCode(cur.atk):this.atkCode(atk);
+    if(!code&&this.atkCode(cur.atk)){ const dep=this.catAtkDeps(this.state.db,cur.name); if(dep.length){ this.toast(dep.length+' produkte të shfaqura në POS e marrin kategorinë ATK nga “'+cur.name+'” — caktojeni te produkti ('+dep.slice(0,3).map(p=>p.name).join(', ')+(dep.length>3?', …':'')+') para se ta hiqni parazgjedhjen','#B45309'); return false; } }
+    this.commit(d=>({categories:d.categories.map(c=>c.id===id?{...c,name:n,note:note??c.note??'',atk:code}:c),products:d.products.map(p=>this.norm(p.cat)===this.norm(cur.name)?{...p,cat:n}:p)}),'Kategoria u përditësua'); if(cur.name!==n) this.logAudit('Kategoria “'+cur.name+'” u riemërua në “'+n+'”'); if(code!==this.atkCode(cur.atk)) this.logAudit('Kategoria “'+n+'”: kategoria ATK e parazgjedhur '+(this.atkLabel(cur.atk)||'—')+' → '+(this.atkLabel(code)||'—')); return true; }
   // delete only when no product uses it
   deleteCategory(id){ const cur=this.CATEGORIES.find(c=>c.id===id); if(!cur) return false; const n=this.catUsage(id); if(n){ this.toast(n+' produkte e përdorin kategorinë “'+cur.name+'” — nuk mund të fshihet','#B45309'); return false; } this.commit(d=>({categories:d.categories.filter(c=>c.id!==id)}),'Kategoria u fshi','#8FA3B8'); this.logAudit('Kategoria u fshi: '+cur.name); return true; }
   addParty(kind,p){ this.commit(d=>kind==='customer'?{customers:[...d.customers,p]}:{suppliers:[...d.suppliers,p]},(kind==='customer'?'Klienti':'Furnitori')+' “'+p.name+'” u shtua'); }
@@ -3286,14 +3334,17 @@ class Component extends DCLogic {
     const st=await this.apiFetch('/state'); let state=st.state, version=st.version||0;
     const feat=probe===true||!!(state&&state.posLedgerV===1); this._ledFeat=feat; this._ledProbe=probe===null&&!feat?'fail':''; // 'fail': asked again on later ticks
     if(!state){ const cfg=this.apiCfg(); const seed=this.seedEmpty({name:cfg.tenantName,nui:sg.nui||'',city:sg.city||'',plan:cfg.tenantPlan||(cfg.tenants.find(t=>t.id===cfg.tenantId)||{}).plan}); const r=await this.apiFetch('/state',{method:'PUT',body:{state:seed,baseVersion:0}}); state=seed; version=r.version; }
+    // the kategoria ATK migration is decided on the book AS STORED (the empty seed below carries atkMigrated:true — a book from before this version does not)
+    const needsAtkMig=!state.atkMigrated, atkPlan=needsAtkMig?this.atkMigrationPlan(state):null;
     // missing sections come from the empty seed — never the POS-ledger markers (a book without posLedgerV still has to be migrated)
-    const x=this.seedEmpty({name:this.apiCfg().tenantName}); for(const k in x) if(state[k]===undefined&&!this.SERVER_KEYS.includes(k)&&!this.LEDGER_KEYS.includes(k)) state[k]=x[k];
+    const x=this.seedEmpty({name:this.apiCfg().tenantName}); for(const k in x) if(state[k]===undefined&&k!=='atkMigrated'&&!this.SERVER_KEYS.includes(k)&&!this.LEDGER_KEYS.includes(k)) state[k]=x[k];
     const m=await this.apiLoadMirrors();
     const needsTaxMig=state.taxV!==2;
-    const db=this.migrateFiscal(this.migrateCats(this.migrateTax({...state,...m,...this.apiSessionExtras(sess)})));
+    const db=this.migrateAtk(this.migrateFiscal(this.migrateCats(this.migrateTax({...state,...m,...this.apiSessionExtras(sess)}))));
     this._ledger=feat?this.ledgerFresh(this.apiCfg().tenantId):null; if(feat) this.posRtLoad();
     this.saveApi({version}); this.setState({db,saved:false});
     if(needsTaxMig) this.apiCommit({products:db.products,taxSettings:db.taxSettings,taxV:2}); // persist the ATK letter migration on the server
+    if(needsAtkMig){ this.apiCommit({products:db.products,atkMigrated:true}); if(atkPlan.skus.length) this.apiFetch('/audit',{method:'POST',body:{action:atkPlan.note}}).catch(()=>{}); } // the one-time ATK category migration, persisted + noted on the server
     if(db.categories!==state.categories) this.apiCommit({categories:db.categories}); // persist the category list the first time (or whenever a product carried an unknown category)
     // a book on the POS ledger never takes POS rows again: an unsent patch from an older session whose receipts/shifts are not all legacy
     // (posLegacyNos / posLegacyShifts) loses those rows — a patch of POS rows only (an import) is dropped; any other change in it (e.g. the A4
@@ -3309,8 +3360,9 @@ class Component extends DCLogic {
     else if(dropMsg) this.toast(dropMsg.charAt(0).toUpperCase()+dropMsg.slice(1),'#B45309');
     return db;
   }
-  async apiReloadState(){ const st=await this.apiFetch('/state'); const m=await this.apiLoadMirrors(); this.saveApi({version:st.version||0}); const raw=st.state||{}; const mig=this.migrateCats(raw.taxV===2?raw:this.migrateTax({...raw,taxV:undefined})); this.setState(s=>({db:this.bookMerge(s.db,mig,m)}));
+  async apiReloadState(){ const st=await this.apiFetch('/state'); const m=await this.apiLoadMirrors(); this.saveApi({version:st.version||0}); const raw=st.state||{}; const atkPlan=raw.atkMigrated?null:this.atkMigrationPlan(raw), mig=this.migrateAtk(this.migrateCats(raw.taxV===2?raw:this.migrateTax({...raw,taxV:undefined}))); this.setState(s=>({db:this.bookMerge(s.db,mig,m)}));
     if(mig.categories!==raw.categories) this.apiCommit({categories:mig.categories}); // same as apiLoadAll: a product with an unknown category → the appended record is persisted, not only shown
+    if(atkPlan){ this.apiCommit({products:mig.products,atkMigrated:true}); if(atkPlan.skus.length) this.apiFetch('/audit',{method:'POST',body:{action:atkPlan.note}}).catch(()=>{}); } // same as apiLoadAll: the one-time ATK category migration
     this.posLedgerAfterLoad(); }
   // a reload replaces the book with the server's; the POS-ledger markers always follow the server (a discarded local migration must never
   // leave posLedgerV on top of an unmigrated book — that would count its POS rows twice); so does posProposalsDone (the KONTABO BAR proposals
@@ -3423,8 +3475,10 @@ class Component extends DCLogic {
     // gross_t = the gross shelf price the till prints, verbatim (grossT: the typed 4-decimal gross, else derived from price_t at the effective rate)
     // only products shown on the tills (p.pos!==false); a recipe product's stock = what its ingredients allow (per warehouse); recipe / pack never leave the ERP
     // vetëm artikujt AKTIVË që shiten në arkë; `terms` = arkat ku shitet (bosh = te të gjitha, sjellja e deritanishme)
-    products:d.products.filter(p=>p.pos!==false&&this.prodActive(p)).map(p=>{ const rec=this.isRecipe(p), terms=this.prodTerms(p).map(id=>((d.terminals||[]).find(t=>t.id===id)||{}).posId).filter(Boolean); return {sku:p.sku,name:p.name,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,unit:p.unit,tax:p.tax,rate:this.TAX[p.tax].rate,price_c:p.price_c,price_t:this.priceT(p),gross_t:this.grossT(p,d),...(terms.length?{terms}:{}),stock_qm:rec?this.makeQm(p,d):this.stockOf(p.sku,d),stock_by_wh:Object.fromEntries((d.warehouses||[]).map(w=>[w.id,rec?this.makeQm(p,d,w.id):this.stockOfWh(p.sku,w.id,d)]))}; }),
-    categories:(d.categories||[]).map(c=>({id:c.id,name:c.name})), // the managed list; each product still carries its `cat` name (unchanged contract)
+    products:d.products.filter(p=>p.pos!==false&&this.prodActive(p)).map(p=>{ const rec=this.isRecipe(p), terms=this.prodTerms(p).map(id=>((d.terminals||[]).find(t=>t.id===id)||{}).posId).filter(Boolean); return {sku:p.sku,name:p.name,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,atk:this.prodAtk(p,d),unit:p.unit,tax:p.tax,rate:this.TAX[p.tax].rate,price_c:p.price_c,price_t:this.priceT(p),gross_t:this.grossT(p,d),...(terms.length?{terms}:{}),stock_qm:rec?this.makeQm(p,d):this.stockOf(p.sku,d),stock_by_wh:Object.fromEntries((d.warehouses||[]).map(w=>[w.id,rec?this.makeQm(p,d,w.id):this.stockOfWh(p.sku,w.id,d)]))}; }),
+    // atk = the product's EFFECTIVE kategoria ATK (its own, else the category's default; '' = pa kategori ATK — the till keeps such a product off sale);
+    // categories[].atk only when the category has a default (the till's fallback for products of it that carry none)
+    categories:(d.categories||[]).map(c=>({id:c.id,name:c.name,...(this.atkCode(c.atk)?{atk:this.atkCode(c.atk)}:{})})), // the managed list; each product still carries its `cat` name (unchanged contract)
     warehouses:(d.warehouses||[]).map(w=>({id:w.id,name:w.name,branch:w.branch,main:!!w.main})),
     customers:d.customers.map(c=>({name:c.name,nui:c.nui==='—'?'':c.nui,type:c.type,city:c.city})),
     // everything the printed coupon header needs (certified SEF layout): taxpayer, unit name/no, licence, address, place, phone, NUI
@@ -3660,8 +3714,8 @@ class Component extends DCLogic {
      Idempotent: every handled proposal stays in the book (posProposalsDone, the last PROP_KEEP, with its state and result) and is never applied
      twice — one still pending on the server is resolved again with the stored result. Stock and cost stay ERP-only; printer / POS order never
      come here; recipe products are never created from a bar. ───────── */
-  PROP_FIELDS = ['name','cat','gross_t','tax','unit','active']; // result field names: `tax` = the letter (or the bar's rate), `active` = shown on the tills (active && !ingredient → p.pos)
-  PROP_LBL = {name:'emri',cat:'kategoria',gross_t:'çmimi me TVSH',tax:'TVSH',unit:'njësia',active:'shfaqja në POS'};
+  PROP_FIELDS = ['name','cat','gross_t','tax','unit','active','atk']; // result field names: `tax` = the letter (or the bar's rate), `active` = shown on the tills (active && !ingredient → p.pos), `atk` = kategoria ATK (the code, ATK_CATS)
+  PROP_LBL = {name:'emri',cat:'kategoria',gross_t:'çmimi me TVSH',tax:'TVSH',unit:'njësia',active:'shfaqja në POS',atk:'kategoria ATK'};
   PROP_RATE = {'-1':'A','0':'C','8':'D','18':'E'}; // the bar's VAT rate (norma; -1 = exempt) → ATK letter, when the letter itself is missing / unknown
   PROP_KEEP = 1000; PROP_ROUNDS = 5; PROP_BACKOFF = 300000; // ids kept in the book · batches per tick (while `more`) · ms of rest after the server refused a batch
   PROP_RESEND = 200; // the book's latest applied / partial verdicts a page sends again on its first run for a company (propUnacked)
@@ -3678,8 +3732,8 @@ class Component extends DCLogic {
   propTax(x){ const own=(o,k)=>Object.prototype.hasOwnProperty.call(o,k); if(!x) return undefined; if(typeof x.tax==='string'&&own(this.TAX,x.tax)) return x.tax; const r=x.rate==null?'':String(x.rate); return own(this.PROP_RATE,r)?this.PROP_RATE[r]:undefined; }
   // one side of a proposal (before / after) in the ERP's terms; undefined = missing or not valid (strings 1–200 chars, gross_t an integer ≥ 0)
   propSide(x){ const s=v=>{ const t=typeof v==='string'?v.trim():''; return t&&t.length<=200?t:undefined; };
-    return {name:s(x.name),cat:s(x.cat),gross_t:Number.isSafeInteger(x.gross_t)&&x.gross_t>=0?x.gross_t:undefined,tax:this.propTax(x),unit:s(x.unit),active:x.active==null?undefined:!!x.active&&!x.ingredient}; }
-  propHas(x,f){ return f==='tax'?x.tax!=null||x.rate!=null:x[f]!=null; } // the bar sent the field (valid or not)
+    return {name:s(x.name),cat:s(x.cat),gross_t:Number.isSafeInteger(x.gross_t)&&x.gross_t>=0?x.gross_t:undefined,tax:this.propTax(x),unit:s(x.unit),active:x.active==null?undefined:!!x.active&&!x.ingredient,atk:this.atkCode(x.atk)||undefined}; }
+  propHas(x,f){ return f==='tax'?x.tax!=null||x.rate!=null:f==='atk'?x.atk!=null&&String(x.atk).trim()!=='':x[f]!=null; } // the bar sent the field (valid or not); an empty atk = not sent (a bar product without a code)
   propEq(f,a,b){ return f==='cat'?this.norm(a)===this.norm(b):a===b; } // a category is the same category by its normalised name (canonCat / findCategory)
   propLow(s){ return typeof s==='string'?s.trim().toLowerCase().replace(/\s+/g,' '):''; }
   // the next free 'BAR-<n>' (after the highest BAR-n there is; unique under the SKU rule — norm() of every SKU)
@@ -3707,9 +3761,12 @@ class Component extends DCLogic {
     if(!p){ if(B) return no('Produkti nuk gjendet në ERP'+(sku?' (SKU '+sku+')':'')+' — nuk krijohet sërish nga arka.');
       const miss=['name','cat','gross_t','tax','unit'].filter(f=>a[f]===undefined||(f==='unit'&&!this.UNITS.includes(a.unit))); if(miss.length) return no('Produkti i ri nuk u krijua: mungon ose është e pavlefshme '+miss.map(f=>L[f]).join(', ')+'.');
       const nsku=this.PROP_SKU.test(sku)&&!P.some(x=>this.norm(x.sku)===this.norm(sku))?sku:this.propSku(P), pt=this.netOfT(a.gross_t,this.effRate(a.tax,W)); // gross_t verbatim, the net derived from it exactly as the product form does
-      W.products=[...P,{name:a.name,sku:nsku,barcode:'—',cat:this.canonCat(W,a.cat),unit:a.unit,tax:a.tax,price_t:pt,price_c:this.cOfT(pt),cost_t:0,cost_c:0,gross_t:a.gross_t,openCost_c:0,opening:0,minStock:0,pos:a.active!==false,barKey:key,barTerm:tid||null}]; W.categories=this.withCategory(W,a.cat);
-      return {state:'applied',created:nsku,result:{sku:nsku,applied:this.PROP_FIELDS.slice(),kept:[],reason:''}}; }
-    const b=B?rn(this.propSide(B)):{}, cur={name:p.name,cat:p.cat,gross_t:this.grossT(p,W),tax:p.tax,unit:p.unit,active:p.pos!==false}, applied=[], kept=[], erp=[], why=[], set={};
+      // kategoria ATK: the bar's code (valid) is stored on the product; without one the product takes its category's default; with neither it is
+      // created but NOT shown on the tills (the badge in Produktet says why) — the bar is told so (partial, `active` kept)
+      const atk=a.atk||'', eff=atk||this.catAtk(W,a.cat), kept=a.active!==false&&!eff?['active']:[];
+      W.products=[...P,{name:a.name,sku:nsku,barcode:'—',cat:this.canonCat(W,a.cat),unit:a.unit,tax:a.tax,price_t:pt,price_c:this.cOfT(pt),cost_t:0,cost_c:0,gross_t:a.gross_t,openCost_c:0,opening:0,minStock:0,pos:a.active!==false&&!!eff,...(atk?{atk}:{}),barKey:key,barTerm:tid||null}]; W.categories=this.withCategory(W,a.cat);
+      return {state:kept.length?'partial':'applied',created:nsku,result:{sku:nsku,applied:this.PROP_FIELDS.filter(f=>!kept.includes(f)),kept,reason:kept.length?this.propCut(this.ATK_MISSING+' — nuk shfaqet në POS derisa të caktohet kategoria ATK në ERP (te produkti ose si parazgjedhje e kategorisë “'+this.canonCat(W,a.cat)+'”)'):''}}; }
+    const b=B?rn(this.propSide(B)):{}, cur={name:p.name,cat:p.cat,gross_t:this.grossT(p,W),tax:p.tax,unit:p.unit,active:p.pos!==false,atk:this.prodAtk(p,W)}, applied=[], kept=[], erp=[], why=[], set={};
     for(const f of this.PROP_FIELDS){ if(!this.propHas(A,f)) continue; const av=a[f], bv=b[f], ev=cur[f];
       if(av===undefined||(f==='unit'&&!this.UNITS.includes(av))){ kept.push(f); why.push('vlerë e pavlefshme: '+L[f]); continue; }
       if(bv!==undefined&&this.propEq(f,av,bv)) continue; // the bar did not change it
@@ -3718,9 +3775,13 @@ class Component extends DCLogic {
       if(f==='unit'){ const e=this.productError(V,{...p,unit:av},p,{unit:av}); if(e){ kept.push(f); why.push(e); continue; } } // the unit lock (opening / movements incl. the POS ledger / recipe / draft) and the pack rule
       if(f==='cat'){ const tk=tid+'\n'+this.norm(bv), rf=!!W.refused&&W.refused.get(tk)===this.norm(av); if(rf||(!this.findCategory(W.categories,av)&&!!W.touched&&W.touched.has(tk))){ kept.push(f); why.push((rf?'riemërimi i kategorisë “'+bv+'” u refuzua':'kategoria “'+av+'” nuk është në ERP (emër i vjetër nga arka)')+' — mbetet “'+ev+'”'); continue; } }
       set[f]=av; applied.push(f); }
+    // kategoria ATK (the contract: no product on the tills without a code): switching it on, or moving it to a category without a default, when the
+    // product would end up without a code — those fields stay as in the ERP; the rest of the proposal is still merged
+    { const np0={...p,...set,...('active' in set?{pos:set.active}:{})}; if(np0.pos!==false&&!this.prodAtk(np0,W)){ const bad=['active','cat'].filter(f=>f in set&&(f!=='active'||set.active));
+        if(bad.length){ for(const f of bad){ delete set[f]; applied.splice(applied.indexOf(f),1); kept.push(f); } why.push(this.ATK_MISSING+' — '+bad.map(f=>L[f]).join(', ')+' mbetet si në ERP (caktoni kategorinë ATK te produkti ose te kategoria)'); } } }
     const q=byName&&key&&tid&&!p.barKey?{barKey:key,barTerm:tid}:{}; // found by the name: bound to the bar's key (and terminal) from now on
     if(Object.keys(set).length||q.barKey){
-      if('name' in set) q.name=set.name; if('unit' in set) q.unit=set.unit; if('active' in set) q.pos=set.active;
+      if('name' in set) q.name=set.name; if('unit' in set) q.unit=set.unit; if('active' in set) q.pos=set.active; if('atk' in set) q.atk=set.atk;
       if('cat' in set){ q.cat=this.canonCat(W,set.cat); W.categories=this.withCategory(W,set.cat); } // a bar category the ERP does not have yet is created
       // the gross the till prints stays verbatim; the net (price_t / price_c, the books' base) is derived from it at the (new) letter's effective rate
       if('gross_t' in set||'tax' in set){ const tax=set.tax||p.tax, G='gross_t' in set?set.gross_t:cur.gross_t, pt=this.netOfT(G,this.effRate(tax,W)); Object.assign(q,{tax,gross_t:G,price_t:pt,price_c:this.cOfT(pt)}); }
@@ -4143,8 +4204,8 @@ class Component extends DCLogic {
   /* ───────── accounting: every document posts a balanced journal entry (derived, never stored) ───────── */
   journal(db){
     const d=db||this.view(), J=[], ACC=this.accountsOf(d); const E=(date,ref,desc,lines)=>J.push({date,ref,desc,lines});
-    // gjendja fillestare: një artikull pa `opening` ose pa kosto (shërbim, aset, import i vjetër) vlen 0 — një fushë e zbrazët
-    // nuk guxon të bëjë NaN te ditari, sepse atëherë bilanci i të gjithë kompanisë del „Diferencë NaN"
+    // gjendja fillestare: një artikull pa `opening` ose pa kosto (shërbim, aset, import i vjetër) vlen 0 — një fushë e zbrazët
+    // nuk guxon të bëjë NaN te ditari, sepse atëherë bilanci i të gjithë kompanisë del „Diferencë NaN"
     const openStock=d.products.reduce((a,p)=>a+Math.round((Number(p.opening)||0)*(Number(p.openCost_c??p.cost_c)||0)/1000),0), openCash=ACC.reduce((a,x)=>a+(Number(x.opening_c)||0),0);
     E('01.01.2026','HAPJE','Gjendja fillestare',[['1300',openStock,0],...ACC.map(a=>[a.type==='Bankë'?'1010':'1000',a.opening_c,0]),['3000',0,openStock+openCash]]);
     for(const inv of d.invoices){ if(inv.status==='Draft'||inv.status==='Anuluar'||inv.kind==='Profaturë'||inv.fromPos) continue; // A4 copies of POS receipts are not sales
@@ -4464,8 +4525,8 @@ class Component extends DCLogic {
       employee:{name:'',pid:'',position:'',positionQ:'',positionOpen:false,dept:'',deptQ:'',deptOpen:false,branch:'',contract:'I pacaktuar',hired:this.today(),gross:'',days:'5',hours:'8',volEmp:'0',volEr:'0',iban:'',status:'Aktiv'},
       // KUJDES: çelësi i llojit NUK mund të quhet `kind` — ai është lloji i VETË formës (si te produkti: `pkind`)
       leave:{empId:'',empIdQ:'',empIdOpen:false,lkind:'Pushim vjetor',from:this.today(),to:this.today(),note:''},
-      product:{name:'',barcode:'',cat:'',catQ:'',catOpen:false,unit:'copë',unitQ:'copë',unitOpen:false,tax:this.defaultTax(),price:'',priceG:'',cost:'',costG:'',opening:'0',minStock:'0',pos:true,active:true,pkind:'mall',accSale:'4000',accSaleQ:'4000 · Të hyra nga shitja',accSaleOpen:false,accPur:'1300',accPurQ:'1300 · Stoku i mallit',accPurOpen:false,rec:false,lines:[{...this.newLine(),fresh:false,artOpen:false}],packUnit:'',packUnitQ:'',packUnitOpen:false,packQty:''},
-      category:{name:'',note:''},
+      product:{name:'',barcode:'',cat:'',catQ:'',catOpen:false,atk:'',atkQ:'',atkOpen:false,unit:'copë',unitQ:'copë',unitOpen:false,tax:this.defaultTax(),price:'',priceG:'',cost:'',costG:'',opening:'0',minStock:'0',pos:true,active:true,pkind:'mall',accSale:'4000',accSaleQ:'4000 · Të hyra nga shitja',accSaleOpen:false,accPur:'1300',accPurQ:'1300 · Stoku i mallit',accPurOpen:false,rec:false,lines:[{...this.newLine(),fresh:false,artOpen:false}],packUnit:'',packUnitQ:'',packUnitOpen:false,packQty:''},
+      category:{name:'',note:'',atk:'',atkQ:'',atkOpen:false},
       adjust:{sku:'',artQ:'',artOpen:false,counted:'',pk:false},
       customer:{name:'',type:'Biznes',nui:'',fiscal:'',city:'',contact:'',address:''},
       supplier:{name:'',nui:'',fiscal:'',city:'',contact:'',address:''},
@@ -4491,6 +4552,8 @@ class Component extends DCLogic {
       warehouse:{name:'',branch:''}
     }[kind];
     if(kind==='return'&&init.ref){ init={...init,refQ:init.ref}; }
+    // an edit opened without `atk` keeps the record's kategoria ATK (the Kategoritë page and the product drawer pass it; a caller that does not must not clear it)
+    if(init.edit&&init.atk===undefined&&(kind==='category'||kind==='product')){ const r=kind==='category'?this.CATEGORIES.find(c=>c.id===init.edit):this.prodOf(this.state.db,init.edit); if(r) init={...init,atk:this.atkCode(r.atk),atkQ:this.atkLabel(r.atk)}; }
     this.setState({frm:{kind,date:today,note:'',...per,...init},drawer:null,dr:null,modal:null});
   }
   setF(patch){ this.setState(s=>({frm:s.frm?{...s.frm,...(typeof patch==='function'?patch(s.frm):patch)}:null})); }
@@ -4743,9 +4806,13 @@ class Component extends DCLogic {
       // pack: both halves or none; qm a whole number of thousandths > 0 (toQ), another unit than the product's, whole for a whole-number unit
       const packQm=f.packQty===''||f.packQty==null?null:this.toQ(f.packQty), pack=!isRec&&f.packUnit&&packQm?{unit:f.packUnit,qm:packQm}:null, packE=pack?this.packError(pack,unit):'';
       const packErr=!isRec&&(!!f.packUnit!==(f.packQty!==''&&f.packQty!=null)||(f.packQty!==''&&f.packQty!=null&&packQm===null)||!!packE);
+      // kategoria ATK: the product's own code (f.atk), else the category's default shown as the placeholder; a product shown on the tills needs one
+      const fAtk=this.atkCode(f.atk), catDef=this.catAtk(db,f.cat), effAtk=fAtk||catDef, needAtk=f.pos!==false&&!effAtk;
       fields=[txt('name','Emri',{half:true,err:false}),info('SKU',sku+' · '+(edit?'nuk ndryshohet (është kyçi i çdo lëvizjeje)':'caktohet vetvetiu'),{half:true,color:'#526477'}),txt('barcode','Barkodi',{half:true,ph:'opsional'}),combo('cat','Kategoria',cats,{free:true,half:true,ph:'zgjidhni ose shkruani një të re',hint:f.cat&&!this.findCategory(this.CATEGORIES,f.cat)?'e re — krijohet me ruajtjen':''}),
+        combo('atk','Kategoria ATK',this.atkOpts(),{half:true,max:this.ATK_CATS.length,ph:catDef?'parazgjedhja e kategorisë: '+this.atkLabel(catDef):'zgjidhni kategorinë e ATK-së',err:needAtk,
+          hint:fAtk?'shtypet në kuponin fiskal (CouponItem.Type)':catDef?'bosh = '+this.atkLabel(catDef)+' nga kategoria “'+String(f.cat||'').trim()+'”':needAtk?'kërkohet që produkti të shfaqet në POS — ose caktoni parazgjedhjen te Produkte › Kategoritë':'pa kod: nuk shfaqet në POS'}),
         unitLock?info('Njësia',orig.unit+' · nuk ndryshohet (ka gjendje fillestare, lëvizje, përdoret në recetë ose është në një dokument draft)',{half:true,color:'#526477'}):combo('unit','Njësia',units,{half:true,max:units.length,ph:'zgjidhni njësinë',hint:f.unit?'':'zgjidhni nga lista'}),taxSeg,
-        seg('pos','Shfaqe në POS',[[true,'Po — shitet në arkë'],[false,'Jo — vetëm në ERP']],{half:true}),
+        seg('pos','Shfaqe në POS',[[true,'Po — shitet në arkë'],[false,'Jo — vetëm në ERP']],{half:true,hint:needAtk?this.ATK_MISSING+' — nuk mund të shfaqet në POS':''}),
         seg('active','Statusi',[[true,'Aktiv'],[false,'Joaktiv']],{half:true,hint:f.active===false?'Joaktiv: nuk shkon më te arkat dhe nuk zgjidhet te dokumente të reja — historia dhe raportet mbeten të paprekura':''}),
         // lloji e ndryshon vetvetiu kontoën e blerjes vetëm kur ajo është ende parazgjedhja e llojit të mëparshëm (zgjedhja me dorë nuk prishet)
         seg('pkind','Lloji i produktit',this.PROD_KINDS,{pick:k=>set(x=>{ const o={pkind:k}; for(const [key,fn] of [['accPur',p=>this.prodAccPur(p)],['accSale',p=>this.prodAccSale(p)]]){ if(x[key]===fn({kind:x.pkind})){ const c=fn({kind:k}); o[key]=c; o[key+'Q']=this.coaLabel(c); } } return o; }),
@@ -4763,18 +4830,23 @@ class Component extends DCLogic {
             combo('packUnit','Paketimi (opsional)',units,{half:true,max:units.length,ph:'p.sh. pako, shishe'}),txt('packQty','Sasia në paketim'+(unit?' ('+unit+')':''),{half:true,decimal:true,err:packErr,ph:'p.sh. 24 ose 0.7',hint:packE||(pack?'1 '+pack.unit+' = '+this.fmtQ(pack.qm)+' '+(unit||'')+' · blerjet, transferimet dhe numërimi mund të shkruhen në '+pack.unit:'')})])])];
       if(isRec) sub='Receta: kur shitet produkti dalin nga stoku përbërësit e saj (sasia në njësinë e përbërësit për 1 njësi të shitur); produkti nuk ka stok as kosto të vetën — kostoja llogaritet nga përbërësit.'+(vatOn?'':' Kompania nuk është e regjistruar për TVSH: shitet në grupin A (0 %).');
       if(isRec) msg=badLine?(badLine.ev.err==='noprod'?'Zgjidhni përbërësin te rreshti '+badLine.n+' ose hiqeni.':badLine.ev.err==='recipe'?'“'+badLine.ev.prod.name+'” (rreshti '+badLine.n+') ka vetë recetë — përbërësit duhet të jenë mall me stok.':'Kontrolloni sasinë te rreshti '+badLine.n+' (në njësinë e përbërësit, > 0).'):recErr;
-      const ready=!!f.name.trim()&&!!sku&&price!==null&&priceG!==null&&!!f.cat&&!!unit&&(isRec?(!badLine&&!recErr):(cost!==null&&costG!==null&&(pNoStock||(opening!==null&&minS!==null&&!packErr))));
+      if(!msg&&needAtk) msg=this.atkError(db,{name:f.name.trim()||'Produkti',cat:f.cat,pos:true,atk:f.atk});
+      const ready=!!f.name.trim()&&!!sku&&price!==null&&priceG!==null&&!!f.cat&&!!unit&&!needAtk&&(isRec?(!badLine&&!recErr):(cost!==null&&costG!==null&&(pNoStock||(opening!==null&&minS!==null&&!packErr))));
       const prices=()=>({price_t:price,price_c:this.cOfT(price),cost_t:isRec?0:cost,cost_c:isRec?0:this.cOfT(cost),gross_t:priceG});   // gross_t: the gross side exactly as it stands in the form (verbatim on the coupon)
-      const extra=()=>({pos:f.pos!==false,active:f.active!==false,kind:pKind,accSale:this.prodAccSale({accSale:f.accSale,kind:pKind}),accPur:this.prodAccPur({accPur:f.accPur,kind:pKind}),...(isRec&&!pNoStock?{recipe}:{}),...(pNoStock?{recipe:null,pack:null}:{})});
+      const extra=()=>({pos:f.pos!==false,active:f.active!==false,atk:fAtk,kind:pKind,accSale:this.prodAccSale({accSale:f.accSale,kind:pKind}),accPur:this.prodAccPur({accPur:f.accPur,kind:pKind}),...(isRec&&!pNoStock?{recipe}:{}),...(pNoStock?{recipe:null,pack:null}:{})});
       actions=[edit?{label:'Ruaj',primary:true,disabled:!ready,go:()=>{ if(!this.updateProduct(edit,{name:f.name.trim(),barcode:f.barcode||'—',cat:f.cat.trim(),unit,tax:f.tax,...prices(),minStock:isRec?0:minS||0,...extra(),...(isRec?{}:{recipe:null}),pack})) return; close(); this.openProduct(edit); }}
         :{label:'Shto produktin',primary:true,disabled:!ready,go:()=>{ if(!this.addProduct({name:f.name.trim(),sku,barcode:f.barcode||'—',cat:f.cat.trim(),unit,tax:f.tax,...prices(),openCost_c:(isRec||pNoStock)?0:this.cOfT(cost),opening:(isRec||pNoStock)?0:opening||0,minStock:(isRec||pNoStock)?0:minS||0,...extra(),...(pack&&!pNoStock?{pack}:{})})) return; close(); }}];
     } else if(K==='category'){
       const edit=f.edit||'', cur=edit?this.CATEGORIES.find(c=>c.id===edit):null, clash=this.findCategory(this.CATEGORIES,f.name), dup=!!clash&&clash.id!==edit, used=edit?this.catUsage(edit):0;
       title=edit?'Redakto kategorinë':'Kategori e re'; sub=edit?'Riemërimi përditëson kategorinë te çdo produkt që e përdor.':'Kategoria shfaqet te formulari i produktit dhe te raportet sipas kategorisë.';
+      // kategoria ATK e parazgjedhur: the code of every product of the category that has none of its own (CouponItem.Type on the fiscal coupon)
+      const kAtk=this.atkCode(f.atk), deps=cur?this.catAtkDeps(db,cur.name):[];
       fields=[txt('name','Emri',{err:dup,hint:dup?'ekziston tashmë':'',ph:'p.sh. Ndërtim'}),txt('note','Shënim',{ph:'opsional'})];
       if(edit) fields.push(info('Produkte që e përdorin',used?used+' produkte':'asnjë',{half:true,color:used?'#10243A':'#526477'}));
-      const ready=!!f.name.trim()&&!dup;
-      actions=[{label:edit?'Ruaj':'Shto kategorinë',primary:true,disabled:!ready,go:()=>{ const ok=edit?this.renameCategory(edit,f.name,f.note):!!this.addCategory(f.name,f.note); if(ok) close(); }}];
+      fields.push(combo('atk','Kategoria ATK (parazgjedhje)',this.atkOpts(),{max:this.ATK_CATS.length,ph:'opsionale — për produktet e kategorisë pa kod të vetin',err:!kAtk&&deps.length>0,
+          hint:kAtk?'produktet e kategorisë pa kod të vetin shtypen me këtë kod në kuponin fiskal':deps.length?deps.length+' produkte të shfaqura në POS e marrin kodin nga kjo kategori — pa parazgjedhje nuk ruhet':'pa parazgjedhje: çdo produkt i kategorisë duhet ta ketë kodin e vet për t’u shfaqur në POS'}));
+      const ready=!!f.name.trim()&&!dup&&!(!kAtk&&deps.length>0);
+      actions=[{label:edit?'Ruaj':'Shto kategorinë',primary:true,disabled:!ready,go:()=>{ const ok=edit?this.renameCategory(edit,f.name,f.note,kAtk):!!this.addCategory(f.name,f.note,kAtk); if(ok) close(); }}];
       if(edit&&cur) actions.unshift({label:'Fshi',disabled:used>0,hint:used?used+' produkte e përdorin':'',go:()=>this.setState({confirm:{title:'Fshi kategorinë “'+cur.name+'”?',body:'Asnjë produkt nuk e përdor; hiqet nga lista.',color:'#B91C1C',ok:()=>{ if(this.deleteCategory(edit)) close(); }}})});
       if(edit&&used) msg=used+' produkte e përdorin këtë kategori — mund të riemërohet, por jo të fshihet.';
     } else if(K==='vatcat'){
@@ -5019,14 +5091,15 @@ class Component extends DCLogic {
     if(d.kind==='product'){
       const p=this.prodOf(db,d.id); if(!p) return null;
       const rec=this.isRecipe(p), users=this.usedIn(db,p.sku), whs0=db.warehouses||[];
-      const edit={label:'Redakto',kind:'primary',go:()=>this.openForm('product',{edit:p.sku,name:p.name,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,catQ:p.cat,unit:p.unit,unitQ:p.unit,tax:p.tax,pkind:this.prodKind(p),active:this.prodActive(p),posTerms:this.prodTerms(p),accSale:this.prodAccSale(p),accSaleQ:this.coaLabel(this.prodAccSale(p)),accPur:this.prodAccPur(p),accPurQ:this.coaLabel(this.prodAccPur(p)),price:this.fromT(this.priceT(p)),priceG:this.fromT(this.grossT(p)),cost:this.fromT(this.costT(p)),costG:this.fromT(this.grossOfT(this.costT(p),this.effRate(p.tax))),minStock:this.fmtQ(p.minStock).replace(/,/g,''),
+      const edit={label:'Redakto',kind:'primary',go:()=>this.openForm('product',{edit:p.sku,name:p.name,barcode:p.barcode==='—'?'':p.barcode,cat:p.cat,catQ:p.cat,atk:this.atkCode(p.atk),atkQ:this.atkLabel(p.atk),unit:p.unit,unitQ:p.unit,tax:p.tax,pkind:this.prodKind(p),active:this.prodActive(p),posTerms:this.prodTerms(p),accSale:this.prodAccSale(p),accSaleQ:this.coaLabel(this.prodAccSale(p)),accPur:this.prodAccPur(p),accPurQ:this.coaLabel(this.prodAccPur(p)),price:this.fromT(this.priceT(p)),priceG:this.fromT(this.grossT(p)),cost:this.fromT(this.costT(p)),costG:this.fromT(this.grossOfT(this.costT(p),this.effRate(p.tax))),minStock:this.fmtQ(p.minStock).replace(/,/g,''),
         pos:p.pos!==false,rec,lines:rec?p.recipe.map(r=>({...this.newLine(),fresh:false,artOpen:false,sku:r.sku,artQ:(this.prodOf(db,r.sku)||{name:r.sku}).name,qty:this.fmtQ(r.qm).replace(/,/g,'')})):[{...this.newLine(),fresh:false,artOpen:false}],packUnit:p.pack?p.pack.unit:'',packUnitQ:p.pack?p.pack.unit:'',packQty:p.pack?this.fmtQ(p.pack.qm).replace(/,/g,''):''})};
+      const atkEff=this.prodAtk(p,db), atkMeta={k:'Kategoria ATK',v:atkEff?this.atkLabel(atkEff)+(this.atkCode(p.atk)?'':' · nga kategoria “'+p.cat+'”'):this.ATK_MISSING+' — nuk shfaqet në POS',color:atkEff?'#10243A':'#B91C1C'};
       const posMeta={k:'Shfaqet në POS',v:p.pos===false?'Jo — vetëm në ERP':'Po',color:p.pos===false?'#B45309':'#10243A'}, packMeta=p.pack?[{k:'Paketimi',v:'1 '+p.pack.unit+' = '+this.fmtQ(p.pack.qm)+' '+p.unit}]:[];
       // a RECIPE product: no stock of its own — what the ingredients allow, the cost derived from them, the recipe itself
       if(rec){ const rc=this.recipeCost(p,db), make=this.makeQm(p,db), sold=this.salesDocs(db).reduce((a,r)=>a+(r.items||[]).filter(i=>i.sku===p.sku).reduce((x,i)=>x+Math.round(i.qty*1000),0),0);
         return {title:p.name,subtitle:p.cat+' · '+p.unit+' · recetë me '+p.recipe.length+' përbërës · TVSH '+p.tax+' · '+this.TAX[p.tax].rate+'%'+(this.vatOn()?'':' (shitet në grupin A — kompania pa TVSH)'),no:p.sku,badge:{text:'Recetë',...this.st('Aktive')},close,
           actions:[edit,{label:'Faturo',kind:'',go:()=>this.openForm('invoice',{lines:[{...this.newLine(),fresh:false,sku:p.sku,artQ:p.name,tax:p.tax}]})},{label:'Etiketë / barkod',kind:'',go:()=>this.printLabels([p])}],
-          meta:[{k:'Mund të përgatiten',v:this.fmtQ(make)+' '+p.unit,color:make?'#10243A':'#B91C1C'},...(whs0.length>1?whs0.map(w=>({k:w.name,v:this.fmtQ(this.makeQm(p,db,w.id))+' '+p.unit})):[]),{k:'Kosto nga receta',v:this.fmt(rc)},{k:'Çmimi i shitjes (pa TVSH)',v:this.fmtT(this.priceT(p))},{k:'Çmimi me TVSH '+this.effRate(p.tax)+'%'+(this.vatOn()?'':' (grupi A)'),v:this.fmtT(this.grossT(p)),color:'#2563EB'},{k:'Marzhi',v:p.price_c?Math.round((p.price_c-rc)/p.price_c*100)+'%':'—'},{k:'Shitur gjithsej',v:this.fmtQ(sold)+' '+p.unit},posMeta,{k:'Barkodi',v:p.barcode,mono:true}],
+          meta:[{k:'Mund të përgatiten',v:this.fmtQ(make)+' '+p.unit,color:make?'#10243A':'#B91C1C'},...(whs0.length>1?whs0.map(w=>({k:w.name,v:this.fmtQ(this.makeQm(p,db,w.id))+' '+p.unit})):[]),{k:'Kosto nga receta',v:this.fmt(rc)},{k:'Çmimi i shitjes (pa TVSH)',v:this.fmtT(this.priceT(p))},{k:'Çmimi me TVSH '+this.effRate(p.tax)+'%'+(this.vatOn()?'':' (grupi A)'),v:this.fmtT(this.grossT(p)),color:'#2563EB'},{k:'Marzhi',v:p.price_c?Math.round((p.price_c-rc)/p.price_c*100)+'%':'—'},{k:'Shitur gjithsej',v:this.fmtQ(sold)+' '+p.unit},posMeta,atkMeta,{k:'Barkodi',v:p.barcode,mono:true}],
           sections:[{title:'Receta · për 1 '+p.unit,cols:[{label:'Përbërësi'},{label:'SKU'},{label:'Sasia',align:'right'},{label:'Kosto mes.',align:'right'},{label:'Në recetë',align:'right'},{label:'Në stok',align:'right'},{label:'Mjafton për',align:'right'}],
             rows:p.recipe.map(r=>{ const ing=this.prodOf(db,r.sku)||{name:r.sku,unit:''}, ac=this.avgCost(db,r.sku), st=this.stockOf(r.sku,db); return {open:()=>this.openProduct(r.sku),cells:[this.cell(ing.name,{b:true}),this.cell(r.sku,{mono:true,color:'#526477'}),this.cell(this.fmtQ(r.qm)+' '+ing.unit+(ing.unit==='l'?' ('+r.qm+' ml)':''),{align:'right'}),this.moneyCell(ac),this.moneyCell(Math.round(ac*r.qm/1000),{b:true}),this.cell(this.fmtQ(st)+' '+ing.unit,{align:'right',color:st<r.qm?'#B91C1C':'#526477'}),this.cell(this.fmtQ(Math.max(0,Math.floor(st/r.qm))*1000)+' '+p.unit,{align:'right',color:'#526477'})]}; })}],
           totals:[{k:'Kosto e recetës',v:this.fmt(rc),b:true}],note:'Produkti nuk ka stok të vetin: kur shitet (faturë ose POS), dalin nga stoku përbërësit e recetës. Kthimet në POS nuk i rikthejnë përbërësit; anulimet i rikthejnë ashtu siç dolën.',hasNote:true,history:[]}; }
@@ -5040,7 +5113,7 @@ class Component extends DCLogic {
       const reserved=this.reservedOf(p.sku,db), incoming=this.incomingOf(p.sku,db);
       return {title:p.name,subtitle:p.cat+' · '+p.unit+' · TVSH '+p.tax+' · '+this.TAX[p.tax].rate+'%'+(this.vatOn()?'':' (shitet në grupin A — kompania pa TVSH)'),no:p.sku,badge:low?{text:'Nën minimum',bg:this.ST['Vonuar'].bg,fg:this.ST['Vonuar'].fg}:{text:'Në rregull',bg:this.ST['Në rregull'].bg,fg:this.ST['Në rregull'].fg},close,
         actions:[edit,{label:'Rregullo stokun',kind:'',go:()=>this.openForm('adjust',{art:p.sku,artQ:p.name,sku:p.sku})},{label:'Blerje e re',kind:'',go:()=>this.openForm('purchase',{lines:[{...this.newLine(),fresh:false,sku:p.sku,artQ:p.name,tax:p.tax}]})},{label:'Faturo',kind:'',go:()=>this.openForm('invoice',{lines:[{...this.newLine(),fresh:false,sku:p.sku,artQ:p.name,tax:p.tax}]})},...(multiWh?[{label:'Transfero',kind:'',go:()=>this.openForm('transfer',{lines:[{...this.newLine(),fresh:false,sku:p.sku,artQ:p.name,tax:p.tax}]})}]:[]),{label:'Etiketë / barkod',kind:'',go:()=>this.printLabels([p])}],
-        meta:[{k:'Gjendja',v:this.fmtQ(qm)+' '+p.unit+(this.packEq(p,qm)?' '+this.packEq(p,qm):''),color:low?'#B91C1C':'#10243A'},{k:'Minimumi',v:this.fmtQ(p.minStock)+' '+p.unit},...(multiWh?whs.map(w=>{ const q=this.stockOfWh(p.sku,w.id,db), e=this.packEq(p,q); return {k:w.name,v:this.fmtQ(q)+' '+p.unit+(e?' '+e:'')}; }):[]),{k:'Rezervuar (porosi)',v:reserved?this.fmtQ(reserved)+' '+p.unit:'—',color:reserved?'#B45309':'#526477'},{k:'Në ardhje (porosi blerjeje)',v:incoming?this.fmtQ(incoming)+' '+p.unit:'—',color:incoming?'#2563EB':'#526477'},{k:'I disponueshëm',v:this.fmtQ(qm-reserved)+' '+p.unit,color:qm-reserved<0?'#B91C1C':'#10243A'},{k:'Kosto mesatare',v:this.fmt(cost)},{k:'Kosto e blerjes (pa TVSH)',v:this.fmtT(this.costT(p))},{k:'Vlera në stok',v:this.fmt(Math.round(qm*cost/1000))},{k:'Çmimi i shitjes (pa TVSH)',v:this.fmtT(this.priceT(p))},{k:'Çmimi me TVSH '+this.effRate(p.tax)+'%'+(this.vatOn()?'':' (grupi A)'),v:this.fmtT(this.grossT(p)),color:'#2563EB'},{k:'Marzhi',v:p.price_c?Math.round((p.price_c-cost)/p.price_c*100)+'%':'—'},{k:'Shitur gjithsej',v:this.fmtQ(sold)+' '+p.unit},...(users.length||used?[{k:'Përdoret në',v:users.length?users.map(u=>u.name).join(', '):'— (receta të vjetra)',color:'#2563EB'},{k:'Konsumuar në receta',v:this.fmtQ(used)+' '+p.unit}]:[]),{k:'Blerë gjithsej',v:this.fmtQ(bought)+' '+p.unit},posMeta,...packMeta,{k:'Barkodi',v:p.barcode,mono:true}],
+        meta:[{k:'Gjendja',v:this.fmtQ(qm)+' '+p.unit+(this.packEq(p,qm)?' '+this.packEq(p,qm):''),color:low?'#B91C1C':'#10243A'},{k:'Minimumi',v:this.fmtQ(p.minStock)+' '+p.unit},...(multiWh?whs.map(w=>{ const q=this.stockOfWh(p.sku,w.id,db), e=this.packEq(p,q); return {k:w.name,v:this.fmtQ(q)+' '+p.unit+(e?' '+e:'')}; }):[]),{k:'Rezervuar (porosi)',v:reserved?this.fmtQ(reserved)+' '+p.unit:'—',color:reserved?'#B45309':'#526477'},{k:'Në ardhje (porosi blerjeje)',v:incoming?this.fmtQ(incoming)+' '+p.unit:'—',color:incoming?'#2563EB':'#526477'},{k:'I disponueshëm',v:this.fmtQ(qm-reserved)+' '+p.unit,color:qm-reserved<0?'#B91C1C':'#10243A'},{k:'Kosto mesatare',v:this.fmt(cost)},{k:'Kosto e blerjes (pa TVSH)',v:this.fmtT(this.costT(p))},{k:'Vlera në stok',v:this.fmt(Math.round(qm*cost/1000))},{k:'Çmimi i shitjes (pa TVSH)',v:this.fmtT(this.priceT(p))},{k:'Çmimi me TVSH '+this.effRate(p.tax)+'%'+(this.vatOn()?'':' (grupi A)'),v:this.fmtT(this.grossT(p)),color:'#2563EB'},{k:'Marzhi',v:p.price_c?Math.round((p.price_c-cost)/p.price_c*100)+'%':'—'},{k:'Shitur gjithsej',v:this.fmtQ(sold)+' '+p.unit},...(users.length||used?[{k:'Përdoret në',v:users.length?users.map(u=>u.name).join(', '):'— (receta të vjetra)',color:'#2563EB'},{k:'Konsumuar në receta',v:this.fmtQ(used)+' '+p.unit}]:[]),{k:'Blerë gjithsej',v:this.fmtQ(bought)+' '+p.unit},posMeta,atkMeta,...packMeta,{k:'Barkodi',v:p.barcode,mono:true}],
         sections:[{title:'Lëvizjet e stokut',cols:[{label:'Data'},{label:'Lloji'},{label:'Referenca'},{label:'Pala'},{label:'Sasia',align:'right'},{label:'Kosto',align:'right'},{label:'Gjendja',align:'right'}],rows}],
         totals:[],note:'',hasNote:false,history:[]};
     }
@@ -6277,9 +6350,10 @@ class Component extends DCLogic {
         const list=this.CATEGORIES, byCat={}; stockRows.forEach(p=>{ (byCat[this.norm(p.cat)]=byCat[this.norm(p.cat)]||[]).push(p); });
         T.sub='Kategoritë e produkteve: shtoni, riemëroni (përditëson çdo produkt) ose fshini ato pa produkte.'; T.count=list.length;
         T.actions=[{label:'+ Kategori',p:'1',go:()=>this.openForm('category')}];
-        T.cols=[{label:'Kategoria'},{label:'Artikuj',align:'right'},{label:'Nën minimum',align:'right'},{label:'Vlera në stok',align:'right'},{label:'Shitur këtë muaj',align:'right'},{label:''}];
+        T.cols=[{label:'Kategoria'},{label:'Artikuj',align:'right'},{label:'Nën minimum',align:'right'},{label:'Vlera në stok',align:'right'},{label:'Shitur këtë muaj',align:'right'},{label:'Kategoria ATK'},{label:''}];
         T.rows=list.map(c=>{ const ps=byCat[this.norm(c.name)]||[]; const skus=new Set(ps.map(p=>p.sku)); const sold=sales.filter(r=>this.monthOf(r.date)===thisMonth).reduce((a,r)=>a+r.items.filter(i=>skus.has(i.sku)).reduce((x,i)=>x+i.sub,0),0);
-          return {open:()=>{ this.setState({pFilter:c.name,pdq:''}); this.go('produkte','Produktet'); },cells:[C(c.name,{b:true,sub:c.note||''}),C(String(ps.length),{align:'right',color:ps.length?'#10243A':'#8FA3B8'}),C(String(ps.filter(p=>p.low).length),{align:'right',color:ps.some(p=>p.low)?'#B91C1C':'#526477'}),M(sum(ps,'value'),{b:true}),M(sold),{...C('Redakto'),act:true,go:()=>this.openForm('category',{edit:c.id,name:c.name,note:c.note||''})}]}; });
+          const atk=this.atkCode(c.atk), miss=ps.filter(p=>!this.prodAtk(p,db)).length; // the default, and how many of its products are still without any code
+          return {open:()=>{ this.setState({pFilter:c.name,pdq:''}); this.go('produkte','Produktet'); },cells:[C(c.name,{b:true,sub:c.note||''}),C(String(ps.length),{align:'right',color:ps.length?'#10243A':'#8FA3B8'}),C(String(ps.filter(p=>p.low).length),{align:'right',color:ps.some(p=>p.low)?'#B91C1C':'#526477'}),M(sum(ps,'value'),{b:true}),M(sold),C(atk?this.atkLabel(atk):'—',{sub:miss?miss+' produkte '+this.ATK_MISSING:'',color:atk?'#10243A':miss?'#B91C1C':'#8FA3B8'}),{...C('Redakto'),act:true,go:()=>this.openForm('category',{edit:c.id,name:c.name,note:c.note||'',atk,atkQ:this.atkLabel(atk)})}]}; });
         T.empty='Asnjë kategori — shtoni një me “+ Kategori” ose shkruani një emër të ri te formulari i produktit.';
         T.footer=plural(list.length,'kategori','kategori')+' · '+plural(stockRows.length,'produkt','produkte')+(stockRows.some(p=>!this.findCategory(list,p.cat))?' · disa produkte kanë kategori jashtë listës':'');
         break; }
@@ -6749,9 +6823,11 @@ class Component extends DCLogic {
     customers.sort({name:(a,b)=>a.name.localeCompare(b.name),debt:(a,b)=>b.debtC-a.debtC||a.name.localeCompare(b.name),invoices:(a,b)=>b.n-a.n||a.name.localeCompare(b.name),city:(a,b)=>a.city.localeCompare(b.city)||a.name.localeCompare(b.name)}[s.cSort]||((a,b)=>a.name.localeCompare(b.name)));
     const cats=[...new Set([...this.CATEGORIES.map(c=>c.name),...db.products.map(p=>p.cat)])].sort();
     const pSortOpts=[['name','Emri A–Z'],['stock','Gjendja ↑'],['price','Çmimi ↓'],['value','Vlera në stok ↓'],['sku','SKU']].map(([id,label])=>({id,label,on:s.pSort===id}));
-    const pFilterOpts=[['Të gjitha','Të gjitha kategoritë'],['Nën minimum','Vetëm nën minimum'],['Pa barkod','Pa barkod'],...cats.map(c=>[c,c])].map(([id,label])=>({id,label,on:s.pFilter===id}));
-    let products=stockRows.map(p=>({...p,catName:p.cat,tax:p.tax+' · '+this.TAX[p.tax].rate+'%',price:this.fmtT(this.priceT(p)),priceGross:this.fmtT(this.grossT(p)),cost:this.fmt(p.cost),stock:this.fmtQ(p.qm)+' '+p.unit+(p.isRecipe?' · recetë':this.packEq(p,p.qm)?' '+this.packEq(p,p.qm):''),stockColor:p.low?'#B91C1C':'#10243A',open:()=>this.openProduct(p.sku)}));
-    products=products.filter(p=>{ const f=s.pFilter; return f==='Të gjitha'||(f==='Nën minimum'?p.low:f==='Pa barkod'?(!p.barcode||p.barcode==='—'):p.catName===f); });
+    const pFilterOpts=[['Të gjitha','Të gjitha kategoritë'],['Nën minimum','Vetëm nën minimum'],['Pa barkod','Pa barkod'],['Pa kategori ATK','Pa kategori ATK'],...cats.map(c=>[c,c])].map(([id,label])=>({id,label,on:s.pFilter===id}));
+    // atkEff = the effective kategoria ATK (own code, else the category's default); without one the product cannot be on the tills — marked red, filter "Pa kategori ATK", chip in the header
+    let products=stockRows.map(p=>({...p,catName:p.cat,atkEff:this.prodAtk(p,db),tax:p.tax+' · '+this.TAX[p.tax].rate+'%',price:this.fmtT(this.priceT(p)),priceGross:this.fmtT(this.grossT(p)),cost:this.fmt(p.cost),stock:this.fmtQ(p.qm)+' '+p.unit+(p.isRecipe?' · recetë':this.packEq(p,p.qm)?' '+this.packEq(p,p.qm):''),stockColor:p.low?'#B91C1C':'#10243A',open:()=>this.openProduct(p.sku)}));
+    const pNoAtkCount=products.filter(p=>!p.atkEff).length;
+    products=products.filter(p=>{ const f=s.pFilter; return f==='Të gjitha'||(f==='Nën minimum'?p.low:f==='Pa barkod'?(!p.barcode||p.barcode==='—'):f==='Pa kategori ATK'?!p.atkEff:p.catName===f); });
     products.sort({name:(a,b)=>a.name.localeCompare(b.name),stock:(a,b)=>a.qm-b.qm,price:(a,b)=>b.price_c-a.price_c,value:(a,b)=>b.value-a.value,sku:(a,b)=>a.sku.localeCompare(b.sku)}[s.pSort]||((a,b)=>a.name.localeCompare(b.name)));
     // zgjedhja e shumëfishtë te Produktet: kutizat mbajnë SKU-të te `psel`; zgjedhja e fshehur nga filtri nuk numërohet
     const pSelSkus=Object.keys(s.psel||{}).filter(sku=>products.some(p=>p.sku===sku));
@@ -6766,6 +6842,9 @@ class Component extends DCLogic {
       return {...p,checked:!!(s.psel||{})[p.sku],toggle:()=>pTog(p.sku),
         kindL:this.prodKindLabel(p),kindBg:kc[0],kindFg:kc[1],
         activeS:act?'1':'',posS:onPos?'1':'',rowOp:act?'1':'.55',
+        // kategoria ATK: the code as a mono badge (blue; grey when it comes from the category), red "pa kategori" when there is none
+        atkS:p.atkEff||this.ATK_MISSING,atkT:p.atkEff?this.atkLabel(p.atkEff)+(this.atkCode(p.atk)?' · kodi i produktit':' · nga kategoria “'+p.cat+'”'):'Pa kategori ATK — nuk mund të shfaqet në POS: zgjidhni kategorinë ATK te Redakto',
+        atkBg:p.atkEff?(this.atkCode(p.atk)?'rgba(37,99,235,.08)':'rgba(16,36,58,.06)'):'rgba(185,28,28,.1)',atkFg:p.atkEff?(this.atkCode(p.atk)?'#2563EB':'#3C5268'):'#B91C1C',
         activeT:act?'Aktiv — kliko për ta çaktivizuar':'Joaktiv — nuk shkon te arkat, nuk zgjidhet te dokumente të reja',
         posT:onPos?'Shitet në arkë — kliko për ta hequr nga POS-i':'Vetëm në ERP — kliko për ta dërguar në arkë',
         toggleActive:()=>this.setProdFlag(p.sku,'active',!act),togglePos:()=>this.setProdFlag(p.sku,'pos',!onPos),
@@ -6948,7 +7027,8 @@ class Component extends DCLogic {
       genericAdd:()=>this.toast('Moduli “'+page+'” nuk është ende i ndërtuar — kërkon backend dhe modelin e të dhënave të tij','#B45309'),genericHint:{hr:'Punëtorët, prezenca, pushimet dhe pagat kërkojnë modulin HR (backend + të dhëna).',prodhim:'Recetat/BOM, urdhrat e punës dhe konsumi kërkojnë modulin Prodhim (backend + të dhëna).'}[s.section]||'Ky modul nuk është ende i ndërtuar.',
       customers,customerCount:customers.length,cSort:s.cSort,cSortOpts,setCSort:e=>this.setState({cSort:e.target.value}),cFilter:s.cFilter,cFilterOpts,setCFilter:e=>this.setState({cFilter:e.target.value}),exportCustomers:()=>this.exportCsv({title:'kliente',cols:['Emri','Lloji','NUI','Nr. fiskal','Qyteti','Kontakti','Adresa','Fatura','Borxhi'].map(label=>({label})),rows:customers.map(c=>({cells:[c.name,c.type,c.nui,c.fiscal,c.city,c.contact,c.address,c.invoices,this.fromC(c.debtC)].map(t=>({t:String(t)}))}))}),
       products,productCount:products.length,pHasSel:pSelSkus.length>0,pSelCount:pSelSkus.length,pAllSel,pToggleAll,
-      pClearSel:()=>this.setState({psel:{}}),deleteSelProducts:()=>this.deleteProducts(pSelSkus),pSort:s.pSort,pSortOpts,setPSort:e=>this.setState({pSort:e.target.value}),pFilter:s.pFilter,pFilterOpts,setPFilter:e=>this.setState({pFilter:e.target.value}),exportProducts:()=>this.exportCsv({title:'produkte',cols:['Produkti','SKU','Barkodi','Kategoria','Njësia','TVSH','Çmimi pa TVSH','Kosto mes.','Gjendja','Minimumi','Vlera'].map(label=>({label})),rows:products.map(p=>({cells:[p.name,p.sku,p.barcode,p.catName,p.unit,p.tax,this.fromT(this.priceT(p)),this.fromC(p.cost),this.fmtQ(p.qm),this.fmtQ(p.minStock),this.fromC(p.value)].map(t=>({t:String(t)}))}))}),printLabelsAll:()=>this.printLabels(products),
+      pNoAtk:pNoAtkCount>0,pNoAtkLabel:pNoAtkCount+' produkte '+this.ATK_MISSING,pFilterNoAtk:()=>this.setState({pFilter:'Pa kategori ATK'}),
+      pClearSel:()=>this.setState({psel:{}}),deleteSelProducts:()=>this.deleteProducts(pSelSkus),pSort:s.pSort,pSortOpts,setPSort:e=>this.setState({pSort:e.target.value}),pFilter:s.pFilter,pFilterOpts,setPFilter:e=>this.setState({pFilter:e.target.value}),exportProducts:()=>this.exportCsv({title:'produkte',cols:['Produkti','SKU','Barkodi','Kategoria','Kategoria ATK','Njësia','TVSH','Çmimi pa TVSH','Kosto mes.','Gjendja','Minimumi','Vlera'].map(label=>({label})),rows:products.map(p=>({cells:[p.name,p.sku,p.barcode,p.catName,p.atkEff,p.unit,p.tax,this.fromT(this.priceT(p)),this.fromC(p.cost),this.fmtQ(p.qm),this.fmtQ(p.minStock),this.fromC(p.value)].map(t=>({t:String(t)}))}))}),printLabelsAll:()=>this.printLabels(products),
       openAdjust:()=>this.openForm('adjust'),
       hasDr:!!dr,dr:dr||{},closeDr:()=>this.setState({dr:null}),
       hasFrm:!!frm,frm:frm||{},closeFrm:()=>this.setState({frm:null}),
