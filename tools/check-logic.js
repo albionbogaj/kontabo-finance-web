@@ -3295,6 +3295,33 @@ apiBlock.then(async () => {
   eq(!!c.COA.find(a => a.code === '2300'), true, 'plani i kontove: 2300 Detyrime nga pagat');
 }
 
+// ── Identiteti i firmes: i njejti ne CDO hap (ERP → katalogu → arka e barit / arka Kontabo POS) ──
+// Te dyja arkat e marrin koken e biznesit nga katalogu, asnjera nuk e shkruan vete. Nje fushe qe bie ketu nuk
+// shihet te ERP-ja: shihet te kuponi i shtypur, dhe vetem te NJERA arke — derisa ta vere re inspektori.
+// 07.10.2026: blloku `unit` MUNGONTE fare, keshtu arka Kontabo POS shtypte kupon pa EMRIN E NJESISE, pa ADRESEN
+// E NJESISE, pa VENDIN, dhe NR. IDENTIFIKUES I SEF binte te POS ID-ja — nderkohe qe arka e barit i kishte.
+{
+  const cat = c.posCatalogPayload(), co = cat.company, u = cat.unit, db0 = db();
+  // çfarë mapon arka e barit (kontabo/finance/katalogu.py → _te_dhenat_e_firmes)
+  for (const k of ['name', 'nui', 'fiscal', 'address', 'place', 'phone', 'vatNo', 'vatRegistered', 'unitName'])
+    eq(co[k] !== undefined, true, 'katalogu > company mban `' + k + '` (koka e kuponit te arka e barit)');
+  // çfarë mapon arka Kontabo POS (pos/db.py → replace_catalog)
+  eq(!!u, true, 'katalogu mban bllokun `unit` — pa te koka e kuponit te Kontabo POS mbetet bosh');
+  for (const k of ['name', 'number', 'licence', 'address', 'place', 'phone'])
+    eq(u[k] !== undefined, true, 'katalogu > unit mban `' + k + '` (EMRI/ADRESA E NJESISE, VENDI, telefoni, SEF)');
+  const br = (db0.branches || []).find(b => b.main) || db0.branches[0];
+  eq([u.name, u.number, u.licence, u.place], [br.name, br.unitNo, br.licence, db0.company.city],
+     'katalogu > unit vjen nga dega kryesore (emri, numri i njesise, licenca, vendi)');
+  // adresa e kompanise shkon me qytetin brenda (arka e barit e heq prapashtesen); vendi vjen vec
+  eq([co.address.endsWith(', ' + co.place), co.place], [true, db0.company.city],
+     'katalogu > company.address mbaron me qytetin dhe `place` e mban veç — ashtu si e pret arka e barit');
+  // numri i njesise hyn te NR. IDENTIFIKUES I SEF: nese bie, identifikuesi i kuponit ndryshon
+  eq(typeof u.number === 'string', true, 'katalogu > unit.number eshte varg (hyn te SEF: njesia-NUI-PosId)');
+  // konfigurimi fiskal NUK dergohet kurre (rregulli i pronarit): arka e konfiguron vete
+  eq([cat.fiscal, Object.keys(cat).includes('fiscal')], [undefined, false],
+     'katalogu NUK mban asnje bllok fiskal — fiskalizimi konfigurohet vetem ne vete arken (rregull i pronarit)');
+}
+
 // ── HR: nga punesimi te lista e pages, pagesa dhe ditari ──
 {
   const emp = (name, gross, extra) => { c.openForm('employee', {}); c.setF({ name, gross: (gross / 100).toFixed(2), ...(extra || {}) });

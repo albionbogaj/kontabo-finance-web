@@ -3489,6 +3489,13 @@ class Component extends DCLogic {
     // vatRegistered / vatNo: a till of a company NOT registered for VAT sells everything in group A (0 %) and prints no VAT number (UA 01/2026 neni 7)
     company:{name:d.company.name,nui:d.company.nui,fiscal:d.company.fiscalNo,address:d.company.address+', '+d.company.city,place:d.company.city,phone:d.company.phone||'',unitName:br.name||d.company.name,unitNo:br.unitNo||d.company.unitNo||'',licence:br.licence||d.company.licence||'',vatRegistered:this.vatOn(d),vatNo:this.vatOn(d)?(d.company.vat||''):''},
     branches:(d.branches||[]).map(b=>({id:b.id,name:b.name,address:b.address,phone:b.phone==='—'?'':b.phone,unitNo:b.unitNo||'',licence:b.licence||'',main:!!b.main})),
+    /* NJËSIA (pika e shitjes) — koka e kuponit sipas Shtojcës F: EMRI I NJËSISË, ADRESA E NJËSISË, VENDI, telefoni,
+       dhe numri i njësisë që hyn te NR. IDENTIFIKUES I SEF ("[njësia]-[NUI]-[PosId]"). Arka Kontabo POS i lexon
+       pikërisht nga `unit` (pos/db.py → replace_catalog); pa këtë bllok ato fusha mbeteshin BOSH dhe i njëjti
+       biznes shtypte dy kokë të ndryshme: arka e barit e plotë (ajo e merr emrin e njësisë nga `company.unitName`),
+       arka Kontabo POS pa njësi fare. Vlerat vijnë nga dega kryesore, me kompaninë si rezervë. */
+    unit:{name:br.name||d.company.name,number:br.unitNo||d.company.unitNo||'',licence:br.licence||d.company.licence||'',
+      address:br.address||d.company.address,place:d.company.city,phone:(br.phone&&br.phone!=='—'?br.phone:d.company.phone)||''},
     posSettings:{requireCustomer:!!d.posSettings.requireCustomer,payCash:!!d.posSettings.payCash,payCard:!!d.posSettings.payCard,payCombo:!!d.posSettings.payCombo,maxDiscount:d.posSettings.maxDiscount,fiscalBlockCode:String(d.posSettings.fiscalBlockCode||'').trim()},
     // code = the operator's identification number (Kërkesat SEF neni 25.18: the coupon names the employee AND his identifying number) — optional
     operators:this.ensurePins(d.users).filter(u=>u.status==='Aktiv'&&this.isPosRole(u)).map(u=>({name:u.name,role:u.role,pinHash:u.pinHash,pinSalt:u.pinSalt,code:String(u.opCode||'').trim()}))}; }
