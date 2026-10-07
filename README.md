@@ -430,14 +430,29 @@ bën asnjë thirrje `/fiscal`). Kontrata është te `kontabo-backend/API.md` →
 - **Ruaj** tregon ndryshimet çelës për çelës (e vjetra → e reja) dhe dërgon vetëm ato, me `expectedVersion`: biznesi
   (`PUT /fiscal/business`) para arkës (`PUT /fiscal/terminals/{id}`, me versionin që kthen PUT-i i biznesit). 409 `version_conflict` →
   rifreskim, ndryshimet mbeten; `pos_id_taken`, `invalid_value`, `reason_required` shënojnë fushën; `managed_by_bar` shpjegohet.
-  **Importo vlerat nga arka** (`POST …/import`) e bën arkën të menaxhuar me pikërisht vlerat e saj (pa shënim stafi) — hapi i parë për
-  „Arka" POS-001. **Historiku** (`GET /fiscal/changes` i arkës + i biznesit) shënon rreshtat e nënshkruar nga stafi.
+  **Importo vlerat nga arka** (`POST …/import`) e bën arkën të menaxhuar me pikërisht vlerat e saj (pa shënim stafi; një arkë me
+  simulatorin s'jep mënyrë). Për „Arka" POS-001 (Kontabo POS 0.15.0, që s'raporton identifikues): **së pari përditësimi i arkës në
+  0.16.0** (mbetet e pamenaxhuar, s'ndryshon asgjë), **pastaj** importi — një vlerë e kyçur e shkruar me dorë para përditësimit do
+  të mbetej propozim në arkë. **Historiku** (`GET /fiscal/changes` i arkës + i biznesit) shënon rreshtat e nënshkruar nga stafi.
+- **Kufijtë e Kontabo POS-it** (si serveri dhe arka): numri i njësisë 0–999999, POS ID 1–999 (ndarja e CouponId-ve), numri i
+  fiskalizimit shifra ose kodi UUID i EDI-së — faqja e refuzon para se të dërgojë. Arka KONTABO BAR shfaqet me vlerat që raporton
+  vetë bari (NUI, njësia, POS ID, „në TVSH", SEF), çdo fushë e kyçur „KONTABO BAR".
+- **Pengesat dhe propozimet** e arkës dalin shqip (çdo kod që dërgon Kontabo POS: `reonboard_required`, `ids_missing`, `cert_*`,
+  `coupon_range`, `tremol_*`, `invalid:<çelësi>`, `catalog:vatRegistered` — lista te kontabo-backend API.md). Arka s'ka buton
+  pranimi: një vlerë që arka e mban **propozim** dërgohet sërish me **„Dërgo sërish te arka"** (i njëjti PUT → 409 `staff_required`
+  me `[vlera e arkës, vlera e ueb-it]` → shënimi i stafit). Heartbeat-i kompakt i 0.16 (fushë që mungon = asgjë) lexohet „Mungon /
+  Pa regjistrim / 0", „s'e raporton" vetëm për arkën 0.15. „Joaktiv" paralajmëron (fusha + konfirmimi): arka s'finalizon asnjë shitje.
 - **Kyçjet** vijnë nga serveri (`free | key | registered | staff | bar`): pas regjistrimit te ATK-ja identifikuesit kyçen, me çelës
   vetëm vlera e mbushur, mjedisi gjithmonë. **Zhblloko…** / 409 `staff_required` hap dritaren „Fjalëkalimi i stafit të KONTABO"
   (**i njëjti zinxhir si KONTABO BAR**): `POST /fiscal/gate/nonce` → seed = PBKDF2-HMAC-SHA256(fjalëkalimi UTF-8, signSalt, 300 000, 32)
   → çelësi Ed25519 → nëse `pub` ≠ ai i zinxhirit: „Fjalëkalim i gabuar" + `POST /fiscal/gate/attempt` (5 prova / 15 min); përndryshe
   shfletuesi nënshkruan shënimin kanonik `porta-fiskale-web-v1` (ndryshimet e kyçura nga refuzimi, `versioni` = expectedVersion) dhe
-  përsërit PUT-in me `gate:{body, signature}`. Zhbllokimi zgjat **15 minuta** (shirit me kohëmatës, „Kyç tani"); fjalëkalimi dhe
+  përsërit PUT-in me `gate:{body, signature}` — **por vetëm kur përgjigjja 409 kërkon pikërisht ndryshimin e kërkuar** (`fwRefCheck`:
+  `scope`/`terminal` = rruga e PUT-it, `version` = expectedVersion, çdo çelës i nënshkruar = një çelës i ndryshuar me vlerën e kërkuar
+  dhe vlerën e vjetër që tregon faqja; `tenant` i nonce-it = kompania e hyrjes): përndryshe asgjë s'nënshkruhet dhe zhbllokimi mbyllet
+  (një server ose një ndërhyrës në http s'merr dot një shënim për arkë / kompani / vlerë tjetër). Dritarja emërton arkën dhe çiftet
+  që nënshkruhen. Pa zinxhir të konfirmuar në server (409 `staff_chain_unconfirmed`) faqja e thotë dhe s'provon fjalëkalimin.
+  Zhbllokimi zgjat **15 minuta** (shirit me kohëmatës, „Kyç tani"); fjalëkalimi dhe
   seed-i **mbeten vetëm në memorie** (asnjëherë në server, në localStorage apo në libër). Kriptografia: WebCrypto (PBKDF2; Ed25519 me
   importin PKCS8 të seed-it, i provuar me vektorin 1 të RFC 8032 — Chrome/Edge/Firefox të sotëm) dhe, pa `crypto.subtle` (p.sh. faqja
   me http:// në LAN), zbatimi i vogël brenda faqes (SHA-256/SHA-512/Ed25519 me BigInt). Testet e krahasojnë bajt për bajt me Python-in

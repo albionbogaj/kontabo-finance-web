@@ -1114,7 +1114,7 @@ input,select{font-family:inherit}
             </div>
             <sc-if value="{{ fwv.hasAlerts }}" hint-placeholder-val="{{ false }}">
               <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:12px">
-                <sc-for list="{{ fwv.alerts }}" as="a" hint-placeholder-count="2"><div style="display:flex;gap:10px;padding:9px 12px;border-radius:10px;background:{{ a.bg }};border:1px solid {{ a.bd }};font-size:12.5px;line-height:1.45;color:#3C5268"><span style="width:8px;height:8px;border-radius:50%;margin-top:5px;background:{{ a.c }};flex:none"></span><span><b style="color:{{ a.c }}">{{ a.t }}</b> {{ a.s }}</span></div></sc-for>
+                <sc-for list="{{ fwv.alerts }}" as="a" hint-placeholder-count="2"><div style="display:flex;gap:10px;padding:9px 12px;border-radius:10px;background:{{ a.bg }};border:1px solid {{ a.bd }};font-size:12.5px;line-height:1.45;color:#3C5268"><span style="width:8px;height:8px;border-radius:50%;margin-top:5px;background:{{ a.c }};flex:none"></span><span style="flex:1;min-width:0"><b style="color:{{ a.c }}">{{ a.t }}</b> {{ a.s }}</span><sc-if value="{{ a.hasAct }}" hint-placeholder-val="{{ false }}"><button sc-camel-on-click="{{ a.act }}" class="mf-btn" style="padding:5px 10px;font-size:12px;align-self:center;flex:none">{{ a.actLabel }}</button></sc-if></div></sc-for>
               </div>
             </sc-if>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start">
@@ -4356,18 +4356,33 @@ class Component extends DCLogic {
     freeText:'Teksti i lirë',lang:'Gjuha e kuponit',priceDecimals:'Decimalet në print',discount:'Zbritja në kupon',itemBarcode:'Barkodi i artikullit',closingHour:'Ora e mbylljes'};
   FW_MODES = [['UNCONFIGURED','Joaktiv'],['ATK_ELECTRONIC','ATK elektronik'],['TREMOL_ETHERNET','Tremol']];
   FW_MODE_NAME = {UNCONFIGURED:'Joaktiv',ATK_ELECTRONIC:'ATK elektronik',TREMOL_ETHERNET:'Tremol (pajisje)',FLINK_ETHERNET:'F-Link (pajisje)'};
-  // pengesat që raporton arka (fiscal.blockers / applied.report.blockers); një kod i panjohur shfaqet siç vjen
+  // pengesat që raporton arka (fiscal.blockers / applied.report.blockers) — kontrata e përbashkët: kontabo-backend API.md „Kodet që raporton
+  // arka" = kodet që dërgon Kontabo POS (pos/db.py apply_fiscal_config, _atk_problems); `invalid:<çelësi>` te fwBlockerText; një kod i panjohur shfaqet siç vjen
   FW_BLOCKERS = {no_key:'Arka nuk ka çelës të POS-it — krijohet në arkë (Konfigurimi ATK).',no_cert:'Arka nuk është regjistruar te ATK-ja — regjistrimi bëhet në arkë.',
+    cert_unreadable:'Certifikata e ATK-së në arkë nuk lexohet — rikrijoni çelësat në arkë (Konfigurimi ATK… › Rikrijo çelësat, me fjalëkalimin e stafit).',
+    cert_key_mismatch:'Certifikata nuk i përket çelësit të arkës — rikrijoni çelësat në arkë (Konfigurimi ATK… › Rikrijo çelësat, me fjalëkalimin e stafit).',
+    ids_missing:'Mungojnë identifikuesit e ATK-së në arkë (NUI, numri i njësisë, POS ID) — plotësojini këtu.',
     env_mismatch:'Mjedisi i certifikatës nuk përputhet me mjedisin e arkës — kërkohet regjistrim i ri te ATK-ja (në arkë).',
     ids_mismatch:'Identifikuesit ndryshuan pas regjistrimit — kërkohet regjistrim i ri te ATK-ja (në arkë, me fjalëkalimin e stafit).',
+    coupon_range:'Numri i njësisë ose POS ID-ja del jashtë ndarjes së CouponId-ve (njësia 0–999999, POS ID 1–999) — ATK-ja s\'armatoset.',
     header_missing:'Mungojnë të dhëna të kokës së kuponit (emri / adresa e njësisë, NUI…).',queue_pending:'Ndryshimi pret: arka po dërgon ende kuponat që ka në radhë.',
-    reonboard:'Kërkohet regjistrim i ri te ATK-ja (në arkë, me fjalëkalimin e stafit).',cert_expired:'Certifikata e ATK-së ka skaduar — regjistrim i ri në arkë.'};
+    reonboard_required:'Kërkohet regjistrim i ri te ATK-ja — në arkë: Konfigurimi ATK… › Rikrijo çelësat (me fjalëkalimin e stafit). Deri atëherë arka s\'fiskalizon.',
+    tremol_unreachable:'Pajisja fiskale Tremol nuk përgjigjet — arka mbetet në mënyrën e mëparshme derisa pajisja të lidhet (në arkë: Cilësimet › Printeri fiskal…).',
+    tremol_not_ready:'Pajisja fiskale Tremol nuk pranon kupon (letra, raporti Z, kupon i hapur…) — kontrolloni pajisjen; arka mbetet në mënyrën e mëparshme.'};
+  // one code → Albanian: the map, `invalid:<key>` (a value this till cannot use — the web keeps the version pending), else as it came
+  fwBlockerText(b){ b=String(b==null?'':b); if(this.FW_BLOCKERS[b]) return this.FW_BLOCKERS[b]; const m=/^invalid:(.+)$/.exec(b);
+    return m?'Arka nuk e pranon vlerën e „'+this.fwKeyLabel(m[1])+'" — ndryshojeni këtu (Kontabo POS: njësia 0–999999, POS ID 1–999).':b; }
+  // a proposal code → Albanian (`catalog:<key>` = a value from Kompania's catalogue the registered till keeps as a proposal)
+  fwPropText(k){ k=String(k==null?'':k); return k==='catalog:vatRegistered'?'„Në TVSH" nga Kompania (katalogu)':this.fwKeyLabel(k.replace(/^catalog:/,'')); }
+  // what the till itself reports for a key (heartbeat fiscal.ids / env / mode) — the "old" value of a re-sent proposal
+  fwReported(V,k){ const R=V.R||{}, ids=R.ids||{}; return String(k==='env'?(R.env||''):k==='mode'?(R.mode||''):(ids[{unitNo:'unitNo',atkPosId:'posId',fiscalizationNo:'fiscalizationNo',nui:'nui',vatRegistered:'vatRegistered'}[k]]||'')); }
   // [etiketa, shpjegimi, ngjyra, sfondi] i çdo gjendjeje kyçi që kthen serveri
   FW_LOCK = {key:['kyçur nga çelësi','Arka ka çelës të POS-it: një vlerë e mbushur ndryshohet vetëm me fjalëkalimin e stafit të KONTABO (mbushja e një fushe bosh lejohet).','#B45309','rgba(217,119,6,.10)'],
     registered:['kyçur','Arka është e regjistruar te ATK-ja: ndryshimi kërkon fjalëkalimin e stafit të KONTABO dhe pastaj regjistrim të ri te ATK-ja në arkë.','#B91C1C','rgba(220,38,38,.08)'],
     staff:['me stafin','Çdo ndryshim i mjedisit TEST/PROD kërkon fjalëkalimin e stafit të KONTABO; pastaj arka kërkon regjistrim të ri te ATK-ja.','#7C3AED','rgba(124,58,237,.09)'],
     bar:['KONTABO BAR','Konfigurohet në KONTABO BAR (Administrimi › Fiskalizimi).','#526477','rgba(16,36,58,.06)']};
   FW_UNLOCK_MS = 900000; // 15 minuta, si KONTABO BAR (stafi.LEJA_SEK)
+  FW_UNCONFIRMED = 'Serveri nuk e njeh ende versionin aktual të fjalëkalimit të stafit të KONTABO — identifikuesit e kyçur dhe mjedisi TEST/PROD nuk ndryshohen derisa Kontabo ta konfirmojë (zinxhiri nga paneli i licencave / KONTABO BAR). Ndryshimet e lira ruhen si zakonisht.';
   FW_REFRESH = 30000;    // pamja rifreskohet vetvetiu sa kohë faqja është e hapur
   fwPerm(){ const s=this.state.session; return !!s&&(s.role==='Pronar'||!!(s.perms||{}).fiskal); } // = the server's has_perm('fiskal')
   // the server takes the web's fiscal config: signed in to a company and /health did not say otherwise (_fwFeat: fiscalWeb:1 listed; undefined = not asked)
@@ -4403,12 +4418,15 @@ class Component extends DCLogic {
   // what the page shows for each key: the web's value, else (the web has not set it yet) what the till reports — and the edit on top
   fwVals(f){ const d=(f&&f.data)||{}, B=d.business||{}, T=this.fwSel(f)||{desired:{},effective:{},reported:{},locks:{},applied:{report:{}}}, ed=(f&&f.ed)||{};
     const des=T.desired||{}, eff=T.effective||{}, Be=B.effective||{}, cur={}, src={};
-    for(const k of this.FW_KEYS_T){ cur[k]=des[k]||eff[k]||''; src[k]=des[k]?'ueb':eff[k]?'arka':''; }
-    for(const k of this.FW_KEYS_B){ cur[k]=B[k]||Be[k]||''; src[k]=B[k]?'ueb':Be[k]?'arka':''; }
+    if(T.kind==='kontabo-bar'){ const V0={R:T.reported||{}}; // KONTABO BAR never applies the web's values: its own report, nothing of the business
+      for(const k of [...this.FW_KEYS_T,...this.FW_KEYS_B]){ const x=k==='mode'?String((V0.R.mode||'')).toUpperCase():this.fwReported(V0,k); cur[k]=x; src[k]=x?'bar':''; } }
+    else {
+      for(const k of this.FW_KEYS_T){ cur[k]=des[k]||eff[k]||''; src[k]=des[k]?'ueb':eff[k]?'arka':''; }
+      for(const k of this.FW_KEYS_B){ cur[k]=B[k]||Be[k]||''; src[k]=B[k]?'ueb':Be[k]?'arka':''; } }
     const cB=B.coupon||{}, cT=des.coupon||{}, has=(o,k)=>Object.prototype.hasOwnProperty.call(o,k)&&o[k]!==null&&o[k]!==undefined;
     const cbVal=k=>ed['cb.'+k]!==undefined?ed['cb.'+k]:(has(cB,k)?cB[k]:null), ctVal=k=>ed['ct.'+k]!==undefined?ed['ct.'+k]:(has(cT,k)?cT[k]:null);
     return {d,B,T,R:T.reported||{},cur,src,cB,cT,cbVal,ctVal,val:k=>ed[k]!==undefined?ed[k]:cur[k]}; }
-  fwLockOf(V,k){ return ((this.FW_KEYS_B.includes(k)?V.B.locks:V.T.locks)||{})[k]||'free'; }
+  fwLockOf(V,k){ if(V.T.kind==='kontabo-bar') return 'bar'; return ((this.FW_KEYS_B.includes(k)?V.B.locks:V.T.locks)||{})[k]||'free'; }
   fwNeedsGate(lock,o,n){ return lock==='registered'||lock==='staff'?n!==o:lock==='key'?o!==''&&n!==o:false; } // = the server's needs_gate
   fwUnlocked(){ const k=this._fwKey; return !!k&&Date.now()<k.until&&k.tid===this.apiCfg().tenantId; }
   fwLock(quiet){ const k=this._fwKey; this._fwKey=null; if(k&&k.seed&&k.seed.fill) k.seed.fill(0); if(k&&!quiet) this.setState(s=>({fwTick:(s.fwTick||0)+1})); }
@@ -4423,9 +4441,10 @@ class Component extends DCLogic {
       case 'vatRegistered': return ['','0','1'].includes(v)?'':'Vlerë e pavlefshme për „Në TVSH"';
       case 'mode': return ['','UNCONFIGURED','ATK_ELECTRONIC','TREMOL_ETHERNET'].includes(v)?'':'Mënyrë e panjohur e fiskalizimit';
       case 'env': return ['','TEST','PROD'].includes(v)?'':'Mjedisi: TEST ose PROD';
-      case 'unitNo': return v&&!/^\d{1,12}$/.test(v)?'Numri i njësisë: vetëm shifra (deri në 12)':'';
-      case 'atkPosId': return v&&(!/^\d{1,12}$/.test(v)||!(Number(v)>=1))?'POS ID: numër i plotë pozitiv (vetëm shifra, deri në 12)':'';
-      case 'fiscalizationNo': return v&&!/^[0-9A-Za-z-]{1,64}$/.test(v)?'Numri i fiskalizimit: shifra, shkronja ose „-" (deri në 64)':'';
+      // the Kontabo POS ranges (= the backend's clean_terminal_value, = pos/db.py web_value): CouponId = (BranchId × 1000 + PosId) × 10⁹ + n
+      case 'unitNo': return v&&!/^\d{1,6}$/.test(v)?'Numri i njësisë (BranchId): 0–999999 — Kontabo POS ndan prej tij hapësirën e CouponId-ve':'';
+      case 'atkPosId': return v&&(!/^\d{1,3}$/.test(v)||!(Number(v)>=1))?'POS ID (ATK): 1–999 — Kontabo POS ndan prej tij hapësirën e CouponId-ve, unike në gjithë biznesin':'';
+      case 'fiscalizationNo': return v&&!/^(\d{1,64}|[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/.test(v)?'Numri i fiskalizimit: vetëm shifra ose kodi UUID i EDI-së':'';
       case 'freeText': return v.length>300?'Teksti i lirë: deri në 300 shenja (tani '+v.length+')':'';
       case 'closingHour': return /^([01]\d|2[0-3]):[0-5]\d$/.test(v)?'':'Ora e mbylljes: HH:MM (00:00–23:59)';
       case 'lang': return ['sq','sr'].includes(v)?'':'Gjuha: shqip ose serbisht';
@@ -4463,20 +4482,24 @@ class Component extends DCLogic {
     const line=r=>(r.scope==='business'?'Biznesi · ':'Arka · ')+this.fwKeyLabel(r.key)+': '+this.fwShow(r.key,r.old)+' → '+this.fwShow(r.key,r.new);
     const body=P.rows.map(line).join('\n')+(P.reason?'\nArsyeja: '+P.reason:'')
       +(P.needs.length?'\n\nTë kyçura: '+P.needs.map(k=>this.FW_LABEL[k]).join(', ')+' — '+(this.fwUnlocked()?'nënshkruhen me zhbllokimin e stafit (i vlefshëm edhe '+Math.ceil((this._fwKey.until-Date.now())/60000)+' min).':'kërkohet fjalëkalimi i stafit të KONTABO.')+(V.T.registered?' Pas ndryshimit arka kërkon regjistrim të ri te ATK-ja.':''):'')
+      +(P.term&&P.term.mode==='UNCONFIGURED'?'\n\nKUJDES: me „Joaktiv" arka “'+V.T.name+'” NUK mund të finalizojë asnjë shitje derisa fiskalizimi të ndizet përsëri (kuponat në radhë vazhdojnë të dërgohen).':'')
+      +(this.fwOldTill(V)&&P.needs.length?'\n\nKUJDES: arka “'+V.T.name+'” nuk i raporton ende identifikuesit e saj (Kontabo POS '+(V.T.appVersion||'')+'): pas përditësimit ajo i mban këto vlera të kyçura si propozim. Më mirë: përditësojeni arkën, „Importo vlerat nga arka", pastaj ndryshoni.':'')
       +(V.T.version?'':'\n\nRuajtja e parë e bën arkën “'+V.T.name+'” të menaxhuar nga ueb-i: ajo merr këto cilësime me heartbeat-in e radhës.')
       +(P.biz&&(V.d.terminals||[]).filter(t=>t.managed&&t.id!==V.T.id).length?'\n\nNdryshimet e biznesit vlejnë për çdo arkë Kontabo POS të menaxhuar.':'');
     this.setState({confirm:{title:'Ruaj konfigurimin fiskal?',body,color:'#2563EB',ok:()=>{ this.fwCommit(P); }}}); return true; }
   async fwCommit(P){ const f0=this.fwState(); if(!f0||!f0.data||this._fwSaving) return false; const T0=this.fwSel(f0), B0=f0.data.business||{}, tid=this.apiCfg().tenantId; if(!T0) return false;
     const here=()=>this.apiCfg().tenantId===tid&&!!this.fwState(), reason=P.reason?{reason:P.reason}:{};
+    // the old values a staff note may name for each lockable key of this save: what the page shows, or what the till itself reports (a re-sent proposal)
+    const V0=this.fwVals(f0), expect={}; for(const k of [...this.FW_KEYS_B,...this.FW_KEYS_T]) if((P.biz&&k in P.biz)||(P.term&&k in P.term)) expect[k]=[...new Set([String(V0.cur[k]||''),this.fwReported(V0,k)])];
     this._fwSaving=true; this.setFw({saving:true,msg:null,errKey:''}); let part='';
     try{
       let tv=T0.version||0;
-      if(P.biz){ part='business'; const r=await this.fwPut('/fiscal/business',{expectedVersion:B0.bizVersion||0,changes:P.biz,...reason});
+      if(P.biz){ part='business'; const r=await this.fwPut('/fiscal/business',{expectedVersion:B0.bizVersion||0,changes:P.biz,...reason},expect);
         const nv=(r.terminals||[]).find(x=>x.id===T0.id); if(nv) tv=nv.version;
         if(here()) this.setFw(f=>{ const ed={...(f.ed||{})}; this.FW_KEYS_B.forEach(k=>delete ed[k]); Object.keys(ed).filter(k=>k.startsWith('cb.')).forEach(k=>delete ed[k]); return {ed,data:{...f.data,business:r.business||f.data.business}}; }); }
-      if(P.term){ part='terminal'; const r=await this.fwPut('/fiscal/terminals/'+T0.id,{expectedVersion:tv,changes:P.term,...reason});
+      if(P.term){ part='terminal'; const r=await this.fwPut('/fiscal/terminals/'+T0.id,{expectedVersion:tv,changes:P.term,...reason},expect);
         if(here()&&r.terminal) this.setFw(f=>({data:{...f.data,terminals:(f.data.terminals||[]).map(t=>t.id===r.terminal.id?r.terminal:t)}})); }
-      if(here()){ this.setFw({ed:{},baseV:'',saving:false,msg:{t:'U ruajt. Arka i merr ndryshimet me heartbeat-in e radhës (brenda një minute kur është e lidhur).',c:'#15803D'}}); this.toast('Konfigurimi fiskal u ruajt'); this.fwLoad(); }
+      if(here()){ this.setFw({ed:P.resend?((this.fwState()||{}).ed||{}):{},baseV:'',saving:false,msg:{t:P.resend?'U dërgua sërish me shënimin e stafit. Arka e merr me heartbeat-in e radhës.':'U ruajt. Arka i merr ndryshimet me heartbeat-in e radhës (brenda një minute kur është e lidhur).',c:'#15803D'}}); this.toast(P.resend?'U dërgua sërish te arka':'Konfigurimi fiskal u ruajt'); this.fwLoad(); }
       return true; }
     catch(e){ if(!here()) return false; const x=e.data||{}, d=this.fwState()||{};
       let msg=e.message||String(e), key='';
@@ -4489,35 +4512,52 @@ class Component extends DCLogic {
       else if(e.code==='gate_blocked') msg='Fjalëkalimi i stafit është bllokuar pas 5 provave të gabuara — provoni pas '+this.fwTime(x.blockedUntil).slice(11)+'.';
       else if(e.code==='gate_invalid') msg='Shënimi i stafit nuk u pranua ('+(x.reason||'')+'): '+msg;
       else if(e.code==='staff_required') msg='Ndryshimet e kyçura kërkojnë fjalëkalimin e stafit të KONTABO.';
+      else if(e.code==='staff_chain_unconfirmed') msg=this.FW_UNCONFIRMED;
+      else if(e.code==='proposal_values_differ') msg='Arkat që e mbajnë „'+this.fwKeyLabel(x.key)+'" si propozim kanë vlera të ndryshme ('+(x.values||[]).join(', ')+') — një shënim i stafit mbulon vetëm një vlerë të vjetër; njësoni së pari arkat.';
       if(e.code==='gate_blocked'||e.code==='gate_invalid') this.fwGateState(e.code==='gate_blocked'?{blocked:true,blockedUntil:x.blockedUntil}:null);
       this.setFw({saving:false,errKey:key,msg:{t:(part==='terminal'&&P.biz?'Biznesi u ruajt; arka jo — ':'')+msg,c:e.code==='cancelled'?'#B45309':'#B91C1C'}});
       if(e.code!=='cancelled'||part==='terminal') this.fwLoad();
       return false; }
     finally{ this._fwSaving=false; if(here()&&(this.fwState()||{}).saving) this.setFw({saving:false}); } }
-  // one PUT; a 409 staff_required is answered with a gate note and the SAME request again (a lost / expired nonce or a lock that changed in between: once more)
-  async fwPut(path,body){
+  // one PUT; a 409 staff_required is answered with a gate note and the SAME request again (a lost / expired nonce or a lock that changed in between: once more).
+  // `expect` = {key: [the old values the page knows]} of the lockable keys this save changes: the browser signs ONLY what the admin asked for (fwRefCheck)
+  async fwPut(path,body,expect){
     try{ return await this.apiFetch(path,{method:'PUT',body}); }
     catch(e){ if(e.code!=='staff_required') throw e;
       const ref={...(e.data||{})};
-      for(let i=0;;i++){ const gate=await this.fwGateNote(ref,body.expectedVersion);
+      for(let i=0;;i++){ const why=this.fwRefCheck(ref,path,body,expect); if(why) throw this.fwRefused(why);
+        const gate=await this.fwGateNote(ref,body.expectedVersion);
         try{ return await this.apiFetch(path,{method:'PUT',body:{...body,gate}}); }
         catch(x){ const r=(x.data||{}).reason;
           if(x.code==='gate_invalid'&&(r==='stale_chain'||r==='bad_signature')) this.fwLock(true);
           if(i<1&&((x.code==='gate_invalid'&&['nonce_expired','nonce_used','nonce_unknown','stale_chain'].includes(r))||x.code==='staff_required')){ if(x.code==='staff_required') Object.assign(ref,x.data||{}); continue; }
           throw x; } } } }
+  // '' when a staff_required answer asks to sign exactly the request the admin made, else why not: its scope and terminal = the PUT's path, its version =
+  // the expectedVersion sent, every signed key one the admin changed with [1] = the value asked for and [0] = a value the page shows (its own, or the
+  // till's for a re-sent proposal). A server (or a man in the middle on http) that names another change, till or company gets no signature.
+  fwRefCheck(ref,path,body,expect){ const tm=/^\/fiscal\/terminals\/([^/?]+)$/.exec(path), scope=tm?'terminal':path==='/fiscal/business'?'business':'';
+    if(!scope||ref.scope!==scope) return 'scope'; if(String(ref.terminal==null?'':ref.terminal)!==(tm?decodeURIComponent(tm[1]):'')) return 'terminal';
+    if(ref.version!==undefined&&ref.version!==body.expectedVersion) return 'version';
+    const ch=ref.changes, asked=body.changes||{}; if(!ch||typeof ch!=='object'||Array.isArray(ch)||!Object.keys(ch).length) return 'changes';
+    for(const [k,p] of Object.entries(ch)){ if(!Object.prototype.hasOwnProperty.call(asked,k)||!Array.isArray(p)||p.length!==2||String(p[1])!==String(asked[k])) return 'changes:'+k;
+      const ok=(expect||{})[k]; if(!Array.isArray(ok)||!ok.includes(String(p[0]))) return 'old:'+k; }
+    return ''; }
+  fwRefused(why){ this.fwLock(true); const e=new Error('Serveri kërkoi të nënshkruhet diçka tjetër nga ndryshimi që kërkuat ('+why+') — asgjë nuk u nënshkrua dhe zhbllokimi u mbyll. Ringarkoni faqen dhe provoni përsëri.'); e.code='gate_mismatch'; return e; }
   // the gate note for a staff_required refusal: {body, signature}. The 15-minute unlock signs at once; otherwise the staff dialog asks first.
   async fwGateNote(ref,expectedVersion){
     for(let i=0;i<3;i++){
       let key=this.fwUnlocked()?this._fwKey:null; if(!key) key=await this.fwAskPassword(ref);
       let n=key.nonce&&Date.parse(key.nonce.expiresAt)-Date.now()>30000?key.nonce:null; key.nonce=null; // the unlock's own nonce, once, while fresh
       if(!n) n=await this.apiFetch('/fiscal/gate/nonce',{method:'POST',body:{}});
+      if(n.tenant!==this.apiCfg().tenantId||key.tid!==this.apiCfg().tenantId) throw this.fwRefused('tenant'); // a note is only ever signed for the company signed in
       if(n.pub!==key.pub||n.chainV!==key.chainV){ this.fwLock(true); continue; } // the staff chain moved on meanwhile (a new KONTABO password): ask again
       const body=this.fwCanon({koha:new Date(Date.now()).toISOString().replace(/\.\d{3}Z$/,'Z'),lloji:'porta-fiskale-web-v1',ndryshimet:ref.changes||{},nonce:n.nonce,pub:n.pub,scope:ref.scope==='business'?'business':'terminal',tenant:n.tenant,terminal:ref.scope==='business'?'':String(ref.terminal||''),v:n.chainV,versioni:expectedVersion});
       return {body,signature:await key.sign(body)}; }
     throw new Error('Fjalëkalimi i stafit të KONTABO ka ndryshuar ndërkohë — provoni përsëri'); }
   // the staff dialog (form drawer `fwStaff`): resolves with the unlocked key, rejects (code 'cancelled') when it is closed
   fwAskPassword(ref){ const old=this._fwAsk; this._fwAsk=null; if(old) old.reject(this.fwCancelled());
-    return new Promise((resolve,reject)=>{ this._fwAsk={resolve,reject}; this.setState({frm:{kind:'fwStaff',pw:'',busy:false,err:'',ref:ref?{changes:ref.changes||{},scope:ref.scope||'terminal'}:null},drawer:null,dr:null}); }); }
+    const d=(this.fwState()||{}).data||{}, t=ref&&ref.scope!=='business'?(d.terminals||[]).find(x=>x.id===ref.terminal):null;
+    return new Promise((resolve,reject)=>{ this._fwAsk={resolve,reject}; this.setState({frm:{kind:'fwStaff',pw:'',busy:false,err:'',ref:ref?{changes:ref.changes||{},scope:ref.scope||'terminal',name:t?t.name+(t.posId?' · '+t.posId:''):''}:null},drawer:null,dr:null}); }); }
   fwUnlockNow(){ this.fwAskPassword(null).then(()=>this.toast('U zhbllokua me fjalëkalimin e stafit për 15 minuta','#15803D')).catch(()=>{}); }
   fwGateState(r){ if(!r) return; this.setFw(f=>f.data?{data:{...f.data,gate:{...(f.data.gate||{}),...(r.failures!==undefined?{failures:r.failures}:{}),blocked:!!r.blocked,blockedUntil:r.blockedUntil||null}}}:{}); }
   // Zhblloko: a nonce (it carries the chain's signing salt and public key) → PBKDF2 300 000 → Ed25519 → the derived public key must be the chain's.
@@ -4527,7 +4567,8 @@ class Component extends DCLogic {
     this.setF({busy:true,err:''}); let n;
     try{ n=await this.apiFetch('/fiscal/gate/nonce',{method:'POST',body:{}}); }
     catch(e){ const x=e.data||{}; if(e.code==='gate_blocked') this.fwGateState({blocked:true,blockedUntil:x.blockedUntil});
-      if(still()) this.setF({busy:false,pw:'',err:e.code==='gate_blocked'?'Fjalëkalimi i stafit është bllokuar pas 5 provave të gabuara — provoni pas '+this.fwTime(x.blockedUntil).slice(11)+'.':'Serveri nuk u përgjigj: '+(e.message||e)}); return false; }
+      if(still()) this.setF({busy:false,pw:'',err:e.code==='gate_blocked'?'Fjalëkalimi i stafit është bllokuar pas 5 provave të gabuara — provoni pas '+this.fwTime(x.blockedUntil).slice(11)+'.':e.code==='staff_chain_unconfirmed'?this.FW_UNCONFIRMED:'Serveri nuk u përgjigj: '+(e.message||e)}); return false; }
+    if(n.tenant!==tid){ if(still()) this.setF({busy:false,pw:'',err:'Serveri u përgjigj për një kompani tjetër — fjalëkalimi nuk u provua.'}); return false; }
     let key=null; try{ if(n.iterations&&Number(n.iterations)!==this.FW_ITER) throw new Error('numri i iteracioneve ('+n.iterations+') nuk është ai i stafit'); key=await this.fwStaffKey(pw,n.signSalt); }
     catch(e){ if(still()) this.setF({busy:false,pw:'',err:'Çelësi nuk u nxorr dot në këtë shfletues: '+(e.message||e)}); return false; }
     if(!still()){ key.seed.fill(0); return false; }
@@ -4539,9 +4580,20 @@ class Component extends DCLogic {
     if(a) a.resolve(this._fwKey); return true; }
   fwPick(id){ const f=this.fwState(); if(!f||f.sel===id) return; const go=()=>this.setFw({sel:id,ed:{},baseV:'',errKey:'',msg:null,hist:null});
     if(this.fwPlan(f).rows.length) this.setState({confirm:{title:'Hidh ndryshimet e paruajtura?',body:'Keni ndryshime të paruajtura për arkën “'+((this.fwSel(f)||{}).name||'')+'”. Nëse kaloni te një arkë tjetër, ato hidhen.',color:'#B45309',ok:go}}); else go(); }
+  // a till that reports nothing of the extension (Kontabo POS < 0.16): no env, no key, no registration — it cannot verify a staff note yet
+  fwOldTill(V){ const R=V.R||{}, nn=v=>v===null||v===undefined; return V.T.kind!=='kontabo-bar'&&nn(R.env)&&nn(R.keyFp)&&nn(R.registered); }
+  // "Dërgo sërish te arka": a web value the till keeps as a PROPOSAL (it kept its own) is saved again — the server answers staff_required with
+  // [the till's value, the web's value], the staff signs it here, the version goes up and the till applies it with the note
+  fwResend(keys){ const f=this.fwState(); if(!f||!f.data||this._fwSaving) return false; const V=this.fwVals(f); if(!this.fwCanEdit(f,V)) return false;
+    const biz={}, term={}, rows=[];
+    for(const k of keys||[]){ const v=String(V.cur[k]||''); if(!v) continue; const isB=this.FW_KEYS_B.includes(k); if(!isB&&!this.FW_KEYS_T.includes(k)) continue; (isB?biz:term)[k]=v;
+      rows.push((isB?'Biznesi · ':'Arka · ')+this.FW_LABEL[k]+': '+this.fwShow(k,this.fwReported(V,k))+' → '+this.fwShow(k,v)); }
+    if(!rows.length) return false;
+    const P={biz:Object.keys(biz).length?biz:null,term:Object.keys(term).length?term:null,rows,errKeys:[],reason:'',needs:[],resend:true};
+    this.setState({confirm:{title:'Dërgo sërish te arka “'+V.T.name+'”?',body:'Arka i mban këto si propozim — ka ende vlerat e veta:\n'+rows.join('\n')+'\n\nKërkohet fjalëkalimi i stafit të KONTABO; arka i zbaton me heartbeat-in e radhës'+(V.T.registered?' dhe pastaj kërkon regjistrim të ri te ATK-ja (në arkë).':'.'),color:'#B45309',ok:()=>{ this.fwCommit(P); }}}); return true; }
   // "Importo vlerat nga arka": what the till reports (ids, env, mode) becomes its web config — no staff note (the values ARE the till's)
-  fwImportAsk(){ const f=this.fwState(), T=this.fwSel(f); if(!T||!this.fwCanEdit(f,this.fwVals(f))) return false;
-    this.setState({confirm:{title:'Importo vlerat nga arka “'+T.name+'”?',body:'Ueb-i merr si konfigurim të kësaj arke atë që ajo raporton vetë: numrin e njësisë, POS ID-në, numrin e fiskalizimit, mjedisin dhe mënyrën; NUI-në dhe „në TVSH" të biznesit vetëm kur ueb-i s\'i ka ende. Nuk kërkohet fjalëkalimi i stafit — vlerat janë të arkës, ajo nuk ndryshon asgjë.'+(T.version?'':'\n\nArka bëhet e menaxhuar nga ueb-i (versioni 1).'),color:'#2563EB',ok:()=>{ this.fwImport(); }}}); return true; }
+  fwImportAsk(){ const f=this.fwState(), T=this.fwSel(f); if(!T||!this.fwCanEdit(f,this.fwVals(f))) return false; const sim=(T.reported||{}).simulator===true;
+    this.setState({confirm:{title:'Importo vlerat nga arka “'+T.name+'”?',body:'Ueb-i merr si konfigurim të kësaj arke atë që ajo raporton vetë: numrin e njësisë, POS ID-në, numrin e fiskalizimit, mjedisin dhe mënyrën; NUI-në dhe „në TVSH" të biznesit vetëm kur ueb-i s\'i ka ende. Nuk kërkohet fjalëkalimi i stafit — vlerat janë të arkës, ajo nuk ndryshon asgjë.'+(sim?'\n\nArka punon me SIMULATORIN (vegël e stafit): mënyra e fiskalizimit nuk importohet — mbetet ajo e arkës (simulatori nuk fiket).':'')+(T.version?'':'\n\nArka bëhet e menaxhuar nga ueb-i (versioni 1).'),color:'#2563EB',ok:()=>{ this.fwImport(); }}}); return true; }
   async fwImport(){ const f=this.fwState(), T=this.fwSel(f), tid=this.apiCfg().tenantId; if(!T||this._fwSaving) return false; const here=()=>this.apiCfg().tenantId===tid&&!!this.fwState();
     this._fwSaving=true; this.setFw({saving:true,msg:null,errKey:''});
     try{ const r=await this.apiFetch('/fiscal/terminals/'+T.id+'/import',{method:'POST',body:{expectedVersion:T.version||0}}); if(!here()) return false;
@@ -4549,7 +4601,7 @@ class Component extends DCLogic {
       this.setFw({saving:false,ed:{},baseV:'',msg:{t:'Vlerat e arkës u importuan (konfigurimi v'+((r.terminal||{}).version||'?')+').'+(cf.length?' Nuk u mbishkruan — ndryshojnë nga biznesi: '+cf.join('; ')+'.':''),c:cf.length?'#B45309':'#15803D'}});
       this.toast('Vlerat e arkës u importuan'); this.fwLoad(); return true; }
     catch(e){ if(!here()) return false;
-      this.setFw({saving:false,msg:{t:e.code==='nothing_reported'?'Arka nuk ka raportuar ende identifikuesit e saj — kërkohet Kontabo POS 0.16.0 ose më i ri. Vlerat mund t\'i shkruani edhe vetë këtu.':e.code==='version_conflict'?'Konfigurimi u ndryshua ndërkohë — u rifreskua; provoni përsëri.':e.code==='managed_by_bar'?'Kjo arkë është KONTABO BAR: konfigurohet në vetë barin.':'Importi dështoi: '+(e.message||e),c:'#B91C1C'}});
+      this.setFw({saving:false,msg:{t:e.code==='nothing_reported'?'Arka nuk ka raportuar ende identifikuesit e saj — kërkohet Kontabo POS 0.16.0 ose më i ri. Përditësojeni arkën (mbetet e pamenaxhuar, s\'ndryshon asgjë) dhe pastaj importoni; mos i shkruani vetë identifikuesit e kyçur për të — arka do t\'i mbante si propozim.':e.code==='version_conflict'?'Konfigurimi u ndryshua ndërkohë — u rifreskua; provoni përsëri.':e.code==='managed_by_bar'?'Kjo arkë është KONTABO BAR: konfigurohet në vetë barin.':'Importi dështoi: '+(e.message||e),c:'#B91C1C'}});
       if(e.code==='version_conflict') this.fwLoad(); return false; }
     finally{ this._fwSaving=false; } }
   // Historiku: the till's rows and the business rows (GET /fiscal/changes), newest first
@@ -4584,23 +4636,28 @@ class Component extends DCLogic {
       return {label:t.name+(t.posId?' · '+t.posId:''),sub:(bar?'':'Kontabo POS '+(t.appVersion||'')+' · ')+st,dot,bg:on?'rgba(37,99,235,.08)':'rgba(255,255,255,.75)',bd:on?'#2563EB':'rgba(16,36,58,.1)',title:t.branch||'',go:()=>this.fwPick(t.id)}; });
     // the 8 status tiles — what the till reported with its last heartbeat (an old till reports only the mode and the queue)
     const nn=v=>v===null||v===undefined, num=v=>nn(v)?'—':String(v), mode=(R.mode||'').toUpperCase(), sim=R.simulator===true||R.simulator===1||R.simulator==='1';
+    // Kontabo POS ≥ 0.16 sends a COMPACT extension (API.md: a field with nothing to say is left out): once it reports `env`, a missing key /
+    // registration / count means none — "s'e raporton" only for a till without the extension (Kontabo POS 0.15)
+    const ext=!nn(R.env), keyFp=nn(R.keyFp)&&ext?'':R.keyFp, regd=nn(R.registered)&&ext?false:R.registered, nFail=nn(R.failed)&&ext?0:R.failed, nSent=nn(R.atkCoupons)&&ext?0:R.atkCoupons;
     const vat=V.cur.vatRegistered, certDays=R.certNotAfter?Math.floor((Date.parse(R.certNotAfter)-now)/86400000):null, oldest=R.oldestPendingAt?now-Date.parse(R.oldestPendingAt):0;
     const tiles=[
       {label:'Fiskalizimi',value:nn(R.mode)?'—':mode==='ATK_ELECTRONIC'||mode==='TREMOL_ETHERNET'||mode==='FLINK_ETHERNET'?'Aktiv':'Joaktiv',sub:nn(R.mode)?'pa heartbeat':(this.FW_MODE_NAME[mode]||mode||'—')+(sim?' · SIMULATOR':''),c:nn(R.mode)?'#8FA3B8':mode&&mode!=='UNCONFIGURED'?'#15803D':'#526477'},
-      {label:'TVSH',value:vat==='1'?'Në TVSH':vat==='0'?'Jo në TVSH':'—',sub:V.src.vatRegistered==='ueb'?'nga ueb-i':V.src.vatRegistered==='arka'?'siç e raporton arka':'pa vlerë',c:'#10243A'},
+      {label:'TVSH',value:vat==='1'?'Në TVSH':vat==='0'?'Jo në TVSH':'—',sub:V.src.vatRegistered==='ueb'?'nga ueb-i':V.src.vatRegistered==='arka'?'siç e raporton arka':V.src.vatRegistered==='bar'?'siç e raporton bari':'pa vlerë',c:'#10243A'},
       {label:'Mjedisi',value:R.env||'—',sub:R.certEnv&&R.env&&R.certEnv!==R.env?'certifikata: '+R.certEnv+' ≠':V.cur.env&&V.cur.env!==R.env?'ueb-i: '+V.cur.env:nn(R.env)?'s\'e raporton':'ATK '+(R.env==='PROD'?'prodhim':'test'),c:R.certEnv&&R.env&&R.certEnv!==R.env?'#B91C1C':R.env==='PROD'?'#15803D':R.env==='TEST'?'#B45309':'#8FA3B8'},
-      {label:'Çelësi',value:nn(R.keyFp)?'—':R.keyFp?'Po':'Mungon',sub:R.keyFp?String(R.keyFp).slice(0,16)+'…':nn(R.keyFp)?'s\'e raporton':'krijohet në arkë',c:R.keyFp?'#15803D':nn(R.keyFp)?'#8FA3B8':'#B91C1C'},
-      {label:'Certifikata',value:R.registered||T.registered?(R.certEnv||'E regjistruar'):nn(R.registered)?'—':'Pa regjistrim',sub:R.certNotAfter?(certDays<0?'skadoi më ':'deri më ')+this.fwTime(R.certNotAfter,false):T.registeredAt?'që më '+this.fwTime(T.registeredAt,false):'regjistrohet në arkë',c:certDays!==null&&certDays<30?'#B91C1C':R.registered||T.registered?'#15803D':'#8FA3B8'},
+      {label:'Çelësi',value:nn(keyFp)?'—':keyFp?'Po':'Mungon',sub:keyFp?String(keyFp).slice(0,16)+'…':nn(keyFp)?'s\'e raporton':'krijohet në arkë',c:keyFp?'#15803D':nn(keyFp)?'#8FA3B8':'#B91C1C'},
+      {label:'Certifikata',value:regd||T.registered?(R.certEnv||'E regjistruar'):nn(regd)?'—':'Pa regjistrim',sub:R.certNotAfter?(certDays<0?'skadoi më ':'deri më ')+this.fwTime(R.certNotAfter,false):T.registeredAt?'që më '+this.fwTime(T.registeredAt,false):'regjistrohet në arkë',c:certDays!==null&&certDays<30?'#B91C1C':regd||T.registered?'#15803D':'#8FA3B8'},
       {label:'Në pritje',value:num(R.pending),sub:oldest>0?'më i vjetri '+this.fwAge(oldest):'',c:oldest>48*3600000?'#B91C1C':Number(R.pending)>0?'#B45309':'#10243A'},
-      {label:'Me gabim',value:num(R.failed),sub:'',c:Number(R.failed)>0?'#B91C1C':'#10243A'},
-      {label:'Të dërguar',value:num(R.atkCoupons),sub:R.atkCoupons!=null?'kupona te ATK-ja':'',c:'#10243A'}];
+      {label:'Me gabim',value:num(nFail),sub:'',c:Number(nFail)>0?'#B91C1C':'#10243A'},
+      {label:'Të dërguar',value:num(nSent),sub:nSent!=null?'kupona te ATK-ja':'',c:'#10243A'}];
     // alerts: what needs attention on this till, the most urgent first
-    const A=[], add=(t,x,c)=>A.push({t,s:x,c,bg:c==='#B91C1C'?'rgba(220,38,38,.06)':c==='#B45309'?'rgba(217,119,6,.07)':'rgba(37,99,235,.05)',bd:c==='#B91C1C'?'rgba(220,38,38,.2)':c==='#B45309'?'rgba(217,119,6,.22)':'rgba(37,99,235,.14)'});
-    if(isBar) add('KONTABO BAR.','Kjo arkë konfigurohet në vetë KONTABO BAR-in (Administrimi › Fiskalizimi); këtu shfaqet vetëm për lexim.','#2563EB');
-    for(const b of blockersOf(T)) add('Pengesë në arkë:',this.FW_BLOCKERS[b]||b,'#B91C1C');
+    const A=[], add=(t,x,c,act)=>A.push({t,s:x,c,bg:c==='#B91C1C'?'rgba(220,38,38,.06)':c==='#B45309'?'rgba(217,119,6,.07)':'rgba(37,99,235,.05)',bd:c==='#B91C1C'?'rgba(220,38,38,.2)':c==='#B45309'?'rgba(217,119,6,.22)':'rgba(37,99,235,.14)',
+      hasAct:!!act,actLabel:act?act.label:'',act:act?act.go:null});
+    if(isBar) add('KONTABO BAR.','Kjo arkë konfigurohet në vetë KONTABO BAR-in (Administrimi › Fiskalizimi); këtu shfaqet vetëm për lexim — vlerat janë ato që raporton bari.','#2563EB');
+    if(!isBar&&d.staffConfirmed===false) add('Fjalëkalimi i stafit nuk është konfirmuar në server.',this.FW_UNCONFIRMED,'#B45309');
+    for(const b of blockersOf(T)) add('Pengesë në arkë:',this.fwBlockerText(b),'#B91C1C');
     if(R.certEnv&&R.env&&R.certEnv!==R.env&&!blockersOf(T).includes('env_mismatch')) add('Mospërputhje mjedisi:','certifikata është '+R.certEnv+', arka punon në '+R.env+' — kërkohet regjistrim i ri te ATK-ja në arkë.','#B91C1C');
     if(certDays!==null&&certDays<30) add(certDays<0?'Certifikata ka skaduar.':'Certifikata skadon së shpejti.','Data: '+this.fwTime(R.certNotAfter,false)+' — kërkohet regjistrim i ri te ATK-ja në arkë.',certDays<0?'#B91C1C':'#B45309');
-    if(Number(R.failed)>0) add('Kupona me gabim:',R.failed+' — shihni radhën fiskale në arkë.','#B91C1C');
+    if(Number(nFail)>0) add('Kupona me gabim:',nFail+' — shihni radhën fiskale në arkë.','#B91C1C');
     if(oldest>0){ const om=new Date(now-oldest), pm=new Date(now).getMonth()!==om.getMonth();
       if(pm) add('Kupona të muajit të kaluar ende të padërguar.','Më i vjetri nga '+this.fwTime(R.oldestPendingAt)+' — afati për t\'i dërguar është dita 10 e muajit.','#B91C1C');
       else if(oldest>48*3600000) add('OFFLINE mbi 48 orë.','Kuponi më i vjetër në pritje është nga '+this.fwTime(R.oldestPendingAt)+' — ATK-ja kërkon raportin e ndërprerjes.','#B91C1C');
@@ -4608,11 +4665,15 @@ class Component extends DCLogic {
     else if(R.link==='offline') add('OFFLINE:','arka nuk lidhet me ATK-në'+(Number(R.pending)>0?' · '+R.pending+' kupona në radhë':'')+'.','#B45309');
     if(!nn(R.clockOffsetS)&&Math.abs(Number(R.clockOffsetS))>120) add('Ora e arkës','ndryshon me '+Math.round(Math.abs(Number(R.clockOffsetS)))+' s nga ora e ATK-së — rregulloni orën e kompjuterit të arkës.','#B45309');
     if(!isBar&&T.pendingApply) add('Në pritje të arkës:','konfigurimi v'+T.version+' nuk është zbatuar ende (arka ka zbatuar v'+((T.applied||{}).version||0)+')'+(T.online?'.':' — arka është jashtë linje.'),'#B45309');
-    const props=[...new Set([...(R.proposals||[]),...(((T.applied||{}).report||{}).proposals||[])])];
-    if(props.length) add('Propozim në arkë:','arka i mban si propozim, derisa stafi t\'i pranojë në arkë: '+props.map(k=>this.FW_LABEL[k]||this.fwKeyLabel(k)).join(', ')+'.','#B45309');
+    const props=isBar?[]:[...new Set([...(R.proposals||[]),...(((T.applied||{}).report||{}).proposals||[])])];
+    if(props.length){ // the till kept its own value (no staff note it could verify): the web value reaches it only when sent again with the staff password
+      const keys=props.filter(k=>(this.FW_KEYS_T.includes(k)||this.FW_KEYS_B.includes(k))&&String(V.cur[k]||'')!==''), can=canEdit&&keys.length>0&&!P.rows.length;
+      add('Propozim në arkë:','arka e mban vlerën e vet dhe nuk e zbatoi: '+props.map(k=>this.fwPropText(k)).join(', ')+' — '
+        +(keys.length?'për ta zbatuar, dërgojeni sërish me fjalëkalimin e stafit të KONTABO („Dërgo sërish te arka").':'caktojeni këtu te konfigurimi fiskal (me fjalëkalimin e stafit) që arka ta marrë.'),'#B45309',
+        can?{label:'Dërgo sërish te arka',go:()=>this.fwResend(keys)}:null); }
     if(!isBar&&!T.managed) add('E pamenaxhuar nga ueb-i.','Arka mban cilësimet e veta derisa të ruani konfigurimin e saj të parë'+(canEdit?' — nisni me „Importo vlerat nga arka", që asgjë të mos ndryshojë në arkë.':'.'),'#2563EB');
-    if(!isBar&&nn(R.env)&&nn(R.keyFp)&&nn(R.registered)) add('Arka nuk i raporton ende të dhënat fiskale.','Kontabo POS '+(T.appVersion||'')+' dërgon vetëm mënyrën dhe kuponët në pritje; mjedisi, çelësi dhe certifikata shfaqen pas përditësimit të arkës (0.16.0 ose më i ri).','#2563EB');
-    else if(!isBar&&(V.cur.mode==='ATK_ELECTRONIC'||mode==='ATK_ELECTRONIC')){ if(!R.keyFp) add('Hapi tjetër:','krijoni çelësin e POS-it në arkë (Konfigurimi ATK).','#2563EB'); else if(!R.registered&&!T.registered) add('Hapi tjetër:','regjistroni arkën te ATK-ja — bëhet në arkë.','#2563EB'); }
+    if(this.fwOldTill(V)) add('Arka nuk i raporton ende të dhënat fiskale.','Kontabo POS '+(T.appVersion||'')+' dërgon vetëm mënyrën dhe kuponët në pritje; mjedisi, çelësi dhe certifikata shfaqen pas përditësimit të arkës (0.16.0 ose më i ri). Përditësojeni arkën dhe pastaj „Importo vlerat nga arka" — mos i shkruani tani identifikuesit e kyçur ose mjedisin: arka e përditësuar do t\'i mbante si propozim.','#2563EB');
+    else if(!isBar&&(V.cur.mode==='ATK_ELECTRONIC'||mode==='ATK_ELECTRONIC')){ if(!keyFp) add('Hapi tjetër:','krijoni çelësin e POS-it në arkë (Konfigurimi ATK).','#2563EB'); else if(!regd&&!T.registered) add('Hapi tjetër:','regjistroni arkën te ATK-ja — bëhet në arkë.','#2563EB'); }
     if(!T.online&&!isBar) add('Arka është jashtë linje.',T.lastSeenAt?'Parë së fundi '+this.fwTime(T.lastSeenAt)+'; ndryshimet i merr kur të lidhet përsëri.':'Nuk është lidhur ende me serverin.','#B45309');
     const unit=this.fwUnit(T), miss=[...(unit.name?[]:['emri i njësisë']),...(unit.address?[]:['adresa e njësisë']),...(unit.place?[]:['vendi (qyteti)'])];
     if(!isBar&&miss.length) add('Koka e kuponit:','mungon '+miss.join(', ')+' — plotësoni te Kompania › Degët / Të dhënat e kompanisë.','#B45309');
@@ -4625,7 +4686,7 @@ class Component extends DCLogic {
     const errOf=k=>(ed[k]!==undefined&&P.errs[k])||(f.errKey===k&&f.msg?f.msg.t:'');
     const lockF=k=>{ const lock=this.fwLockOf(V,k); if(lock==='free'||(lock==='key'&&V.cur[k]==='')) return {}; const L=this.FW_LOCK[lock]||this.FW_LOCK.registered, open=unl&&lock!=='bar';
       return {lock:true,lockLbl:open?'e zhbllokuar':L[0],lockText:open?'E zhbllokuar me fjalëkalimin e stafit — ndryshimi nënshkruhet në shfletues kur ruani.':L[1],lockC:open?'#15803D':L[2],lockBg:open?'rgba(21,128,61,.09)':L[3],lockPath:open?'M8 11V7a4 4 0 017.5-2':'M8 11V7a4 4 0 018 0v4'}; };
-    const srcHint=k=>V.src[k]==='arka'?'siç e raporton arka':V.src[k]===''?'pa vlerë':'';
+    const srcHint=k=>V.src[k]==='arka'?'siç e raporton arka':V.src[k]==='bar'?'siç e raporton bari':V.src[k]===''?'pa vlerë':'';
     const text=(k,label,o={})=>{ const e=errOf(k), dis=!this.fwEditable(f,V,k); return {key:k,label,isText:true,value:String(V.val(k)==null?'':V.val(k)),set:ev=>this.fwEdit(k,ev.target.value),ph:o.ph||'',err:e?'1':'',dis,mode:o.num?'numeric':'text',font:o.mono?"'JetBrains Mono',monospace":'inherit',span:o.full?'1 / -1':'auto',hint:o.hint!==undefined?o.hint:srcHint(k),hintC:'#8FA3B8',note:e||o.note||'',noteC:e?'#B91C1C':'#8FA3B8',...lockF(k)}; };
     const seg=(k,label,opts,o={})=>{ const v=o.get?o.get():V.val(k), dis=o.dis!==undefined?o.dis:!this.fwEditable(f,V,k), e=errOf(o.ek||k);
       return {key:k,label,isSeg:true,opts:opts.map(([id,l])=>({label:l,on:String(v==null?'':v)===String(id)?'1':'',go:()=>{ if(!dis) (o.set||(x=>this.fwEdit(k,x)))(id); }})),dis,op:dis?'.6':'1',span:o.full?'1 / -1':'auto',hint:o.hint!==undefined?o.hint:srcHint(k),hintC:'#8FA3B8',note:e||o.note||'',noteC:e?'#B91C1C':(o.noteC||'#8FA3B8'),...(o.nolock?{}:lockF(k))}; };
@@ -4639,15 +4700,20 @@ class Component extends DCLogic {
       fields:[text('nui','NUI',{mono:true,num:true,ph:B.tenantNui?'p.sh. '+B.tenantNui:'9 shifra',note:V.cur.nui&&!/^\d{9}$/.test(V.val('nui')||'')&&!errOf('nui')?'NUI-ja e ATK-së zakonisht ka 9 shifra.':''}),
         text('fiscalizationNo','Numri i fiskalizimit',{mono:true,ph:co.fiscalNo&&co.fiscalNo!=='—'?'p.sh. '+co.fiscalNo:''}),
         text('unitNo','Numri i njësisë (BranchId)',{mono:true,num:true,ph:unit.unitNo?'p.sh. '+unit.unitNo:'shifra'}),
-        text('atkPosId','POS ID (ATK)',{mono:true,num:true,ph:'1–999…',note:T.posId?'Identiteti i arkës në Kontabo („'+T.posId+'") është tjetër gjë.':''}),
+        text('atkPosId','POS ID (ATK)',{mono:true,num:true,ph:isBar?'':'1–999',note:T.posId?'Identiteti i arkës në Kontabo („'+T.posId+'") është tjetër gjë.':''}),
         info('Nr identifikues i SEF',sefNew||'—',{mono:true,full:true,color:sefChanged&&sefNew?'#B45309':'#10243A',hint:'[njësia]-[NUI]-[POS ID]',note:sefChanged&&T.sef?'Tani: '+T.sef:''})],
-      rows:[{k:'Çelësi i POS-it',v:R.keyFp?String(R.keyFp):nn(R.keyFp)?'— (arka s\'e raporton)':'mungon',font:"'JetBrains Mono',monospace",color:R.keyFp?'#10243A':'#8FA3B8'},
-        {k:'Certifikata',v:R.registered||T.registered?(R.certEnv||'—')+(R.certNotAfter?' · deri më '+this.fwTime(R.certNotAfter,false):'')+(T.registeredAt?' · e regjistruar që më '+this.fwTime(T.registeredAt,false):''):'pa regjistrim te ATK-ja',font:'inherit',color:'#10243A'}],
+      rows:[{k:'Çelësi i POS-it',v:keyFp?String(keyFp):nn(keyFp)?'— (arka s\'e raporton)':'mungon — krijohet në arkë',font:"'JetBrains Mono',monospace",color:keyFp?'#10243A':'#8FA3B8'},
+        {k:'Certifikata',v:regd||T.registered?(R.certEnv||'—')+(R.certNotAfter?' · deri më '+this.fwTime(R.certNotAfter,false):'')+(T.registeredAt?' · e regjistruar që më '+this.fwTime(T.registeredAt,false):''):'pa regjistrim te ATK-ja',font:'inherit',color:'#10243A'}],
       note:'Çelësi i POS-it dhe certifikata e ATK-së krijohen dhe mbeten në arkë; edhe regjistrimi te ATK-ja bëhet aty. Ueb-i tregon vetëm gjurmën, mjedisin dhe afatin.'};
     card1.hasAct=!!card1.act; card1.hasRows=true;
     // card 2 — status and environment (+ printer, link, clock: read-only from the heartbeat)
     const modeEd=ed.mode!==undefined&&String(ed.mode)!==V.cur.mode;
-    const f2=[seg('mode','Fiskalizimi dixhital',this.FW_MODES,{full:true,hint:V.src.mode==='arka'?'siç e raporton arka':'',note:'Arka e ndez vetëm kur ka çelës, certifikatë dhe identifikues në rregull; përndryshe raporton pengesën. Fikja zbatohet menjëherë; kuponat në radhë vazhdojnë të dërgohen.'})];
+    const modeNow=String(V.val('mode')||'');
+    const f2=[seg('mode','Fiskalizimi dixhital',this.FW_MODES,{full:true,hint:sim&&!isBar?'arka punon me simulatorin (vegël e stafit) — një zgjedhje këtu e fik atë':V.src.mode==='arka'?'siç e raporton arka':srcHint('mode'),
+      noteC:modeNow==='UNCONFIGURED'?'#B91C1C':'#8FA3B8',
+      note:modeNow==='UNCONFIGURED'?'„Joaktiv": arka NUK mund të finalizojë asnjë shitje derisa fiskalizimi të ndizet përsëri. Fikja zbatohet menjëherë; kuponat në radhë vazhdojnë të dërgohen.'
+        :modeNow==='TREMOL_ETHERNET'?'Tremol: arka kalon te pajisja vetëm kur pajisja përgjigjet dhe radha s\'ka kuponë të nënshkruar për ATK-në; deri atëherë mbetet si është (pengesa raportohet).'
+        :'Arka e ndez vetëm kur ka çelës, certifikatë dhe identifikues në rregull; përndryshe raporton pengesën. „Joaktiv" ndalon çdo shitje në arkë.'})];
     if(modeEd) f2.push({...text('reason','Arsyeja e ndryshimit',{full:true,hint:'detyrueshme · shkruhet në historik',ph:'p.sh. arka kalon në fiskalizim ATK'}),value:String(ed.reason||''),dis:!canEdit});
     f2.push(seg('vatRegistered','Biznesi në TVSH',[['1','Në TVSH'],['0','Jo në TVSH']],{note:'Pa TVSH arka shet gjithçka në grupin A dhe nuk shtyp numrin e TVSH-së.'}),
       seg('env','Ambienti i ATK-së',[['TEST','TEST'],['PROD','PROD']],{note:'Pas ndryshimit arka kërkon regjistrim të ri te ATK-ja (në arkë).'}));
@@ -5544,7 +5610,7 @@ class Component extends DCLogic {
       const fw=this.fwState(), G=(fw&&fw.data&&fw.data.gate)||{}, ch=f.ref&&f.ref.changes?Object.entries(f.ref.changes):[];
       title='Fjalëkalimi i stafit të KONTABO'; width='520px';
       sub='I njëjti fjalëkalim si te KONTABO BAR. Shkruhet vetëm këtu: nuk dërgohet në server dhe nuk ruhet — shfletuesi nxjerr prej tij çelësin e stafit dhe nënshkruan ndryshimet e kyçura. Zhbllokimi vlen 15 minuta (ose deri te „Kyç tani”).';
-      fields=[...(ch.length?[info('Ndryshimet e kyçura'+(f.ref.scope==='business'?' · biznesi':' · arka'),ch.map(([k,v])=>this.fwKeyLabel(k)+': '+this.fwShow(k,(v||[])[0])+' → '+this.fwShow(k,(v||[])[1])).join(' · '),{color:'#7C3AED'})]:[]),
+      fields=[...(ch.length?[info('Nënshkruhet'+(f.ref.scope==='business'?' · biznesi (çdo arkë Kontabo POS)':' · arka “'+(f.ref.name||'?')+'”'),ch.map(([k,v])=>this.fwKeyLabel(k)+': '+this.fwShow(k,(v||[])[0])+' → '+this.fwShow(k,(v||[])[1])).join(' · '),{color:'#7C3AED'})]:[]),
         {...txt('pw','Fjalëkalimi i stafit',{secret:true,dis:!!f.busy||!!G.blocked,set:e=>set({pw:e.target.value,err:''}),hint:G.blocked?'i bllokuar':(G.failures?'mbeten '+Math.max(0,(G.maxFailures||5)-G.failures)+' prova':'')}),key:e=>{ if(e&&e.key==='Enter'){ if(e.preventDefault) e.preventDefault(); this.fwUnlockSubmit(); } }}];
       msg=f.err||(G.blocked?'Fjalëkalimi i stafit është bllokuar deri në '+this.fwTime(G.blockedUntil).slice(11)+' pas 5 provave të gabuara.':'');
       actions=[{label:f.busy?'Po verifikohet…':'Zhblloko',primary:true,disabled:!!f.busy||!f.pw||!!G.blocked,go:()=>{ this.fwUnlockSubmit(); }}];
@@ -7545,7 +7611,7 @@ class Component extends DCLogic {
       {label:'FATURA',items:all.filter(r=>!cq||(r.no+r.customer).toLowerCase().includes(cq)).slice(0,3).map(r=>({t:r.no,s:r.customer+' · '+this.fmt(r.total),r:r.status,go:()=>this.setState({cmdk:false,section:'shitje',page:'Fatura',drawer:r.no})}))},
       {label:'KLIENTË',items:customers.filter(c=>!cq||c.name.toLowerCase().includes(cq)).slice(0,3).map(c=>({t:c.name,s:c.city+' · NUI '+c.nui,r:'Klient',go:()=>this.go('shitje','Klientë')}))},
       {label:'PRODUKTE',items:products.filter(p=>!cq||(p.name+p.sku).toLowerCase().includes(cq)).slice(0,3).map(p=>({t:p.name,s:p.sku+' · '+p.price,r:p.stock,go:()=>this.go('produkte','Produktet')}))},
-      {label:'VEPRIME',items:[{t:'Fatura e re',s:'Klient, artikuj, lëshim',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('invoice');}},{t:'Faturim masiv',s:'Një artikull për shumë klientë · nga Excel',r:'Shitje',go:()=>this.go('shitje','Faturim masiv')},{t:'Blerje e re',s:'Furnitori, artikuj, pranim në stok',r:'Blerje',go:()=>{this.setState({cmdk:false});this.openForm('purchase');}},{t:'Ofertë e re',s:'Oferta → porosi → faturë',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('quote');}},{t:'Porosi shitjeje',s:'Rezervon stokun, faturohet me një klik',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('order');}},{t:'Notë krediti',s:'Kthim malli për një faturë të lëshuar',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('return',{docKind:'sale'});}},{t:'Porosi blerjeje',s:'Te furnitori · mall në ardhje',r:'Blerje',go:()=>{this.setState({cmdk:false});this.openForm('po');}},{t:'Transferim mes depove',s:'Prishtinë ↔ Prizren',r:'Stok',go:()=>{this.setState({cmdk:false});this.openForm('transfer');}},{t:'Raportet',s:'Shitje, blerje, financë, stok, TVSH',r:'Raporte',go:()=>this.go('raporte','Shitje')},{t:'Hap POS-in',s:'POS-i desktop (Python) · lidhja lokale',r:'POS',go:()=>this.go('pos','Hap POS-in')},{t:'Fiskalizimi',s:'Vetëm lexim — arkat, radha, kuponët',r:'Cilësime',go:()=>this.setState({cmdk:false,admin:false,section:'settings',page:'Fiskalizimi',fiscalTab:'Arkat'})},{t:'Fto përdorues',s:'Kompania › Përdoruesit',r:'Veprim',go:()=>{this.setState({cmdk:false,admin:false,section:'kompania',page:'Përdoruesit'});this.openForm('user');}},{t:'Paneli i administratorit',s:'Kompanitë, planet, agjentët, audit',r:'Kontabo',go:()=>{this.setState({cmdk:false});this.enterAdmin();}}].filter(i=>!cq||(i.t+' '+i.s).toLowerCase().includes(cq))}
+      {label:'VEPRIME',items:[{t:'Fatura e re',s:'Klient, artikuj, lëshim',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('invoice');}},{t:'Faturim masiv',s:'Një artikull për shumë klientë · nga Excel',r:'Shitje',go:()=>this.go('shitje','Faturim masiv')},{t:'Blerje e re',s:'Furnitori, artikuj, pranim në stok',r:'Blerje',go:()=>{this.setState({cmdk:false});this.openForm('purchase');}},{t:'Ofertë e re',s:'Oferta → porosi → faturë',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('quote');}},{t:'Porosi shitjeje',s:'Rezervon stokun, faturohet me një klik',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('order');}},{t:'Notë krediti',s:'Kthim malli për një faturë të lëshuar',r:'Shitje',go:()=>{this.setState({cmdk:false});this.openForm('return',{docKind:'sale'});}},{t:'Porosi blerjeje',s:'Te furnitori · mall në ardhje',r:'Blerje',go:()=>{this.setState({cmdk:false});this.openForm('po');}},{t:'Transferim mes depove',s:'Prishtinë ↔ Prizren',r:'Stok',go:()=>{this.setState({cmdk:false});this.openForm('transfer');}},{t:'Raportet',s:'Shitje, blerje, financë, stok, TVSH',r:'Raporte',go:()=>this.go('raporte','Shitje')},{t:'Hap POS-in',s:'POS-i desktop (Python) · lidhja lokale',r:'POS',go:()=>this.go('pos','Hap POS-in')},{t:'Fiskalizimi',s:'Konfigurimi fiskal i arkave Kontabo POS, monitori, radha, kuponët',r:'POS',go:()=>{ this.setState({admin:false}); this.go('pos','Fiskalizimi'); }},{t:'Fto përdorues',s:'Kompania › Përdoruesit',r:'Veprim',go:()=>{this.setState({cmdk:false,admin:false,section:'kompania',page:'Përdoruesit'});this.openForm('user');}},{t:'Paneli i administratorit',s:'Kompanitë, planet, agjentët, audit',r:'Kontabo',go:()=>{this.setState({cmdk:false});this.enterAdmin();}}].filter(i=>!cq||(i.t+' '+i.s).toLowerCase().includes(cq))}
     ].filter(g=>g.items.length);
 
     /* ── login screen + the signed-in user ── */

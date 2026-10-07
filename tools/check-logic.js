@@ -3289,11 +3289,11 @@ apiBlock.then(async () => {
       applied: { version: 0, at: null, report: { applied: [], proposals: [], blockers: [] } }, registered: false, registeredAt: null, ...o, reported: { ...rep0, ...(o.reported || {}) } });
     const S = { biz: { bizVersion: 0, nui: '', vatRegistered: '', coupon: {} }, staff: { chainV: 1, pub: V1.pub, signSalt: V1.signSalt }, gate: { failures: 0, blocked: false, blockedUntil: null }, canEdit: true, nonces: {}, notes: [], changes: [], calls: [], raw: [], seq: 0,
       terms: [term('t-pos', 'Arka', 'POS-001', 'kontabo-pos', '0.16.0', { registered: true, registeredAt: '2026-09-01T08:00:00Z', reported: { mode: 'ATK_ELECTRONIC', version: 4, simulator: false, pending: 2, env: 'TEST', certEnv: 'TEST', certNotAfter: '2027-09-01T00:00:00Z',
-          keyFp: 'ab'.repeat(32), registered: true, atkCoupons: 120, failed: 0, link: 'online', appliedVersion: 0, applied: [], proposals: [], blockers: [], printer: 'POS-76', clockOffsetS: 3, ids: { nui: '811234567', unitNo: '5130484', posId: '1231', fiscalizationNo: '037388821441', vatRegistered: '1' } } }),
+          keyFp: 'ab'.repeat(32), registered: true, atkCoupons: 120, failed: 0, link: 'online', appliedVersion: 0, applied: [], proposals: [], blockers: [], printer: 'POS-76', clockOffsetS: 3, ids: { nui: '811234567', unitNo: '513048', posId: '123', fiscalizationNo: '037388821441', vatRegistered: '1' } } }),
         term('t-bar', 'RESTAURANTIU', 'POS-004', 'kontabo-bar', 'KONTABO BAR 1.11.13', { branch: '', reported: { mode: 'ATK_ELECTRONIC', simulator: false } }),
         term('t-old', 'Arka 2', 'POS-002', 'kontabo-pos', '0.15.0', { online: false, lastSeenAt: '2026-09-19T08:00:00Z', reported: { mode: 'UNCONFIGURED', version: 0, simulator: false, pending: 0 } })] };
     const RID = { unitNo: 'unitNo', atkPosId: 'posId', fiscalizationNo: 'fiscalizationNo', nui: 'nui', vatRegistered: 'vatRegistered' };
-    const repV = (t, k) => k === 'env' ? (['TEST', 'PROD'].includes(t.reported.env) ? t.reported.env : '') : k === 'mode' ? String(t.reported.mode || '').toUpperCase() : ((t.reported.ids || {})[RID[k]] || '');
+    const repV = (t, k) => k === 'env' ? (['TEST', 'PROD'].includes(t.reported.env) ? t.reported.env : '') : k === 'mode' ? (t.reported.simulator === true ? '' : String(t.reported.mode || '').toUpperCase()) : ((t.reported.ids || {})[RID[k]] || '');
     const effV = (t, k) => t.desired[k] || repV(t, k), base = t => t.registered ? 'registered' : t.reported.keyFp ? 'key' : 'free';
     const tLocks = t => t.kind === 'kontabo-bar' ? Object.fromEntries(['mode', 'env', 'unitNo', 'atkPosId', 'fiscalizationNo', 'coupon'].map(k => [k, 'bar']))
       : { mode: 'free', env: 'staff', unitNo: effV(t, 'unitNo') && S.terms.some(o => o.id !== t.id && o.registered && effV(o, 'unitNo') === effV(t, 'unitNo')) ? 'registered' : base(t), atkPosId: base(t), fiscalizationNo: base(t), coupon: 'free' };
@@ -3315,22 +3315,28 @@ apiBlock.then(async () => {
       if (o.versioni !== version) return 'version'; if (canon(o.ndryshimet) !== canon(locked)) return 'changes'; if (o.pub !== S.staff.pub || o.v !== S.staff.chainV) return 'stale_chain';
       if (!/^[0-9a-f]{128}$/.test(gate.signature) || !nc.verify(null, Buffer.from(gate.body, 'utf8'), spki(o.pub), Buffer.from(gate.signature, 'hex'))) { failed(); return 'bad_signature'; }
       S.notes.push({ scope, terminal, o, body: gate.body }); return null; };
-    const okV = { nui: v => !v || /^\d{1,16}$/.test(v), unitNo: v => !v || /^\d{1,12}$/.test(v), atkPosId: v => !v || (/^\d{1,12}$/.test(v) && +v >= 1), fiscalizationNo: v => !v || /^[0-9A-Za-z-]{1,64}$/.test(v), env: v => ['', 'TEST', 'PROD'].includes(v), mode: v => ['', 'UNCONFIGURED', 'ATK_ELECTRONIC', 'TREMOL_ETHERNET'].includes(v), vatRegistered: v => ['', '0', '1'].includes(v) };
+    const okV = { nui: v => !v || /^\d{1,16}$/.test(v), unitNo: v => !v || /^\d{1,6}$/.test(v), atkPosId: v => !v || (/^\d{1,3}$/.test(v) && +v >= 1), fiscalizationNo: v => !v || /^(\d{1,64}|[0-9a-fA-F]{8}(-[0-9a-fA-F]{4}){3}-[0-9a-fA-F]{12})$/.test(v), env: v => ['', 'TEST', 'PROD'].includes(v), mode: v => ['', 'UNCONFIGURED', 'ATK_ELECTRONIC', 'TREMOL_ETHERNET'].includes(v), vatRegistered: v => ['', '0', '1'].includes(v) };
+    const props = t => new Set([...((t.reported || {}).proposals || []), ...(((t.applied || {}).report || {}).proposals || [])].filter(k => !/^catalog:/.test(k)));
     const json = (status, body) => ({ ok: status < 400, status, json: async () => body }), err = (status, error, extra = {}) => json(status, { error, message: 'mock: ' + error, ...extra });
     const putCfg = (scope, t, body) => { const cur = scope === 'business' ? S.biz : t.desired, version = scope === 'business' ? S.biz.bizVersion : t.version;
       if (body.expectedVersion !== version) return err(409, 'version_conflict', { version });
-      const next = JSON.parse(JSON.stringify(cur)), diff = [], effOld = {}, cdiff = [];
+      const next = JSON.parse(JSON.stringify(cur)), diff = [], effOld = {}, cdiff = [], resend = {};
       for (const [k, v] of Object.entries(body.changes || {})) {
         if (k === 'coupon') { for (const [ck, cv] of Object.entries(v)) { if (cv === null) delete next.coupon[ck]; else next.coupon[ck] = cv; if (canon(next.coupon[ck]) !== canon(cur.coupon[ck])) cdiff.push(ck); } continue; }
         if (!okV[k] || typeof v !== 'string' || !okV[k](v)) return err(400, 'invalid_value', { key: k });
-        if (v !== cur[k]) { next[k] = v; diff.push(k); if (k !== 'mode') effOld[k] = scope === 'business' ? bEff(k) : effV(t, k); } }
+        if (v !== cur[k]) { next[k] = v; diff.push(k); if (k !== 'mode') effOld[k] = scope === 'business' ? bEff(k) : effV(t, k); }
+        else if (v && k !== 'mode') { // the same value again for a key a till keeps as a PROPOSAL: sent once more from the till's value, always gated
+          const tills = scope === 'business' ? S.terms.filter(x => x.kind === 'kontabo-pos' && props(x).has(k)) : props(t).has(k) ? [t] : [], have = [...new Set(tills.map(x => repV(x, k)).filter(x => x && x !== v))];
+          if (have.length > 1) return err(409, 'proposal_values_differ', { key: k, values: have.sort() });
+          if (have.length) { resend[k] = have[0]; effOld[k] = have[0]; diff.push(k); } } }
       if (!diff.length && !cdiff.length) return json(200, scope === 'business' ? { business: biz(), terminals: bumped() } : { terminal: item(t) });
       for (const [k, o] of Object.entries(effOld)) if (next[k] === '' && o !== '') return err(400, 'invalid_value', { key: k });
       if (diff.includes('mode') && String(body.reason || '').length < 3) return err(400, 'reason_required');
       if (scope === 'terminal' && (diff.includes('unitNo') || diff.includes('atkPosId'))) { const u = next.unitNo || repV(t, 'unitNo'), p = next.atkPosId || repV(t, 'atkPosId'), o = S.terms.find(x => x.id !== t.id && effV(x, 'unitNo') === u && effV(x, 'atkPosId') === p); if (u && p && o) return err(409, 'pos_id_taken', { terminal: o.id }); }
       const locks = scope === 'business' ? bLocks() : tLocks(t), locked = {};
-      for (const [k, o] of Object.entries(effOld)) if (needs(locks[k], o, next[k])) locked[k] = [o, next[k]];
-      if (Object.keys(locked).length) { if (!body.gate) return err(409, 'staff_required', { keys: Object.keys(locked).sort(), lock: Object.fromEntries(Object.keys(locked).map(k => [k, locks[k]])), changes: locked, version, scope, terminal: scope === 'business' ? '' : t.id });
+      for (const [k, o] of Object.entries(effOld)) if (k in resend || needs(locks[k], o, next[k])) locked[k] = [o, next[k]];
+      if (Object.keys(locked).length) { if (!body.gate) return err(409, 'staff_required', S.hostile ? S.hostile(scope, t) : { keys: Object.keys(locked).sort(), lock: Object.fromEntries(Object.keys(locked).map(k => [k, locks[k]])), changes: locked, version, scope, terminal: scope === 'business' ? '' : t.id });
+        if (S.unconfirmed) return err(409, 'staff_chain_unconfirmed');
         if (S.gate.blocked) return err(429, 'gate_blocked', { blockedUntil: S.gate.blockedUntil, retryAfter: 900 });
         const why = checkGate(body.gate, scope, scope === 'business' ? '' : t.id, version, locked); if (why) return err(400, 'gate_invalid', { reason: why }); }
       const row = (key, old, nu, st) => S.changes.push({ id: ++S.seq, at: '20.09.2026 12:00', atIso: '2026-09-20T10:00:00Z', scope, terminalId: scope === 'business' ? null : t.id, terminalName: scope === 'business' ? '' : t.name + ' (' + t.posId + ')', key, old, new: nu, by: 'Arben B.', reason: body.reason || '', staff: st, gateNoteId: st ? S.notes.length : null, version: version + 1 });
@@ -3344,9 +3350,9 @@ apiBlock.then(async () => {
       if (p === '/health') return json(200, { ok: true, app: 'Kontabo Backend', features: ['fiscalWeb:1'] });
       if ((o.headers || {}).Authorization !== TOK) return prevFetch ? prevFetch(url, o) : err(401, 'unauthorized'); // another block's instance: not this server
       S.calls.push(m + ' ' + p); S.raw.push({ m, p, body: o.body || '' });
-      if (m === 'GET' && po === '/fiscal/overview') return json(200, { business: biz(), terminals: S.terms.map(item), staff: { ...S.staff, iterations: 300000 }, gate: { ...S.gate, maxFailures: 5 }, canEdit: S.canEdit });
-      if (m === 'POST' && po === '/fiscal/gate/nonce') { if (S.gate.blocked) return err(429, 'gate_blocked', { blockedUntil: S.gate.blockedUntil, retryAfter: 900 }); const n = nc.randomBytes(16).toString('hex'); S.nonces[n] = { used: false };
-        return json(200, { nonce: n, expiresAt: new Date(clockNow() + 600000).toISOString().replace(/\.\d{3}Z$/, 'Z'), tenant: TEN, ...S.staff, iterations: 300000 }); }
+      if (m === 'GET' && po === '/fiscal/overview') return json(200, { business: biz(), terminals: S.terms.map(item), staff: S.canEdit ? { ...S.staff, iterations: 300000, confirmed: !S.unconfirmed } : null, staffConfirmed: !S.unconfirmed, gate: { ...S.gate, maxFailures: 5 }, canEdit: S.canEdit });
+      if (m === 'POST' && po === '/fiscal/gate/nonce') { if (S.unconfirmed) return err(409, 'staff_chain_unconfirmed'); if (S.gate.blocked) return err(429, 'gate_blocked', { blockedUntil: S.gate.blockedUntil, retryAfter: 900 }); const n = nc.randomBytes(16).toString('hex'); S.nonces[n] = { used: false };
+        return json(200, { nonce: n, expiresAt: new Date(clockNow() + 600000).toISOString().replace(/\.\d{3}Z$/, 'Z'), tenant: S.nonceTenant || TEN, ...S.staff, iterations: 300000 }); }
       if (m === 'POST' && po === '/fiscal/gate/attempt') { if (S.gate.blocked) return err(429, 'gate_blocked', { blockedUntil: S.gate.blockedUntil, retryAfter: 900 }); if (body.nonce && S.nonces[body.nonce]) S.nonces[body.nonce].used = true; failed();
         return json(200, { failures: S.gate.failures, remaining: S.gate.blocked ? 0 : 5 - S.gate.failures, blocked: S.gate.blocked, blockedUntil: S.gate.blockedUntil }); }
       if (m === 'PUT' && po === '/fiscal/business') { if (!S.canEdit) return err(403, 'forbidden'); return putCfg('business', null, body); }
@@ -3383,14 +3389,14 @@ apiBlock.then(async () => {
         'terminal picker: one chip per till, the first Kontabo POS selected; status colour (unmanaged blue, KONTABO BAR grey, offline light grey)');
       eq([v.tiles.map(t => t.label), v.tiles.map(t => t.value)], [['Fiskalizimi', 'TVSH', 'Mjedisi', 'Çelësi', 'Certifikata', 'Në pritje', 'Me gabim', 'Të dërguar'], ['Aktiv', 'Në TVSH', 'TEST', 'Po', 'TEST', '2', '0', '120']], 'status strip: the 8 tiles from the heartbeat');
       eq([fld(v, 'nui').value, fld(v, 'nui').dis, fld(v, 'nui').lockLbl, fld(v, 'nui').hint, fld(v, 'atkPosId').value, fld(v, 'atkPosId').dis, fld(v, 'env').dis, fld(v, 'env').lockLbl, fld(v, 'mode').dis, fld(v, 'vatRegistered').dis],
-        ['811234567', true, 'kyçur', 'siç e raporton arka', '1231', true, true, 'me stafin', false, true], 'cards: values the till reports while the web has none; registered ids and the env locked (lock icon), the mode free');
+        ['811234567', true, 'kyçur', 'siç e raporton arka', '123', true, true, 'me stafin', false, true], 'cards: values the till reports while the web has none; registered ids and the env locked (lock icon), the mode free');
       eq([v.cards.map(c => c.title), v.cards[0].fields.find(f => /SEF/.test(f.label)).value, v.lockBar, v.actions.map(a => a.label), v.actions[0].dis],
-        [['Të dhënat e biznesit · njësia · SEF', 'Statusi dhe ambienti', 'Kuponi'], '5130484-811234567-1231', true, ['Ruaj', 'Historiku', 'Importo vlerat nga arka'], true], 'three cards, the SEF id = unit-NUI-POS ID, the unlock bar, the footer (Ruaj disabled until something changes)');
+        [['Të dhënat e biznesit · njësia · SEF', 'Statusi dhe ambienti', 'Kuponi'], '513048-811234567-123', true, ['Ruaj', 'Historiku', 'Importo vlerat nga arka'], true], 'three cards, the SEF id = unit-NUI-POS ID, the unlock bar, the footer (Ruaj disabled until something changes)');
       eq([v.alerts.some(a => /pamenaxhuar/.test(a.t)), v.cards[1].rows[0].v, /çelësi.*krijohen dhe mbeten në arkë/i.test(v.cards[0].note)], [true, 'POS-76', true], 'alerts (unmanaged → import first), the printer read-only from the heartbeat, "çelësi krijohet në arkë"');
       // ── 4. "Importo vlerat nga arka": the till's own values, no staff note, the till becomes managed
       eq(F.fwImportAsk(), true, 'import asks first'); confirmOk(F); await settle(F);
       eq([S.raw.find(r => r.p === '/fiscal/terminals/t-pos/import').body, S.terms[0].version, S.terms[0].desired, S.biz.nui, S.biz.vatRegistered, /importuan/.test(F.state.fw.msg.t)],
-        ['{"expectedVersion":0}', 1, { mode: 'ATK_ELECTRONIC', env: 'TEST', unitNo: '5130484', atkPosId: '1231', fiscalizationNo: '037388821441', coupon: {} }, '811234567', '1', true], 'import: POST …/import {expectedVersion}, the till managed (v1) with exactly what it reports; business NUI / VAT taken while the web had none');
+        ['{"expectedVersion":0}', 1, { mode: 'ATK_ELECTRONIC', env: 'TEST', unitNo: '513048', atkPosId: '123', fiscalizationNo: '037388821441', coupon: {} }, '811234567', '1', true], 'import: POST …/import {expectedVersion}, the till managed (v1) with exactly what it reports; business NUI / VAT taken while the web had none');
       v = F.renderVals().fwv; eq([v.alerts.some(a => /pamenaxhuar/.test(a.t)), v.chips[0].sub.includes('pret zbatimin'), v.alerts.some(a => /Në pritje të arkës/.test(a.t))], [false, true, true], 'after the import: managed, waiting for the till to apply v1');
       // ── 5. a free key (the mode) needs a reason; the CAS PUT carries expectedVersion and no gate
       const n0 = S.raw.length; F.fwEdit('mode', 'UNCONFIGURED'); eq([F.fwSave(), F.state.fw.errKey, S.raw.length - n0, !!fld(F.renderVals().fwv, 'reason')], [false, 'reason', 0, true], 'mode change without a reason: refused on the page (the reason field appears), nothing sent');
@@ -3409,29 +3415,29 @@ apiBlock.then(async () => {
       const n1 = S.raw.length; F.fwEdit('ct.closingHour', '25:00'); eq([F.fwSave(), F.state.fw.errKey, S.raw.length - n1], [false, 'ct.closingHour', 0], 'closing hour 25:00 refused on the page');
       F.fwEdit('ct.closingHour', ''); F.fwEdit('cb.freeText', 'x'.repeat(301)); eq([F.fwSave(), F.state.fw.errKey], [false, 'cb.freeText'], 'free text over 300 refused'); F.fwDiscard();
       // ── 7. a locked key: 409 staff_required → the staff dialog → a wrong password is reported → the right one signs → the SAME PUT with the gate
-      const vA = S.terms[0].version; F.fwEdit('atkPosId', '1232'); F.fwSave(); eq(/Të kyçura: POS ID \(ATK\) — kërkohet fjalëkalimi i stafit/.test(F.state.confirm.body) && /regjistrim të ri/.test(F.state.confirm.body), true, 'confirmation names the locked key and the re-registration');
+      const vA = S.terms[0].version; F.fwEdit('atkPosId', '124'); F.fwSave(); eq(/Të kyçura: POS ID \(ATK\) — kërkohet fjalëkalimi i stafit/.test(F.state.confirm.body) && /regjistrim të ri/.test(F.state.confirm.body), true, 'confirmation names the locked key and the re-registration');
       confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
-      { const fv = F.formVals(); eq([F.state.frm.ref.changes, fv.title, fv.fields[0].value, fv.fields[1].itype, fv.actions[0].label, fv.actions[0].disabled], [{ atkPosId: ['1231', '1232'] }, 'Fjalëkalimi i stafit të KONTABO', 'POS ID (ATK): 1231 → 1232', 'password', 'Zhblloko', true], 'staff dialog: the locked change, a password field, "Zhblloko" waits for the password'); }
+      { const fv = F.formVals(); eq([F.state.frm.ref.changes, fv.title, fv.fields[0].value, fv.fields[1].itype, fv.actions[0].label, fv.actions[0].disabled], [{ atkPosId: ['123', '124'] }, 'Fjalëkalimi i stafit të KONTABO', 'POS ID (ATK): 123 → 124', 'password', 'Zhblloko', true], 'staff dialog: the locked change, a password field, "Zhblloko" waits for the password'); }
       F.setF({ pw: 'Gabim-2026!' }); await F.fwUnlockSubmit();
       eq([/^Fjalëkalim i gabuar · mbeten 4 prova/.test(F.state.frm.err), F.state.frm.pw, S.gate.failures, S.calls.slice(-2), JSON.parse(S.raw[S.raw.length - 1].body).ok, !!S.nonces[JSON.parse(S.raw[S.raw.length - 1].body).nonce].used],
         [true, '', 1, ['POST /fiscal/gate/nonce', 'POST /fiscal/gate/attempt'], false, true], 'wrong password: the derived key ≠ the chain\'s → POST /fiscal/gate/attempt {ok:false, nonce} (counter + audit), the field emptied');
       F.setF({ pw: V1.password }); F.formVals().fields[1].key({ key: 'Enter', preventDefault() {} }); await until(() => !F.state.frm); await settle(F);
       { const nt = S.notes[0], put = puts().pop(); eq([S.notes.length, nt.o.ndryshimet, nt.o.versioni, nt.o.scope, nt.o.terminal, nt.o.tenant, nt.o.pub, nt.o.v, nt.o.lloji, put.expectedVersion, put.changes, typeof put.gate.signature, S.terms[0].desired.atkPosId],
-        [1, { atkPosId: ['1231', '1232'] }, vA, 'terminal', 't-pos', TEN, V1.pub, 1, 'porta-fiskale-web-v1', vA, { atkPosId: '1232' }, 'string', '1232'], 'right password (ë/ç, Enter): the note signed in the browser is accepted — ndryshimet = the refusal\'s changes, versioni = expectedVersion, pub/v of the chain'); }
+        [1, { atkPosId: ['123', '124'] }, vA, 'terminal', 't-pos', TEN, V1.pub, 1, 'porta-fiskale-web-v1', vA, { atkPosId: '124' }, 'string', '124'], 'right password (ë/ç, Enter): the note signed in the browser is accepted — ndryshimet = the refusal\'s changes, versioni = expectedVersion, pub/v of the chain'); }
       eq([S.calls.filter(x => x === 'POST /fiscal/gate/nonce').length, F.fwUnlocked(), /^E zhbllokuar .* mbeten 1[45]:\d\d$/.test(F.renderVals().fwv.unlockText), fld(F.renderVals().fwv, 'atkPosId').lockLbl], [2, true, true, 'e zhbllokuar'], 'the unlock\'s own nonce signs the first note (no third nonce); 15-minute unlock with a countdown, the lock icons open');
       // within the unlock: no dialog, a fresh nonce per note
       F.fwEdit('fiscalizationNo', '037388821442'); F.fwSave(); confirmOk(F); await settle(F);
       eq([F.state.frm, S.notes.length, S.calls.filter(x => x === 'POST /fiscal/gate/nonce').length, S.terms[0].desired.fiscalizationNo], [null, 2, 3, '037388821442'], 'unlocked: the next locked change is signed at once with a new nonce, no dialog');
       // a business key and a till key together: business first, then the till with the version the business PUT returned
-      F.fwEdit('nui', '812345678'); F.fwEdit('unitNo', '5130485'); F.fwSave(); confirmOk(F); await settle(F);
+      F.fwEdit('nui', '812345678'); F.fwEdit('unitNo', '513049'); F.fwSave(); confirmOk(F); await settle(F);
       { const p2 = puts().filter(x => x.gate).slice(-2); eq([p2.map(x => x.p), p2[0].changes, p2[1].expectedVersion, S.notes.slice(-2).map(n => [n.o.scope, n.o.terminal, Object.keys(n.o.ndryshimet)[0]]), S.biz.nui, S.terms[0].desired.unitNo],
-        [['/fiscal/business', '/fiscal/terminals/t-pos'], { nui: '812345678' }, S.terms[0].version - 1, [['business', '', 'nui'], ['terminal', 't-pos', 'unitNo']], '812345678', '5130485'], 'NUI + unit together: PUT business (note scope business, terminal "") then PUT terminal with the version the business PUT returned'); }
-      eq([F.renderVals().fwv.alerts.some(a => /NUI ndryshon/.test(a.t)), F.renderVals().fwv.cards[0].fields.find(f => /SEF/.test(f.label)).value], [true, '5130485-812345678-1232'], 'NUI ≠ the company\'s NUI → an alert; the SEF id follows the new values');
+        [['/fiscal/business', '/fiscal/terminals/t-pos'], { nui: '812345678' }, S.terms[0].version - 1, [['business', '', 'nui'], ['terminal', 't-pos', 'unitNo']], '812345678', '513049'], 'NUI + unit together: PUT business (note scope business, terminal "") then PUT terminal with the version the business PUT returned'); }
+      eq([F.renderVals().fwv.alerts.some(a => /NUI ndryshon/.test(a.t)), F.renderVals().fwv.cards[0].fields.find(f => /SEF/.test(f.label)).value], [true, '513049-812345678-124'], 'NUI ≠ the company\'s NUI → an alert; the SEF id follows the new values');
       // "Kyç tani": the next locked change asks again — closing the dialog stops the save, nothing changes
       F.renderVals().fwv.lockNow(); eq([F.fwUnlocked(), fld(F.renderVals().fwv, 'atkPosId').dis], [false, true], '"Kyç tani": locked again at once');
-      F.fwEdit('atkPosId', '1233'); F.fwSave(); confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
+      F.fwEdit('atkPosId', '125'); F.fwSave(); confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
       F.setState({ frm: null }); F.fwSync(); await settle(F);
-      eq([/Ruajtja u ndal/.test(F.state.fw.msg.t), S.terms[0].desired.atkPosId, F.state.fw.ed.atkPosId], [true, '1232', '1233'], 'dialog closed: the save stops (edits kept), the server value untouched');
+      eq([/Ruajtja u ndal/.test(F.state.fw.msg.t), S.terms[0].desired.atkPosId, F.state.fw.ed.atkPosId], [true, '124', '125'], 'dialog closed: the save stops (edits kept), the server value untouched');
       // the unlock runs out after 15 minutes
       F.fwUnlockNow(); F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); eq(F.fwUnlocked(), true, '"Zhblloko…" alone unlocks');
       F._fwKey.until = clockNow() - 1; F.fwTick(); eq([F._fwKey, /skadoi/.test(F.state.toast || '')], [null, true], 'after 15 minutes the tick locks again (and says so)');
@@ -3443,7 +3449,7 @@ apiBlock.then(async () => {
       F.fwPick('t-old'); eq(F.state.fw.sel, 't-old', 'picker: another till');
       v = F.renderVals().fwv; eq([v.tiles.map(t => t.value), v.alerts.some(a => /nuk i raporton ende/.test(a.t)), v.chips[2].sub], [['Joaktiv', 'Në TVSH', '—', '—', '—', '0', '—', '—'], true, 'Kontabo POS 0.15.0 · jashtë linje'], 'an old till (0.15.0): only the mode and the queue, the rest "—"; it says so');
       F.fwImport(); await settle(F); eq(/0\.16\.0/.test(F.state.fw.msg.t), true, 'import from an old till: 409 nothing_reported, explained');
-      F.fwEdit('unitNo', '5130485'); F.fwEdit('atkPosId', '1232'); F.fwSave(); confirmOk(F); await settle(F);
+      F.fwEdit('unitNo', '513049'); F.fwEdit('atkPosId', '124'); F.fwSave(); confirmOk(F); await settle(F);
       eq([F.state.fw.errKey, S.terms[2].version], ['atkPosId', 0], '409 pos_id_taken: the POS ID field is marked, nothing saved');
       F.fwDiscard(); F.fwPick('t-bar'); v = F.renderVals().fwv;
       eq([v.actions.map(a => a.label), v.cards.flatMap(c => c.fields).filter(f => f.isText || f.isSeg || f.isArea).every(f => f.dis), v.alerts[0].t, F.fwSave(), F.fwImportAsk()], [['Historiku'], true, 'KONTABO BAR.', false, false], 'KONTABO BAR till: read-only ("konfigurohet në KONTABO BAR"), no save, no import');
@@ -3453,7 +3459,7 @@ apiBlock.then(async () => {
       eq([v.hasRo, v.actions.map(a => a.label), v.lockBar, v.cards.flatMap(c => c.fields).filter(f => f.isText || f.isSeg || f.isArea).every(f => f.dis), F.fwSave(), F.fwImportAsk(), S.raw.length - n2], [true, ['Historiku'], false, true, false, false, 0], 'without the permission "Cilësimet e fiskalizimit": read-only, no Ruaj / Import / Zhblloko, nothing sent');
       S.canEdit = true; F.state.session = { ...F.state.session, role: 'Pronar', perms: {} }; await F.fwLoad();
       // the 5-tries block (the server's counter): the dialog says so and sends no password check
-      S.gate.blocked = true; S.gate.blockedUntil = '2026-09-20T10:15:00Z'; F.fwEdit('atkPosId', '1234'); F.fwSave(); confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
+      S.gate.blocked = true; S.gate.blockedUntil = '2026-09-20T10:15:00Z'; F.fwEdit('atkPosId', '126'); F.fwSave(); confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
       F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); eq([/bllokuar/.test(F.state.frm.err), F.fwUnlocked()], [true, false], '429 gate_blocked: the dialog says the password is blocked');
       F.setState({ frm: null }); F.fwSync(); await settle(F); S.gate = { failures: 0, blocked: false, blockedUntil: null }; F.fwDiscard();
       // ── 9. Historiku: the till's rows + the business rows, newest first, the staff-signed ones marked
@@ -3475,6 +3481,91 @@ apiBlock.then(async () => {
       eq([/"(?:[a-z_]*pem|private_?key|privateKey|cert(?:ificate)?|password|pass|tremol_pass|seed|pw)"\s*:/i.test(allBodies), FV.versions.some(x => allBodies.includes(x.password) || allBodies.includes(JSON.stringify(x.password).slice(1, -1))), seeds.some(sd => allBodies.includes(sd))], [false, false, false], 'requests: no pem / key / cert / password / tremol_pass field, never the staff password, never the seed');
       const leak = x => FV.versions.some(p => JSON.stringify(x).includes(p.password)) || seeds.some(sd => JSON.stringify(x).includes(sd));
       eq([leak(F.state), leak(mem), leak(F._pending || []), F.state.db.fiscal, Object.keys(F.posCatalogPayload()).includes('fiscal'), S.calls.some(x => /^(PUT|POST) \/state/.test(x))], [false, false, false, undefined, false, false], 'the password / seed are in no state, no storage, no queue; the book and the catalogue carry nothing fiscal; no /state write');
+      // ── 13. the review of 07.10.2026 (fweb/rregullimi): every finding reproduced first, then held here
+      F.setFw({ hist: null }); await F.fwLoad(); F.fwPick('t-pos'); F.fwDiscard();
+      // F4: during the 15-minute unlock the browser signed whatever a 409 / nonce named — now only the change the admin asked for, on this till, for this company
+      const unlockNow = async () => { F.fwUnlockNow(); F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); return F.fwUnlocked(); };
+      const hostile = async (label, mk, nonceTenant) => { S.hostile = null; S.nonceTenant = null; const u = await unlockNow(); F._fwKey.nonce = null;
+        const n0 = S.notes.length, p0 = puts().length, pos0 = S.terms[0].desired.atkPosId, nn0 = S.calls.filter(x => x === 'POST /fiscal/gate/nonce').length;
+        S.hostile = mk; S.nonceTenant = nonceTenant || null; F.fwEdit('atkPosId', '127'); F.fwSave(); confirmOk(F); await settle(F);
+        const tail = puts().slice(p0);
+        eq([u, S.notes.length - n0, tail.length, tail.every(x => x.gate === undefined), F.fwUnlocked(), F.state.frm, /asgjë nuk u nënshkrua/.test((F.state.fw.msg || {}).t || ''), S.terms[0].desired.atkPosId,
+          S.calls.filter(x => x === 'POST /fiscal/gate/nonce').length - nn0], [true, 0, 1, true, false, null, true, pos0, nonceTenant ? 1 : 0],
+          'F4 hostile answer (' + label + '): nothing signed, no gate sent, no dialog, the unlock closed, the change not saved');
+        S.hostile = null; S.nonceTenant = null; F.fwDiscard(); };
+      await hostile('another key', (scope, t) => ({ keys: ['env'], changes: { env: ['TEST', 'PROD'] }, version: t.version, scope, terminal: t.id }));
+      await hostile('another value', (scope, t) => ({ keys: ['atkPosId'], changes: { atkPosId: [t.desired.atkPosId, '999'] }, version: t.version, scope, terminal: t.id }));
+      await hostile('another till', (scope, t) => ({ keys: ['atkPosId'], changes: { atkPosId: [t.desired.atkPosId, '127'] }, version: t.version, scope, terminal: 'VICTIM-TERMINAL' }));
+      await hostile('business scope', (scope, t) => ({ keys: ['atkPosId'], changes: { atkPosId: [t.desired.atkPosId, '127'] }, version: 0, scope: 'business', terminal: '' }));
+      await hostile('another old value', (scope, t) => ({ keys: ['atkPosId'], changes: { atkPosId: ['555', '127'] }, version: t.version, scope, terminal: t.id }));
+      await hostile('another version', (scope, t) => ({ keys: ['atkPosId'], changes: { atkPosId: [t.desired.atkPosId, '127'] }, version: t.version + 7, scope, terminal: t.id }));
+      await hostile('another company in the nonce', null, 'EVIL-TENANT-uuid');
+      { S.nonceTenant = 'EVIL-TENANT-uuid'; F.fwUnlockNow(); F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); S.nonceTenant = null;
+        eq([F.fwUnlocked(), /kompani tjetër/.test(F.state.frm.err)], [false, true], 'F4: the unlock itself refuses a nonce of another company (the password is not even tried)'); F.setState({ frm: null }); F.fwSync(); await settle(F); }
+      { F.fwEdit('atkPosId', '127'); F.fwSave(); confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff'); const fv = F.formVals();
+        eq([fv.fields[0].label, fv.fields[0].value], ['Nënshkruhet · arka “Arka · POS-001”', 'POS ID (ATK): ' + S.terms[0].desired.atkPosId + ' → 127'], 'F4: the staff dialog names the till and the exact pair it signs');
+        F.setState({ frm: null }); F.fwSync(); await settle(F); F.fwDiscard(); }
+      // F11 / F14: every code Kontabo POS reports reads as Albanian (pos/db.py apply_fiscal_config + _atk_problems = kontabo-backend API.md „Kodet që raporton arka")
+      { const POS_CODES = ['no_key', 'no_cert', 'cert_unreadable', 'cert_key_mismatch', 'ids_missing', 'ids_mismatch', 'env_mismatch', 'coupon_range', 'header_missing', 'queue_pending', 'reonboard_required', 'tremol_unreachable', 'tremol_not_ready'];
+        const keep = S.terms[0].reported; S.terms[0].reported = { ...keep, blockers: [...POS_CODES, 'invalid:unitNo', 'invalid:atkPosId', 'invalid:coupon.lang'], proposals: ['env', 'catalog:vatRegistered'] }; await F.fwLoad(); const v = F.renderVals().fwv;
+        const texts = v.alerts.filter(a => a.t === 'Pengesë në arkë:').map(a => a.s), prop = (v.alerts.find(a => a.t === 'Propozim në arkë:') || {}).s || '';
+        eq([texts.length, texts.filter(s => /_|^invalid:/.test(s)).length, texts.filter(s => /„Numri i njësisë"|„POS ID \(ATK\)"|„Gjuha e kuponit"/.test(s)).length, /Rikrijo çelësat/.test(F.fwBlockerText('reonboard_required')),
+          Object.keys(F.FW_BLOCKERS).filter(k => !POS_CODES.includes(k)), /Mjedisi i ATK-së/.test(prop) && /„Në TVSH" nga Kompania \(katalogu\)/.test(prop) && !/catalog:/.test(prop)],
+          [16, 0, 3, true, [], true], 'F11/F14: every blocker the till sends (reonboard_required, ids_missing, cert_*, coupon_range, tremol_*, invalid:<key>) and catalog:vatRegistered read as Albanian — no raw code; no text for a code nobody sends');
+        S.terms[0].reported = keep; }
+      // F13 / F19: a 0.16 till sends a COMPACT extension — a missing key / registration / count means none, not "s'e raporton"
+      S.terms.push(term('t-new', 'Arka 3', 'POS-003', 'kontabo-pos', '0.16.0', { reported: { mode: 'UNCONFIGURED', version: 0, simulator: false, pending: 0, env: 'TEST', ids: { vatRegistered: '1' } } }));
+      await F.fwLoad(); F.fwPick('t-new');
+      { const v = F.renderVals().fwv; eq([v.tiles.map(t => t.value).slice(3), v.cards[0].rows[0].v, v.alerts.some(a => /nuk i raporton ende/.test(a.t))], [['Mungon', 'Pa regjistrim', '0', '0', '0'], 'mungon — krijohet në arkë', false],
+          'F13: a new 0.16 till without a key: „Mungon", „Pa regjistrim", 0 / 0 — not "—" as for an old till'); }
+      // F16: the page refuses what Kontabo POS cannot use (Branch ID 0–999999, POS ID 1–999, fiscalization number digits | EDI UUID)
+      eq([F.fwCheck('unitNo', '5130484') !== '', F.fwCheck('unitNo', '999999'), F.fwCheck('atkPosId', '1000') !== '', F.fwCheck('atkPosId', '999'), F.fwCheck('atkPosId', '0') !== '', F.fwCheck('fiscalizationNo', 'F-1') !== '',
+        F.fwCheck('fiscalizationNo', 'e0a2f558-0000-4000-8000-c0ffee000001'), F.fwCheck('fiscalizationNo', '037388821441'), F.fwCheck('unitNo', '٣') !== ''], [true, '', true, '', true, true, '', '', true],
+        'F16: the Kontabo POS ranges on the page (a 7-digit unit, POS ID 1000, „F-1", non-ASCII digits refused before anything is sent)');
+      { const n0 = S.raw.length; F.fwEdit('unitNo', '5130484'); eq([F.fwSave(), F.state.fw.errKey, S.raw.length - n0], [false, 'unitNo', 0], 'F16: a 7-digit unit number is refused on the page, nothing sent'); F.fwDiscard(); }
+      // F18: „Joaktiv" stops every sale on the till — the field and the confirmation say so
+      { F.fwPick('t-pos'); F.fwEdit('mode', 'UNCONFIGURED'); F.fwEdit('reason', 'Provë'); const v = F.renderVals().fwv; F.fwSave();
+        eq([/NUK mund të finalizojë asnjë shitje/.test(fld(v, 'mode').note), fld(v, 'mode').noteC, /KUJDES: me „Joaktiv" arka “Arka” NUK mund të finalizojë asnjë shitje/.test((F.state.confirm || {}).body)], [true, '#B91C1C', true],
+          'F18: choosing „Joaktiv" warns in red that the till cannot finalize any sale, and the confirmation repeats it'); F.state.confirm = null; F.fwDiscard(); }
+      // F15: a web value the till keeps as a PROPOSAL is sent again with the staff note [the till's value, the web's]
+      S.terms.push(term('t-prop', 'Arka 4', 'POS-005', 'kontabo-pos', '0.16.0', { version: 2, desired: { ...blank(), env: 'PROD' }, applied: { version: 2, at: '2026-09-20T09:00:00Z', report: { applied: [], proposals: ['env'], blockers: [] } },
+        reported: { mode: 'ATK_ELECTRONIC', version: 1, simulator: false, pending: 0, env: 'TEST', keyFp: 'cd'.repeat(32), appliedVersion: 2, proposals: ['env'], blockers: [], ids: { unitNo: '7', posId: '2' } } }));
+      await F.fwLoad(); F.fwPick('t-prop');
+      { const v = F.renderVals().fwv, al = v.alerts.find(a => a.t === 'Propozim në arkë:');
+        eq([!!al, al.hasAct, al.actLabel, /dërgojeni sërish me fjalëkalimin e stafit/.test(al.s), /derisa stafi t'i pranojë në arkë/.test(al.s)], [true, true, 'Dërgo sërish te arka', true, false],
+          'F15: the proposal alert names the real way out (no accept button exists on the till) and offers „Dërgo sërish te arka"');
+        await unlockNow(); const n0 = S.notes.length; al.act(); eq(/TEST → PROD/.test(F.state.confirm.body), true, 'F15: the confirmation shows the till\'s value → the web\'s'); confirmOk(F); await settle(F);
+        const nt = S.notes[S.notes.length - 1], t = S.terms.find(x => x.id === 't-prop');
+        eq([S.notes.length - n0, nt.o.ndryshimet, nt.o.terminal, nt.o.versioni, t.version, t.desired.env, puts().slice(-1)[0].changes], [1, { env: ['TEST', 'PROD'] }, 't-prop', 2, 3, 'PROD', { env: 'PROD' }],
+          'F15: „Dërgo sërish": PUT the same value → 409 staff_required with [the till\'s TEST, PROD] → signed for this till → saved, version 3: the till gets a note it can verify');
+        F.fwLock(true); }
+      // F8: the simulator — the import does not take its mode, and says so
+      S.terms.push(term('t-sim', 'Arka 5', 'POS-006', 'kontabo-pos', '0.16.0', { reported: { mode: 'ATK_ELECTRONIC', version: 1, simulator: true, pending: 0, env: 'TEST', keyFp: 'ef'.repeat(32), ids: { unitNo: '8', posId: '3', fiscalizationNo: '12345' } } }));
+      await F.fwLoad(); F.fwPick('t-sim');
+      { const v = F.renderVals().fwv; eq([/simulatorin/.test(fld(v, 'mode').hint), F.fwImportAsk(), /SIMULATORIN/.test(F.state.confirm.body)], [true, true, true], 'F8: a till on the simulator: the mode field and the import confirmation say the mode is not imported');
+        confirmOk(F); await settle(F); const t = S.terms.find(x => x.id === 't-sim'); eq([t.desired.mode, t.desired.env, t.desired.unitNo], ['', 'TEST', '8'], 'F8: import of a simulator till: the ids and env, never mode ATK_ELECTRONIC'); }
+      // F20: the KONTABO BAR till shows what the BAR reports — never the web's business values, never „e zhbllokuar"
+      { const bar = S.terms.find(x => x.id === 't-bar'); bar.reported = { ...bar.reported, env: 'PROD', registered: true, ids: { nui: '899999999', unitNo: '5130484', posId: '1231', vatRegistered: '0' } };
+        await F.fwLoad(); F.fwPick('t-bar'); await unlockNow(); const v = F.renderVals().fwv;
+        eq([fld(v, 'nui').value, fld(v, 'unitNo').value, fld(v, 'atkPosId').value, fld(v, 'vatRegistered').hint, fld(v, 'nui').lockLbl, [fld(v, 'nui'), fld(v, 'env'), fld(v, 'vatRegistered')].every(x => x.dis), v.tiles[1].sub, v.cards[0].fields.find(f => /SEF/.test(f.label)).value],
+          ['899999999', '5130484', '1231', 'siç e raporton bari', 'KONTABO BAR', true, 'siç e raporton bari', '5130484-899999999-1231'],
+          'F20: KONTABO BAR read-only view = what the bar reports (NUI, unit, POS ID, „në TVSH", SEF), every field locked „KONTABO BAR" even while unlocked');
+        F.fwLock(true); }
+      // F12: the server does not know the current staff password yet — the page says so, nothing is signed
+      { S.unconfirmed = true; await F.fwLoad(); F.fwPick('t-pos'); const v = F.renderVals().fwv;
+        F.fwUnlockNow(); F.setF({ pw: V1.password }); await F.fwUnlockSubmit();
+        eq([v.alerts.some(a => /nuk është konfirmuar në server/.test(a.t)), F.fwUnlocked(), /nuk e njeh ende versionin aktual/.test(F.state.frm.err)], [true, false, true],
+          'F12: staffConfirmed false → an alert, and the unlock answers 409 staff_chain_unconfirmed in plain Albanian (no password tried)');
+        F.setState({ frm: null }); F.fwSync(); await settle(F); S.unconfirmed = false; }
+      // F7: a member without `fiskal` gets no staff key material (public key + signing salt) from the overview
+      { S.canEdit = false; const r = await F.apiFetch('/fiscal/overview'); eq([r.staff, r.canEdit], [null, false], 'F7: the overview carries `staff` only for the `fiskal` holders (mock of the backend rule)'); S.canEdit = true; }
+      // F17: ⌘K „Fiskalizimi" opens the configuration tab (it pointed at a tab that no longer exists); every fiscalTab the page sets is a real tab
+      { F.setState({ section: 'dashboard', page: 'Paneli', fiscalTab: 'Monitor' }); const it = F.renderVals().cmdGroups.find(g => g.label === 'VEPRIME').items.find(i => i.t === 'Fiskalizimi'); it.go();
+        const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'template.html'), 'utf8'), tabs = ['Konfigurimi', 'Monitor', 'Radha', 'Kuponët'];
+        const used = [...new Set([...src.matchAll(/fiscalTab\s*(?:===|:)\s*'([^']*)'/g)].map(m => m[1]))];
+        eq([F.state.section, F.state.page, F.state.fiscalTab, /Vetëm lexim/.test(it.s), used.filter(x => !tabs.includes(x))], ['pos', 'Fiskalizimi', 'Konfigurimi', false, []],
+          'F17: ⌘K „Fiskalizimi" → POS › Fiskalizimi › Konfigurimi (no "Vetëm lexim"); every fiscalTab value in the page is one of the four tabs'); }
+      S.terms = S.terms.filter(x => !['t-new', 't-prop', 't-sim'].includes(x.id)); await F.fwLoad(); F.fwPick('t-pos'); F.fwLock(true);
       // ── 12. a new session / company / logout drops the page and the unlock
       F.fwUnlockNow(); F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); const kk = F._fwKey.seed; F.ledgerReset();
       eq([F._fwKey, F.state.fw, F._fwFeat, Array.from(kk).every(b => b === 0)], [null, null, undefined, true], 'ledgerReset (login / company switch / logout): the staff unlock is dropped (the seed zeroed), the page state too');
