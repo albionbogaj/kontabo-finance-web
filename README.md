@@ -24,7 +24,8 @@ kontabo-finance/
 │  ├─ unpack.js            ← zbërthen një bundle .html në src/
 │  ├─ pack.js              ← ribën dist/Kontabo finance.html nga src/
 │  ├─ dev.js               ← gjeneron dev/index.html për preview pa pack (asset-e me path relativ)
-│  ├─ check-logic.js       ← kontroll sintakse + 1181 teste (çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU-ja e barit / BAR-n, kategoritë, idempotenca, vendimet e vonuara, katalogu para mbylljes, lejet), render sweep)
+│  ├─ fiscal_web_vectors.json ← vektorët PROVË të portës së stafit (= kontabo-backend tests/fiscal_web_vectors.json; fjalëkalime PROVË)
+│  ├─ check-logic.js       ← kontroll sintakse + 1460+ teste (POS › Fiskalizimi: kriptografia e stafit kundrejt vektorëve të Python-it, rrjedha me server mock; çmimi bruto verbatim gross_t, nr. identifikues i operatorit, para, CSV, stoku, ditari, operacionet, kthimet, ofertat/porositë, depot, printimi/barkodet, raportet, grupet tatimore ATK + migrimi, monitori fiskal, admin, importi POS + zbritja totale + anulimet, çmimet me 4 decimale, kompania pa TVSH, blloku tatimor, modaliteti me server kundrejt një serveri mock, indeksi i lëvizjeve + faqezimi, njësitë/recetat/“Shfaqe në POS”, paketimi në blerje/transferime/numërim, libri i POS-it në server: kalimi, kuponët nga API-ja, sirtarët e përmbledhjeve, rreshtat mujorë, rifreskimi i listave, çelësat API dhe token-i i terminalit, propozimet e KONTABO BAR (bashkimi me tri anë, SKU-ja e barit / BAR-n, kategoritë, idempotenca, vendimet e vonuara, katalogu para mbylljes, lejet), render sweep)
 │  └─ verify-roundtrip.js  ← verifikon që pack(unpack(x)) == x
 ├─ dev/index.html          ← preview i shpejtë (gjenerohet)
 └─ dist/
@@ -83,13 +84,14 @@ dhe çmimet nuk ndryshohen kurrë; `db.taxV = 2` e shënon migrimin (edhe kodet 
 normën e vet). Katalogu për POS-in dërgon për çdo produkt `tax` (letrën) + `rate` — POS-i i shtyp
 letrat në kupon pas vlerës së rreshtit dhe në tabelën e TVSH-së, saktësisht si kuponi i certifikuar.
 
-**Rrjedha fiskale (rregulli i arkitekturës):** fiskalizimi konfigurohet **vetëm në secilën arkë**
-(POS › Cilësimet, me PIN të menaxherit) — mënyra, mjedisi TEST/PROD, identifikuesit (NUI, Branch ID,
-POS ID, Application ID) dhe çelësat/certifikata (çelësi privat nuk largohet kurrë nga arka). Ueb-i
-**nuk mban asnjë cilësim fiskal dhe nuk bën asnjë shkrim fiskal**: faqja Cilësime › Fiskalizimi është
-monitor vetëm-lexim — gjendja fiskale e çdo arke siç e raporton vetë (heartbeat: mënyra, mjedisi,
-versioni, simulatori, kuponët në pritje), radha e transaksioneve dhe statuset fiskale të kuponëve.
-Katalogu që i dërgohet arkave **nuk përmban bllok fiskal** (POS-i injoron çdo bllok të tillë të vjetër);
+**Rrjedha fiskale (rregulli i arkitekturës, vendimi i pronarit 07.10.2026 — zëvendëson rregullin e 18.09 „vetëm në arkë"):**
+me server, **ueb-i është burimi i cilësimeve fiskale të arkave Kontabo POS** (POS › Fiskalizimi, shih seksionin
+„Fiskalizimi i arkave nga ueb-i" më poshtë): mënyra, mjedisi TEST/PROD, NUI, numri i njësisë, POS ID, numri i
+fiskalizimit, „në TVSH" dhe kuponi. **Mbeten në arkë**: çelësi i POS-it dhe certifikata e ATK-së (çelësi privat nuk
+largohet kurrë nga arka), printeri dhe regjistrimi te ATK-ja; pa server (mënyra lokale) arka konfigurohet vetë, si
+më parë (POS › Cilësimet, me PIN të menaxherit). Arkat **KONTABO BAR** konfigurohen në vetë barin dhe në ueb shfaqen
+vetëm për lexim. Konfigurimi fiskal ka **rrugën e vet** (`/fiscal/*` te serveri, `GET /pos/terminal/fiscal` te arka):
+libri i kompanisë (`state`) nuk mban asgjë fiskale dhe katalogu që i dërgohet arkave **nuk përmban bllok fiskal**;
 letrat/normat për produkt mbeten, se janë të dhëna produkti.
 
 ### Paratë
@@ -339,7 +341,7 @@ Te ekrani i hyrjes → **Serveri** → shkruani adresën e backend-it (`http://1
 | --- | --- | --- |
 | Hyrja | hash në shfletues, `kontabo` | `POST /auth/login` (bcrypt, JWT + refresh me rotacion, bllokim 5×30 s), ftesa dhe rikuperimi i fjalëkalimit reale (token-i kthehet nga serveri në zhvillim, me SMTP vjen me email) |
 | Përdoruesit, rolet, PIN-et | `db.users`/`db.roles` në localStorage | `/users`, `/roles`, `/users/{id}/pin` — pasqyrohen në `db.*` për t’u shfaqur njësoj |
-| Fiskalizimi | s’ka konfigurim në ueb — monitor vetëm-lexim | njësoj: **asnjë thirrje `/fiscal`** (as GET, as PUT) — gjendja për arkë vjen me heartbeat-et e terminaleve (`/pos/status` → `terminals[].fiscal`) |
+| Fiskalizimi | s’ka konfigurim në ueb — arka konfigurohet vetë; monitori lexon gjendjen e raportuar | **POS › Fiskalizimi** (vetëm kur `/health` liston `fiscalWeb:1`): `GET /fiscal/overview`, `PUT /fiscal/business`, `PUT /fiscal/terminals/{id}` (compare-and-set me `expectedVersion`), `POST /fiscal/terminals/{id}/import`, `POST /fiscal/gate/nonce`·`/attempt`, `GET /fiscal/changes` — asgjë në `state`; pa `fiscalWeb:1` asnjë thirrje `/fiscal`. Gjendja për arkë vjen me heartbeat-et (`/pos/status` → `terminals[].fiscal`) |
 | Librat e kompanisë (fatura, blerje, stok, financë…) | `kontabo.finance.v2` | `tenant_state` në server: `GET /state`, çdo `commit()` → `POST /state/commit {baseVersion, patch}`; 409 → gjendja e serverit fiton, ndryshimi lokal hidhet me njoftim; offline → patch-et presin (`kontabo.finance.pending`) dhe ridërgohen |
 | Audit | `db.audit` | `POST /audit`, vetëm shtim |
 | Kompani të shumta (kontabilist) | — | lista te menuja e avatarit → `POST /auth/switch-tenant` |
@@ -386,14 +388,15 @@ gjithçka) dhe **Eksporto CSV** (real, `exportCsv()`) te çdo tabelë. HR/Prodhi
 pa të dhëna të simuluara.
 
 **Kompania**: Të dhënat e kompanisë (autosave → koka e faturës A4, email-i dërgues, fiskalizimi),
-Degët (+ formular, ID BR-…), Përdoruesit (`db.users`, ftesë me formular → *Ftuar*, sirtar me pezullim),
+Degët (+ formular, ID BR-…; klikimi i një rreshti e hap për ndryshim — emri, adresa, numri i njësisë dhe licenca shkojnë
+te koka e kuponit me katalogun e radhës, një emër i ri ndjek depot), Përdoruesit (`db.users`, ftesë me formular → *Ftuar*, sirtar me pezullim),
 Rolet (matricë rolesh × lejesh me çelësa, Pronari i kyçur, audit log).
 
 **Cilësime**: Llogaria, Abonimi (çmimet vijnë nga planet e platformës), Pagesat, Siguria (sesionet,
-audit log), Njoftimet (matricë ngjarje × kanal), **Fiskalizimi — vetëm lexim (konfigurohet në secilën
-arkë)**: tabela e arkave me mënyrën/mjedisin/versionin/simulatorin dhe kuponët në pritje siç i raporton
-çdo arkë (heartbeat), radha e transaksioneve, statuset fiskale të kuponëve, udhëzuesi “si konfigurohet
-në arkë” dhe grupet tatimore ATK — **asnjë fushë konfigurimi dhe asnjë shkrim fiskal**; POS (rregullat,
+audit log), Njoftimet (matricë ngjarje × kanal), **Fiskalizimi** (e njëjta faqe si POS › Fiskalizimi): skeda
+**Konfigurimi** (cilësimet fiskale të arkave Kontabo POS nga ueb-i, shih më poshtë), **Monitori** (tabela e arkave me
+mënyrën/mjedisin/versionin/simulatorin dhe kuponët në pritje siç i raporton çdo arkë), radha e transaksioneve,
+statuset fiskale të kuponëve, udhëzuesi dhe grupet tatimore ATK; POS (rregullat,
 pagesat, printeri si pajisje printimi), Faturat (afati i parazgjedhur → formularët, teksti i fundit → A4, QR/banka), Tatimet,
 Email (shabllone me vendmbajtës), Integrimet (statuse reale), API (çelësa të gjeneruar lokalisht, shfaqen
 një herë, ruhet vetëm prefiksi; revokim).
@@ -407,6 +410,39 @@ platformës (PROD i bllokuar pa certifikatë prodhimi), Statusi i sistemit.
 
 Rregull i përgjithshëm: veprimet që kërkojnë backend (email, 2FA, pagesa, PROD) shfaqin njoftim **portokalli
 “kërkon backend”** — kurrë sukses të rremë (`needsBackend()`).
+
+## Fiskalizimi i arkave nga ueb-i (POS › Fiskalizimi)
+
+Vendimi i pronarit (07.10.2026): me server, cilësimet fiskale të arkave **Kontabo POS** caktohen këtu dhe arka i merr vetë
+(`fiscalConfig.version` në përgjigjen e heartbeat-it → `GET /pos/terminal/fiscal`). Faqja është **POS › Fiskalizimi** (= Cilësime ›
+Fiskalizimi), skeda **Konfigurimi**; ndizet vetëm kur `GET /health` liston `fiscalWeb:1` (përndryshe skeda e thotë dhe nuk
+bën asnjë thirrje `/fiscal`). Kontrata është te `kontabo-backend/API.md` → „Fiskalizimi i arkave nga ueb-i".
+
+- **Zgjedhësi i arkës** (një çip për arkë, me ngjyrën e gjendjes: e menaxhuar / pret zbatimin / ka pengesë / jashtë linje / KONTABO BAR),
+  **8 pllaka** nga heartbeat-i (Fiskalizimi, TVSH, Mjedisi, Çelësi, Certifikata, Në pritje, Me gabim, Të dërguar) dhe **njoftimet**
+  (pengesat që raporton arka, propozimet që pret stafin në arkë, „hapi tjetër" i onboarding-ut, certifikata që skadon, OFFLINE mbi
+  24 h / 48 h / kuponë të muajit të kaluar, ora e arkës mbi 120 s, koka e kuponit e paplotë, NUI / „në TVSH" që ndryshojnë nga Kompania).
+- **Tri karta**: „Të dhënat e biznesit · njësia · SEF" (NUI e biznesit; numri i fiskalizimit, numri i njësisë = BranchId, POS ID e
+  arkës; „Nr identifikues i SEF" = njësia-NUI-POS ID; gjurma e çelësit dhe certifikata vetëm për lexim — *krijohen në arkë*),
+  „Statusi dhe ambienti" (fiskalizimi dixhital me **arsye të detyrueshme**, „në TVSH", mjedisi TEST/PROD; printeri, lidhja, ora dhe
+  versioni nga heartbeat-i) dhe „Kuponi" (parazgjedhjet e biznesit ose mbishkrimi i kësaj arke: teksti i lirë ≤ 300; gjuha,
+  decimalet, zbritja, barkodi dhe ora e mbylljes shënohen „zbatohet në versionin e ardhshëm të arkës").
+- **Ruaj** tregon ndryshimet çelës për çelës (e vjetra → e reja) dhe dërgon vetëm ato, me `expectedVersion`: biznesi
+  (`PUT /fiscal/business`) para arkës (`PUT /fiscal/terminals/{id}`, me versionin që kthen PUT-i i biznesit). 409 `version_conflict` →
+  rifreskim, ndryshimet mbeten; `pos_id_taken`, `invalid_value`, `reason_required` shënojnë fushën; `managed_by_bar` shpjegohet.
+  **Importo vlerat nga arka** (`POST …/import`) e bën arkën të menaxhuar me pikërisht vlerat e saj (pa shënim stafi) — hapi i parë për
+  „Arka" POS-001. **Historiku** (`GET /fiscal/changes` i arkës + i biznesit) shënon rreshtat e nënshkruar nga stafi.
+- **Kyçjet** vijnë nga serveri (`free | key | registered | staff | bar`): pas regjistrimit te ATK-ja identifikuesit kyçen, me çelës
+  vetëm vlera e mbushur, mjedisi gjithmonë. **Zhblloko…** / 409 `staff_required` hap dritaren „Fjalëkalimi i stafit të KONTABO"
+  (**i njëjti zinxhir si KONTABO BAR**): `POST /fiscal/gate/nonce` → seed = PBKDF2-HMAC-SHA256(fjalëkalimi UTF-8, signSalt, 300 000, 32)
+  → çelësi Ed25519 → nëse `pub` ≠ ai i zinxhirit: „Fjalëkalim i gabuar" + `POST /fiscal/gate/attempt` (5 prova / 15 min); përndryshe
+  shfletuesi nënshkruan shënimin kanonik `porta-fiskale-web-v1` (ndryshimet e kyçura nga refuzimi, `versioni` = expectedVersion) dhe
+  përsërit PUT-in me `gate:{body, signature}`. Zhbllokimi zgjat **15 minuta** (shirit me kohëmatës, „Kyç tani"); fjalëkalimi dhe
+  seed-i **mbeten vetëm në memorie** (asnjëherë në server, në localStorage apo në libër). Kriptografia: WebCrypto (PBKDF2; Ed25519 me
+  importin PKCS8 të seed-it, i provuar me vektorin 1 të RFC 8032 — Chrome/Edge/Firefox të sotëm) dhe, pa `crypto.subtle` (p.sh. faqja
+  me http:// në LAN), zbatimi i vogël brenda faqes (SHA-256/SHA-512/Ed25519 me BigInt). Testet e krahasojnë bajt për bajt me Python-in
+  (`tools/fiscal_web_vectors.json`, fjalëkalime PROVË).
+- Pa lejen **„Cilësimet e fiskalizimit"** (`fiskal`) dhe për arkat KONTABO BAR faqja është vetëm për lexim; serveri e zbaton vetë lejen.
 
 ## POS-i desktop (Python) dhe sinkronizimi
 

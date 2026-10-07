@@ -33,8 +33,10 @@ Prandaj **vlera ndryshohet në NJË vend** — te ERP-ja — dhe del e njëjtë 
 
 ## Fiskalizimi — për arkë, me vendim të pronarit
 
-Rregulli: **ERP-ja nuk e dërgon kurrë konfigurimin fiskal** (`replace_catalog` e injoron bllokun `fiscal`).
-Çdo arkë e merr vetë gjatë onboarding-ut të ATK-së. Këto duhet të jenë të njëjta sepse i shkruan i njëjti
+Rregulli (vendimi i pronarit 07.10.2026, zëvendëson atë të 18.09): për arkat **Kontabo POS** cilësimet fiskale vijnë nga
+Kontabo Finance › POS › Fiskalizimi, me rrugën e tyre (`GET /pos/terminal/fiscal`) — **jo me katalogun** (`replace_catalog` e
+injoron ende çdo bllok `fiscal`). Identifikuesit e kyçur ndryshohen vetëm me fjalëkalimin e stafit të KONTABO; çelësi, certifikata
+dhe regjistrimi te ATK-ja mbeten në arkë. Arka **KONTABO BAR** (si kjo më poshtë) e mban konfigurimin në vetvete. Këto duhet të jenë të njëjta sepse i shkruan i njëjti
 njeri me të njëjtat letra — me një përjashtim: **POS ID-ja është unike për çdo arkë**.
 
 | Cilësimi | Arka e barit (RESTAURANTIU) |

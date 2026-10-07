@@ -17,7 +17,7 @@ class FakeDate extends RealDate { constructor(...a) { super(...(a.length ? a : [
 // query string of a mocked request: the vm has no URL / URLSearchParams — the app builds them with c.qs(), the mock server reads them with this
 const qsOf = (path) => Object.fromEntries((String(path).split('?')[1] || '').split('&').filter(Boolean).map(kv => { const [k, v = ''] = kv.split('='); return [decodeURIComponent(k), decodeURIComponent(v)]; }));
 // shfletuesi i vërtetë i ka këto: eksporti i librave të ATK-së lexon ZIP-in e shabllonit me to
-const ctx = { window: {}, document: {}, localStorage: null, console, setTimeout, clearTimeout, TextEncoder, TextDecoder, atob, Blob, Response, DecompressionStream, Date: FakeDate };
+const ctx = { window: {}, document: {}, localStorage: null, console, setTimeout, clearTimeout, TextEncoder, TextDecoder, atob, Blob, Response, DecompressionStream, Date: FakeDate, crypto: globalThis.crypto };
 vm.createContext(ctx);
 try {
   vm.runInContext('class DCLogic{constructor(p){this.props=p||{};this.state={}} setState(u){const p=typeof u==="function"?u(this.state):u;this.state={...this.state,...p}} forceUpdate(){} }\n' + src + '\n;globalThis.C=Component;', ctx, { filename: 'template.html#logic' });
@@ -190,7 +190,7 @@ c.openDr('product', 'PS-050'); eq(c.drawerVals().sections[0].rows.length > 3, tr
 // ── Raporte · Kompania · Cilësime · Admin ──
 c.state.db = c.seedDb(); c.state.dr = null; c.state.frm = null;
 eq(['company', 'branches', 'users', 'roles', 'invoiceSettings', 'admin', 'pos', 'audit', 'subscription'].every(k => c.state.db[k] !== undefined), true, 'seedExtras: all sections present');
-eq(c.state.db.fiscal, undefined, 'seedExtras: NO web-side fiscal config — fiscalization lives on each till');
+eq(c.state.db.fiscal, undefined, 'seedExtras: the BOOK carries no fiscal config — the tills\' fiscal settings have their own endpoints (POS › Fiskalizimi, /fiscal/overview …)');
 for (const rp of ['month', 'prev', 'year', 'all']) { c.state.rp = rp; for (const p of ['R:Shitje', 'R:Blerje', 'R:Financë', 'R:Stok', 'R:POS', 'R:TVSH']) { const t = c.pageTable(p); eq(!!t && t.cols.length > 0, true, 'report ' + p + ' [' + rp + '] (' + (t ? t.rows.length : 0) + ' rows)'); } }
 c.state.rp = 'month';
 for (const tab of ['Sipas klientit', 'Sipas artikullit', 'Sipas muajit', 'Faturat']) { c.state.rTab = tab; eq(c.pageTable('R:Shitje').rows.length > 0, true, 'report sales tab: ' + tab); }
@@ -201,8 +201,10 @@ for (const p of ['Degët', 'Rolet', 'A:Kompanitë', 'A:Abonimet', 'A:Faturat e p
 for (const p of ['Të dhënat e kompanisë', 'Llogaria', 'Pagesat', 'Siguria', 'Njoftimet', 'POS', 'Faturat', 'Tatimet', 'Email', 'Integrimet', 'API', 'R:Prodhim', 'A:Përmbledhje', 'A:Modulet & flags', 'A:Cilësimet e platformës', 'A:Statusi i sistemit']) { const g = c.settingsPage(p); eq(!!g && g.cards.length > 0, true, 'settings page: ' + p + ' (' + (g ? g.cards.length : 0) + ' cards)'); }
 // roles matrix toggle
 { const t = c.pageTable('Rolet'); const cell = t.rows[0].cells[1 + c.ROLES.indexOf('Kasier')]; const before = cell.on; cell.go(); eq(!!db().roles.Kasier.fatura_shiko, !before, 'roles: toggling a permission persists'); eq(db().audit[0].a.includes('Roli Kasier'), true, 'roles: change is audited'); }
-// ── fiscalization is till-owned: the web has NO mode config, NO env switch, and never gates issuing ──
-eq([typeof c.changeFiscalMode, typeof c.setFiscalEnv, typeof c.apiFiscal, typeof c.fiscalConfigured, typeof c.apiFiscalToDb], ['undefined', 'undefined', 'undefined', 'undefined', 'undefined'], 'fiscal: no web-side mode/env/config functions exist at all');
+// ── the tills' fiscal settings come from the web since 07.10.2026 (POS › Fiskalizimi, its own endpoints); the old tenant-wide /fiscal mode/env client and an
+//    "unconfigured" gate on issuing invoices still do not exist ──
+eq([typeof c.changeFiscalMode, typeof c.setFiscalEnv, typeof c.apiFiscal, typeof c.fiscalConfigured, typeof c.apiFiscalToDb], ['undefined', 'undefined', 'undefined', 'undefined', 'undefined'], 'fiscal: no client for the legacy tenant-wide GET /fiscal · PUT /fiscal/mode · PUT /fiscal/settings');
+eq([typeof c.fwLoad, typeof c.fwSave, typeof c.fwGateNote, typeof c.fwStaffKey], ['function', 'function', 'function', 'function'], 'fiscal: POS › Fiskalizimi has its own client (overview, CAS save, staff gate note, staff key)');
 const qBefore = db().queue.length;
 eq(c.issueBatch([{ cust: db().customers[0], items: [{ name: 'x', sku: 'PS-050', unit: 'm²', qty: 1, unit_c: 1850, rate: 18, disc: 0, sub: 1850, vatc: 333, tot: 2183 }], note: '' }], 'issue', { date: '2026-09-12', due: '2026-09-27' }).length, 1, 'fiscal: invoices issue normally with no web fiscal config (no UNCONFIGURED gate)');
 /* E VERTETA e fiskalizimit (ndreqje 04.10.2026): ERP-ja nuk ka as pajisje as agjent — kuponet i fiskalizon VETE
@@ -227,7 +229,7 @@ eq(db().taxSettings.defaultGroup, 'E', 'default tax group is E (18% standard)');
   eq(c.migrateTax(mig) === mig, true, 'migration: idempotent (taxV=2 short-circuits)'); }
 // the catalog push carries letters+rates as PRODUCT data and the printed-coupon header — but NO fiscal steering block
 { const cat = c.posCatalogPayload();
-  eq(cat.fiscal, undefined, 'catalog: no fiscal block — the ERP never steers a POS\'s fiscal mode');
+  eq(cat.fiscal, undefined, 'catalog: no fiscal block — the tills\' fiscal config travels on its own endpoint (GET /pos/terminal/fiscal), never in the catalogue');
   eq(cat.products.every(p => ['A', 'C', 'D', 'E'].includes(p.tax) && p.rate === c.TAX[p.tax].rate), true, 'catalog: every product ships its ATK letter + matching rate');
   eq(Object.keys(cat.company).sort(), ['address', 'fiscal', 'licence', 'name', 'nui', 'phone', 'place', 'unitName', 'unitNo', 'vatNo', 'vatRegistered'], 'catalog: company block = the certified coupon header fields + VAT registration (vatRegistered, vatNo)');
   eq([cat.company.vatRegistered, cat.company.vatNo], [true, '330012345'], 'catalog: seed company is VAT-registered with its VAT number');
@@ -1025,7 +1027,7 @@ const apiBlock = (async () => {
     if (path === '/terminals' && m === 'GET') return json(200, { terminals: srv.terminals || [] });
     if (path === '/terminals' && m === 'POST') { srv.terminals = [...(srv.terminals || []), { id: 'tm1', name: body.name, branch: body.branch, posId: body.posId, warehouse: body.warehouse, status: 'Aktiv', lastSeen: '' }]; return json(200, { terminal: srv.terminals[0], token: 'kt_secret123' }); }
     if (/^\/terminals\/tm1$/.test(path) && m === 'PATCH') { srv.terminals[0] = { ...srv.terminals[0], ...body }; return json(200, { terminal: srv.terminals[0] }); }
-    if (path === '/pos/status') return json(200, { terminals: (srv.terminals || []).map(t => ({ id: t.id, lastSeen: '13.09.2026 12:00', appVersion: '0.6.0', catalogVersion: srv.catVersion || 0, shift: null, fiscal: { mode: 'TREMOL_ETHERNET', env: 'PROD', version: 2, simulator: false, pending: 1 }, pendingReceipts: 1 })), catalogVersion: srv.catVersion || 0, unsyncedReceipts: (srv.posReceipts || []).filter(r => !r.acked).length });
+    if (path === '/pos/status') return json(200, { terminals: (srv.terminals || []).map(t => ({ id: t.id, lastSeen: '13.09.2026 12:00', appVersion: '0.6.0', catalogVersion: srv.catVersion || 0, shift: null, fiscal: { mode: 'TREMOL_ETHERNET', version: 2, simulator: false, pending: 1 }, pendingReceipts: 1 })), catalogVersion: srv.catVersion || 0, unsyncedReceipts: (srv.posReceipts || []).filter(r => !r.acked).length });
     if (path.startsWith('/pos/sales')) { const since = +(qsOf(path).since || 0); const rows = (srv.posReceipts || []).filter(r => r.seq > since); return json(200, { receipts: rows.map(r => r.payload), shifts: [], cursor: rows.length ? rows[rows.length - 1].seq : since }); }
     if (path === '/pos/ack') { for (const r of (srv.posReceipts || [])) if (body.ids.includes(r.payload.id)) r.acked = true; return json(200, { acked: body.ids.length }); }
     if (path === '/pos/catalog' && m === 'PUT') { srv.catVersion = (srv.catVersion || 0) + 1; srv.catalog = body.catalog; return json(200, { version: srv.catVersion }); }
@@ -1044,7 +1046,7 @@ const apiBlock = (async () => {
   eq([a.state.session.name, a.state.session.userId, a.state.session.api, a.apiAuthed(), a.apiCfg().tenantName], ['Arben Berisha', 'm1', true, true, 'ABC SH.P.K.'], 'api login: session from the server, membership id resolved');
   eq([srv.version, srv.state.invoices.length, srv.state.products.length, srv.state.company.name, srv.state.accounts.length, srv.state.users === undefined, srv.state.fiscal === undefined], [1, 0, 0, 'ABC SH.P.K.', 2, true, true], 'api load: a new tenant starts EMPTY on the server (no demo books, no server-owned keys)');
   eq([a.state.db.users.length, a.state.db.users[1].c.startsWith('#'), a.state.db.roles.Kasier.pos, a.state.db.audit[0].a, a.state.db.company.name], [2, true, true, 'seed', 'ABC SH.P.K.'], 'api load: users/roles/audit mirrored from the server');
-  eq([a.state.db.fiscal, srv.calls.includes('GET /fiscal')], [undefined, false], 'api load: NO fiscal mirror — the web fetches no fiscal config from the server');
+  eq([a.state.db.fiscal, srv.calls.includes('GET /fiscal'), a._fwFeat], [undefined, false, false], 'api load: NO fiscal mirror in the book, no legacy GET /fiscal; this server lists no fiscalWeb:1 → POS › Fiskalizimi stays off');
   { const v = a.renderVals(); eq([v.needsLogin, v.hasTenants, v.tenantList.length, /libri v1/.test(v.apiLine), v.hasSaved], [false, true, 2, true, false], 'api render: signed in, tenant switcher, server line'); }
   // a normal commit → /state/commit with the patch, version advances; server-owned keys are stripped client-side
   a.addParty('customer', { name: 'Test Klient', type: 'Biznes', nui: '123456789', fiscal: '—', city: 'Prishtinë', contact: '—', address: '—' });
@@ -1088,9 +1090,11 @@ const apiBlock = (async () => {
     a.openDr('user', 'm1'); const own = () => a.drawerVals().actions.some(x => x.label === 'Rivendos fjalëkalimin'); const s0 = a.state.session;
     const asOwner = own(); a.state.session = { ...s0, role: 'Kasier' }; const asOther = own(); a.state.session = s0; a.state.dr = null;
     eq([asOwner, asOther], [true, false], 'api reset: the owner\'s row offers it only to the owner (the server says owner_protected anyway)'); }
-  // fiscalization is till-owned: the web must NEVER write fiscal config to the server
-  eq(srv.calls.filter(x => /\/fiscal/.test(x)), [], 'api: zero /fiscal calls of any kind from the web (no mode PUT, no settings PUT, no GET)');
-  eq(srv.fiscal.mode, 'ATK_ELECTRONIC', 'api: server-side fiscal record untouched by the web');
+  // a server WITHOUT fiscalWeb:1: the web makes no /fiscal call of any kind (the tests with the feature on are in "POS › Fiskalizimi" at the end)
+  a.go('pos', 'Fiskalizimi'); a.fwSync(); await wait();
+  eq([srv.calls.filter(x => /\/fiscal/.test(x)), a.state.fiscalTab, !!a.renderVals().fwv.off], [[], 'Konfigurimi', true], 'api, feature off (/health without fiscalWeb:1): zero /fiscal calls (no GET, no PUT) — the configuration tab says the server does not have it yet');
+  eq(srv.fiscal.mode, 'ATK_ELECTRONIC', 'api: server-side legacy fiscal record untouched by the web');
+  a.go('shitje', 'Fatura');
   a.logAudit('test audit'); await wait(); eq([srv.audit[0].a, a.state.db.audit[0].a], ['test audit', 'test audit'], 'api: audit → POST /audit + local mirror');
   // POS relay through the server: register a terminal (token once), push the catalogue, pull receipts, ack
   a.openForm('terminal', { name: 'Arka 1', posId: 'POS-0001', branch: 'Dega kryesore', warehouse: 'W1' }); a.formVals().actions[0].go(); for (let i = 0; i < 30 && !(a.state.db.terminals || []).length; i++) await wait();
@@ -1101,11 +1105,12 @@ const apiBlock = (async () => {
   eq([srv.calls.includes('PUT /pos/catalog'), srv.calls.some(x => x.startsWith('GET /pos/sales')), srv.calls.includes('POST /pos/ack'), a.state.db.posReceipts.length, a.state.db.posReceipts[0].posName, a.posCfg().cursorSrv, srv.posReceipts[0].acked, !!srv.catalog && srv.catalog.products.length], [true, true, true, 1, 'Arka 1', 1, true, 1], 'api relay: catalogue pushed, receipt pulled into the books, acked, cursor saved');
   await a.posSync(true); eq(a.state.db.posReceipts.length, 1, 'api relay: second pull is idempotent');
   eq([a._ledger, srv.calls.includes('GET /health'), srv.calls.some(x => x.startsWith('GET /pos/ledger')), srv.hdr.every(v => v === '2'), !!srv.srvCommitted], [null, true, false, true, false], 'feature off (/health without posLedger:1): no POS ledger, the relay above works as before; X-Kontabo-Client: 2 on every call');
-  // the till's heartbeat fiscal block is kept on the terminal and rendered by the read-only monitor
-  { const t0 = a.state.db.terminals[0]; eq([!!t0.fiscal, t0.fiscal.mode, t0.fiscal.env, t0.pendingReceipts], [true, 'TREMOL_ETHERNET', 'PROD', 1], 'api: apiTerminalToDb keeps the heartbeat fiscal block'); }
-  { a.state.admin = false; a.state.section = 'settings'; a.state.page = 'Fiskalizimi'; const v = a.renderVals();
-    eq([v.fiscalTerms.length, v.fiscalTerms[0].mode, v.fiscalTerms[0].env, v.fiscalTerms[0].ver, v.fiscalTerms[0].pending], [1, 'TREMOL_ETHERNET', 'PROD', 'v2', '1'], 'api: monitor shows per-till fiscal state exactly as reported');
-    eq([v.fiscalModes, v.fiscalFields, v.fiscalEnvs, v.fiscalStatus, v.setUnconfigured], [undefined, undefined, undefined, undefined, undefined], 'api: the page exposes no fiscal configuration controls'); }
+  // the till's heartbeat fiscal block is kept on the terminal and rendered by the monitor — an old till reports no env: the monitor says "—", never a guess
+  { const t0 = a.state.db.terminals[0]; eq([!!t0.fiscal, t0.fiscal.mode, t0.fiscal.env, t0.pendingReceipts], [true, 'TREMOL_ETHERNET', undefined, 1], 'api: apiTerminalToDb keeps the heartbeat fiscal block as sent (an old till has no env)'); }
+  { a.state.admin = false; a.state.section = 'settings'; a.state.page = 'Fiskalizimi'; a.state.fiscalTab = 'Monitor'; const v = a.renderVals();
+    eq([v.fiscalTerms.length, v.fiscalTerms[0].mode, v.fiscalTerms[0].env, v.fiscalTerms[0].ver, v.fiscalTerms[0].pending], [1, 'TREMOL_ETHERNET', '—', 'v2', '1'], 'api: monitor shows per-till fiscal state exactly as reported (env "—" when the till does not send it)');
+    a.state.fiscalTab = 'Konfigurimi'; const w = a.renderVals().fwv;
+    eq([!!w.off, w.ready, w.cards, w.actions], [true, undefined, undefined, undefined], 'api, feature off: the configuration tab has no fields and no actions'); a.state.fiscalTab = 'Monitor'; }
   // owner-only "Zbraz librat e kompanisë": PUT /state with empty books, server-owned keys untouched, audited
   { a.state.section = 'shitje'; a.state.page = 'Fatura'; const v = a.renderVals(); eq([v.canEmptyBooks, v.hasSaved], [true, false], 'api: owner sees "Zbraz librat", not the local demo reset'); v.emptyBooksConfirm(); eq(!!a.state.confirm && /Zbraz/.test(a.state.confirm.title), true, 'api: emptying the books asks first');
     const usersBefore = a.state.db.users.length; a.state.confirm.ok(); a.state.confirm = null; for (let i = 0; i < 20 && a.state.db.posReceipts.length; i++) await wait();
@@ -1198,12 +1203,13 @@ const apiBlock = (async () => {
 })().catch(e => { console.log('FAIL api-mode tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
 
 // ── demo data removed: derived statuses, editable accounts, terminals, empty tenant books ──
-c.state.db = c.seedDb(); c.state.session = null; c.state.dr = null; c.state.frm = null; c.state.admin = false; c.state.section = 'settings'; c.state.page = 'Fiskalizimi';
+c.state.db = c.seedDb(); c.state.session = null; c.state.dr = null; c.state.frm = null; c.state.admin = false; c.state.section = 'settings'; c.state.page = 'Fiskalizimi'; c.state.fiscalTab = 'Konfigurimi';
 { const v = c.renderVals();
   eq([v.fiscalTerms.length, v.fiscalHasTerms], [0, false], 'fiscal monitor: no invented terminals (empty state until tills report)');
   eq(v.queueStats.find(x => x.label === 'Të suksesshme').n, db().queue.filter(q => q.status === 'E suksesshme').length, 'queue: successful count is counted, not 1284');
-  eq(v.fiscalTabs.map(t => t.label), ['Arkat', 'Radha e transaksioneve', 'Kuponët'], 'fiscal page: read-only tabs (arkat / queue / receipts)');
-  eq(v.fiscalGuide.length >= 4 && v.fiscalGuide.every(g => !g.go), true, 'fiscal guide: plain text steps, nothing clickable/configurable');
+  eq(v.fiscalTabs.map(t => t.label), ['Konfigurimi', 'Monitori', 'Radha e transaksioneve', 'Kuponët'], 'fiscal page: configuration (from the web) + monitor / queue / receipts tabs');
+  eq(v.fiscalGuide.length >= 4 && v.fiscalGuide.every(g => !g.go), true, 'fiscal guide: plain text steps');
+  eq([v.fiscalCfgTab, !!v.fwv.off, /lokale/.test(v.fwv.offText)], [true, true, true], 'fiscal page, local mode: the configuration tab explains it needs the server — the till configures itself, as before');
   eq(v.fiscalUrls.map(u => u.id), ['TEST', 'PROD'], 'fiscal: ATK service URLs shown read-only');
   eq(v.taxGroups.map(t => t.code + t.rate).join(' '), 'A0% C0% D8% E18%', 'fiscal page: ATK tax groups listed'); }
 // a locally connected POS (no registered terminal) appears in the monitor with the fiscal state IT reports
@@ -3253,7 +3259,227 @@ apiBlock.then(async () => {
       Y.logout(); M.logout(); done(Y); done(M);
       eq([S.bad.slice(bad0), S.noHdr, TP.commits.every(c => Object.keys(c).every(k => ['products', 'categories', 'posProposalsDone'].includes(k)))], [[], [], true], 'mock server (proposals): no commit carried `_srv` rows or posSync runtime fields — only products / categories / posProposalsDone; every call had X-Kontabo-Client: 2');
     } finally { S.features = feat0; }
-  }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
+  }).catch(e => { console.log('FAIL KONTABO BAR proposals tests threw: ' + (e && e.stack || e)); process.exitCode = 1; })
+  // ══ POS › Fiskalizimi: the tills' fiscal settings from the web (owner decision 2026-10-07; PLANI.md appendix D/G) ══
+  // against a mock of kontabo-backend's /fiscal/* (API.md "Fiskalizimi i arkave nga ueb-i": the same lock rules, gate checks and CAS) and the
+  // cross-language vectors of tools/fiscal_web_vectors.json (= kontabo-backend tests/fiscal_web_vectors.json — TEST passwords, never the real one)
+  .then(async () => {
+    const nc = require('crypto'), FV = JSON.parse(fs.readFileSync(path.join(__dirname, 'fiscal_web_vectors.json'), 'utf8'));
+    const wait = (ms = 5) => new Promise(r => setTimeout(r, ms)), until = async (f, n = 600) => { for (let i = 0; i < n && !f(); i++) await wait(5); return f(); };
+    // ── 1. the staff crypto, both ways (the browser's WebCrypto and the page's own fallback): byte for byte the Python vectors
+    for (const noSubtle of [false, true]) {
+      const X = new C({}); X._fwNoSubtle = noSubtle; const tag = noSubtle ? ' (pa WebCrypto)' : ' (WebCrypto)';
+      eq(await X.fwEdMode(), noSubtle ? 'js' : 'subtle', 'staff crypto' + tag + ': the signer in use');
+      for (const v of FV.versions) { const k = await X.fwStaffKey(v.password, v.signSalt); eq([X.fwHex(k.seed), k.pub], [v.seed, v.pub], 'staff crypto' + tag + ': v' + v.v + ' — seed (PBKDF2-HMAC-SHA256 300 000) and Ed25519 public key = Python'); }
+      const R8 = FV.rfc8032_test1, kr = await X.fwEdKey(X.fwUnhex(R8.seed));
+      eq([X.fwHex(kr.pub), X.fwHex(await kr.sign(new Uint8Array(0)))], [R8.pub, R8.signature], 'staff crypto' + tag + ': RFC 8032 test 1');
+      for (const g of FV.gateNotes) { const o = JSON.parse(g.body), key = await X.fwEdKey(X.fwUnhex(FV.versions.find(v => v.v === g.chainV).seed));
+        eq([X.fwCanon(o), X.fwHex(X.fwUtf8(X.fwCanon(o))), X.fwHex(await key.sign(X.fwUtf8(g.body)))], [g.body, g.bodyUtf8Hex, g.signature], 'gate note' + tag + ': ' + g.what + ' — canonical text, UTF-8 bytes and signature = Python'); }
+      const CN = FV.canonical, k1 = await X.fwEdKey(X.fwUnhex(FV.versions[1].seed)), ct = X.fwCanon(CN.object);
+      eq([ct, X.fwHex(X.fwUtf8(ct)), nc.createHash('sha256').update(Buffer.from(X.fwUtf8(ct))).digest('hex'), X.fwHex(await k1.sign(X.fwUtf8(CN.text)))], [CN.text, CN.utf8Hex, CN.sha256, CN.signatureV1],
+        'canonical JSON' + tag + ': ë/ç kept as UTF-8, keys by code point, no spaces — byte for byte json.dumps(sort_keys=True, separators=(",",":"), ensure_ascii=False)');
+    }
+    { const X = new C({}); eq([X.fwCanon({ b: [1, 'x"\\\n\u0001'], a: null, 'é': true, z: ' ' }), (() => { try { X.fwCanon({ a: 1.5 }); return 'pranoi'; } catch (e) { return 'refuzoi'; } })()], ['{"a":null,"b":[1,"x\\"\\\\\\n\\u0001"],"z":" ","é":true}', 'refuzoi'], 'canonical JSON: Python\'s escapes (" \\ control → \\u00xx), U+2028 raw, é after z; a float is refused (the note carries integers only)'); }
+
+    // ── 2. the mock server: kontabo-backend app/fiscal_web.py, cut down to what the page meets
+    const TEN = '00000000-0000-4000-8000-000000000001', V1 = FV.versions[1], TOK = 'Bearer fw-acc';
+    const blank = () => ({ mode: '', env: '', unitNo: '', atkPosId: '', fiscalizationNo: '', coupon: {} });
+    const rep0 = { mode: null, version: null, simulator: null, pending: null, env: null, certEnv: null, certNotAfter: null, keyFp: null, registered: null, atkCoupons: null, failed: null, oldestPendingAt: null, link: null, appliedVersion: null, applied: null, proposals: null, blockers: null, printer: null, clockOffsetS: null, ids: {} };
+    const term = (id, name, posId, kind, appVersion, o) => ({ id, name, posId, branch: 'Dega kryesore', status: 'Aktiv', kind, appVersion, online: true, lastSeenAt: '2026-09-20T09:59:00Z', version: 0, desired: blank(), changedAt: null, changedBy: '',
+      applied: { version: 0, at: null, report: { applied: [], proposals: [], blockers: [] } }, registered: false, registeredAt: null, ...o, reported: { ...rep0, ...(o.reported || {}) } });
+    const S = { biz: { bizVersion: 0, nui: '', vatRegistered: '', coupon: {} }, staff: { chainV: 1, pub: V1.pub, signSalt: V1.signSalt }, gate: { failures: 0, blocked: false, blockedUntil: null }, canEdit: true, nonces: {}, notes: [], changes: [], calls: [], raw: [], seq: 0,
+      terms: [term('t-pos', 'Arka', 'POS-001', 'kontabo-pos', '0.16.0', { registered: true, registeredAt: '2026-09-01T08:00:00Z', reported: { mode: 'ATK_ELECTRONIC', version: 4, simulator: false, pending: 2, env: 'TEST', certEnv: 'TEST', certNotAfter: '2027-09-01T00:00:00Z',
+          keyFp: 'ab'.repeat(32), registered: true, atkCoupons: 120, failed: 0, link: 'online', appliedVersion: 0, applied: [], proposals: [], blockers: [], printer: 'POS-76', clockOffsetS: 3, ids: { nui: '811234567', unitNo: '5130484', posId: '1231', fiscalizationNo: '037388821441', vatRegistered: '1' } } }),
+        term('t-bar', 'RESTAURANTIU', 'POS-004', 'kontabo-bar', 'KONTABO BAR 1.11.13', { branch: '', reported: { mode: 'ATK_ELECTRONIC', simulator: false } }),
+        term('t-old', 'Arka 2', 'POS-002', 'kontabo-pos', '0.15.0', { online: false, lastSeenAt: '2026-09-19T08:00:00Z', reported: { mode: 'UNCONFIGURED', version: 0, simulator: false, pending: 0 } })] };
+    const RID = { unitNo: 'unitNo', atkPosId: 'posId', fiscalizationNo: 'fiscalizationNo', nui: 'nui', vatRegistered: 'vatRegistered' };
+    const repV = (t, k) => k === 'env' ? (['TEST', 'PROD'].includes(t.reported.env) ? t.reported.env : '') : k === 'mode' ? String(t.reported.mode || '').toUpperCase() : ((t.reported.ids || {})[RID[k]] || '');
+    const effV = (t, k) => t.desired[k] || repV(t, k), base = t => t.registered ? 'registered' : t.reported.keyFp ? 'key' : 'free';
+    const tLocks = t => t.kind === 'kontabo-bar' ? Object.fromEntries(['mode', 'env', 'unitNo', 'atkPosId', 'fiscalizationNo', 'coupon'].map(k => [k, 'bar']))
+      : { mode: 'free', env: 'staff', unitNo: effV(t, 'unitNo') && S.terms.some(o => o.id !== t.id && o.registered && effV(o, 'unitNo') === effV(t, 'unitNo')) ? 'registered' : base(t), atkPosId: base(t), fiscalizationNo: base(t), coupon: 'free' };
+    const bLocks = () => { const reg = S.terms.some(t => t.registered), key = S.terms.some(t => t.reported.keyFp); return { nui: reg ? 'registered' : key ? 'key' : 'free', vatRegistered: reg ? 'registered' : 'free', coupon: 'free' }; };
+    const bEff = k => { if (S.biz[k]) return S.biz[k]; for (const kinds of [['kontabo-pos'], ['kontabo-pos', 'kontabo-bar']]) { const seen = [...new Set(S.terms.filter(t => kinds.includes(t.kind)).map(t => repV(t, k)).filter(Boolean))]; if (seen.length) return seen.length === 1 ? seen[0] : ''; } return ''; };
+    const item = t => { const managed = t.kind === 'kontabo-pos' && t.version > 0, parts = [effV(t, 'unitNo'), S.biz.nui || repV(t, 'nui'), effV(t, 'atkPosId')];
+      return JSON.parse(JSON.stringify({ ...t, managed, locks: tLocks(t), effective: Object.fromEntries(['mode', 'env', 'unitNo', 'atkPosId', 'fiscalizationNo'].map(k => [k, effV(t, k)])), sef: parts.every(Boolean) ? parts.join('-') : '', pendingApply: managed && t.applied.version !== t.version })); };
+    const biz = () => ({ ...JSON.parse(JSON.stringify(S.biz)), locks: bLocks(), effective: { nui: bEff('nui'), vatRegistered: bEff('vatRegistered') }, tenantNui: '811234567' });
+    const bumped = () => S.terms.filter(x => x.kind === 'kontabo-pos' && x.version > 0).map(x => ({ id: x.id, version: x.version }));
+    const needs = (lock, o, n) => lock === 'registered' || lock === 'staff' ? n !== o : lock === 'key' ? o !== '' && n !== o : false;
+    const canon = v => Array.isArray(v) ? '[' + v.map(canon).join(',') + ']' : v && typeof v === 'object' ? '{' + Object.keys(v).sort().map(k => JSON.stringify(k) + ':' + canon(v[k])).join(',') + '}' : JSON.stringify(v);
+    const spki = pub => nc.createPublicKey({ key: Buffer.concat([Buffer.from('302a300506032b6570032100', 'hex'), Buffer.from(pub, 'hex')]), format: 'der', type: 'spki' });
+    const failed = () => { S.gate.failures++; if (S.gate.failures >= 5) { S.gate.blocked = true; S.gate.blockedUntil = '2026-09-20T10:15:00Z'; } };
+    const checkGate = (gate, scope, terminal, version, locked) => { let o; try { o = JSON.parse(gate.body); } catch (e) { return 'body'; }
+      if (Object.keys(o).sort().join() !== 'koha,lloji,ndryshimet,nonce,pub,scope,tenant,terminal,v,versioni') return 'body';
+      if (canon(o) !== gate.body) return 'not_canonical';
+      const n = S.nonces[o.nonce]; if (!n) return 'nonce_unknown'; if (n.used) return 'nonce_used'; n.used = true;
+      if (o.lloji !== 'porta-fiskale-web-v1' || o.tenant !== TEN || o.scope !== scope || o.terminal !== terminal) return 'wrong_target';
+      if (o.versioni !== version) return 'version'; if (canon(o.ndryshimet) !== canon(locked)) return 'changes'; if (o.pub !== S.staff.pub || o.v !== S.staff.chainV) return 'stale_chain';
+      if (!/^[0-9a-f]{128}$/.test(gate.signature) || !nc.verify(null, Buffer.from(gate.body, 'utf8'), spki(o.pub), Buffer.from(gate.signature, 'hex'))) { failed(); return 'bad_signature'; }
+      S.notes.push({ scope, terminal, o, body: gate.body }); return null; };
+    const okV = { nui: v => !v || /^\d{1,16}$/.test(v), unitNo: v => !v || /^\d{1,12}$/.test(v), atkPosId: v => !v || (/^\d{1,12}$/.test(v) && +v >= 1), fiscalizationNo: v => !v || /^[0-9A-Za-z-]{1,64}$/.test(v), env: v => ['', 'TEST', 'PROD'].includes(v), mode: v => ['', 'UNCONFIGURED', 'ATK_ELECTRONIC', 'TREMOL_ETHERNET'].includes(v), vatRegistered: v => ['', '0', '1'].includes(v) };
+    const json = (status, body) => ({ ok: status < 400, status, json: async () => body }), err = (status, error, extra = {}) => json(status, { error, message: 'mock: ' + error, ...extra });
+    const putCfg = (scope, t, body) => { const cur = scope === 'business' ? S.biz : t.desired, version = scope === 'business' ? S.biz.bizVersion : t.version;
+      if (body.expectedVersion !== version) return err(409, 'version_conflict', { version });
+      const next = JSON.parse(JSON.stringify(cur)), diff = [], effOld = {}, cdiff = [];
+      for (const [k, v] of Object.entries(body.changes || {})) {
+        if (k === 'coupon') { for (const [ck, cv] of Object.entries(v)) { if (cv === null) delete next.coupon[ck]; else next.coupon[ck] = cv; if (canon(next.coupon[ck]) !== canon(cur.coupon[ck])) cdiff.push(ck); } continue; }
+        if (!okV[k] || typeof v !== 'string' || !okV[k](v)) return err(400, 'invalid_value', { key: k });
+        if (v !== cur[k]) { next[k] = v; diff.push(k); if (k !== 'mode') effOld[k] = scope === 'business' ? bEff(k) : effV(t, k); } }
+      if (!diff.length && !cdiff.length) return json(200, scope === 'business' ? { business: biz(), terminals: bumped() } : { terminal: item(t) });
+      for (const [k, o] of Object.entries(effOld)) if (next[k] === '' && o !== '') return err(400, 'invalid_value', { key: k });
+      if (diff.includes('mode') && String(body.reason || '').length < 3) return err(400, 'reason_required');
+      if (scope === 'terminal' && (diff.includes('unitNo') || diff.includes('atkPosId'))) { const u = next.unitNo || repV(t, 'unitNo'), p = next.atkPosId || repV(t, 'atkPosId'), o = S.terms.find(x => x.id !== t.id && effV(x, 'unitNo') === u && effV(x, 'atkPosId') === p); if (u && p && o) return err(409, 'pos_id_taken', { terminal: o.id }); }
+      const locks = scope === 'business' ? bLocks() : tLocks(t), locked = {};
+      for (const [k, o] of Object.entries(effOld)) if (needs(locks[k], o, next[k])) locked[k] = [o, next[k]];
+      if (Object.keys(locked).length) { if (!body.gate) return err(409, 'staff_required', { keys: Object.keys(locked).sort(), lock: Object.fromEntries(Object.keys(locked).map(k => [k, locks[k]])), changes: locked, version, scope, terminal: scope === 'business' ? '' : t.id });
+        if (S.gate.blocked) return err(429, 'gate_blocked', { blockedUntil: S.gate.blockedUntil, retryAfter: 900 });
+        const why = checkGate(body.gate, scope, scope === 'business' ? '' : t.id, version, locked); if (why) return err(400, 'gate_invalid', { reason: why }); }
+      const row = (key, old, nu, st) => S.changes.push({ id: ++S.seq, at: '20.09.2026 12:00', atIso: '2026-09-20T10:00:00Z', scope, terminalId: scope === 'business' ? null : t.id, terminalName: scope === 'business' ? '' : t.name + ' (' + t.posId + ')', key, old, new: nu, by: 'Arben B.', reason: body.reason || '', staff: st, gateNoteId: st ? S.notes.length : null, version: version + 1 });
+      diff.forEach(k => row(k, effOld[k] ?? cur[k], next[k], k in locked)); cdiff.forEach(k => row('coupon.' + k, cur.coupon[k] === undefined ? '' : String(cur.coupon[k]), next.coupon[k] === undefined ? '' : String(next.coupon[k]), false));
+      if (scope === 'business') { S.biz = { ...next, bizVersion: version + 1 }; S.terms.filter(x => x.kind === 'kontabo-pos' && x.version > 0).forEach(x => { x.version++; }); return json(200, { business: biz(), terminals: bumped() }); }
+      t.desired = next; t.version = version + 1; t.changedBy = 'Arben B.'; t.changedAt = '2026-09-20T10:00:00Z'; return json(200, { terminal: item(t) }); };
+    const prevFetch = ctx.fetch, mem = {}, store = { getItem: k => (k in mem ? mem[k] : null), setItem: (k, v) => { mem[k] = String(v); }, removeItem: k => { delete mem[k]; } };
+    ctx.localStorage = store; ctx.sessionStorage = store; ctx.AbortController = class { constructor() { this.signal = {}; } abort() {} };
+    ctx.fetch = async (url, o = {}) => {
+      const p = String(url).replace(/^http:\/\/[^/]+\/api\/v1/, ''), m = o.method || 'GET', body = o.body ? JSON.parse(o.body) : {}, po = p.split('?')[0], q = qsOf(p);
+      if (p === '/health') return json(200, { ok: true, app: 'Kontabo Backend', features: ['fiscalWeb:1'] });
+      if ((o.headers || {}).Authorization !== TOK) return prevFetch ? prevFetch(url, o) : err(401, 'unauthorized'); // another block's instance: not this server
+      S.calls.push(m + ' ' + p); S.raw.push({ m, p, body: o.body || '' });
+      if (m === 'GET' && po === '/fiscal/overview') return json(200, { business: biz(), terminals: S.terms.map(item), staff: { ...S.staff, iterations: 300000 }, gate: { ...S.gate, maxFailures: 5 }, canEdit: S.canEdit });
+      if (m === 'POST' && po === '/fiscal/gate/nonce') { if (S.gate.blocked) return err(429, 'gate_blocked', { blockedUntil: S.gate.blockedUntil, retryAfter: 900 }); const n = nc.randomBytes(16).toString('hex'); S.nonces[n] = { used: false };
+        return json(200, { nonce: n, expiresAt: new Date(clockNow() + 600000).toISOString().replace(/\.\d{3}Z$/, 'Z'), tenant: TEN, ...S.staff, iterations: 300000 }); }
+      if (m === 'POST' && po === '/fiscal/gate/attempt') { if (S.gate.blocked) return err(429, 'gate_blocked', { blockedUntil: S.gate.blockedUntil, retryAfter: 900 }); if (body.nonce && S.nonces[body.nonce]) S.nonces[body.nonce].used = true; failed();
+        return json(200, { failures: S.gate.failures, remaining: S.gate.blocked ? 0 : 5 - S.gate.failures, blocked: S.gate.blocked, blockedUntil: S.gate.blockedUntil }); }
+      if (m === 'PUT' && po === '/fiscal/business') { if (!S.canEdit) return err(403, 'forbidden'); return putCfg('business', null, body); }
+      const tm = /^\/fiscal\/terminals\/([^/]+)(\/import)?$/.exec(po);
+      if (tm) { const t = S.terms.find(x => x.id === tm[1]); if (!S.canEdit) return err(403, 'forbidden'); if (!t) return err(404, 'not_found'); if (t.kind === 'kontabo-bar') return err(409, 'managed_by_bar');
+        if (m === 'PUT' && !tm[2]) return putCfg('terminal', t, body);
+        if (m === 'POST' && tm[2]) { const cand = {}, bc = {}, conflicts = [];
+          for (const k of ['unitNo', 'atkPosId', 'fiscalizationNo', 'env', 'mode']) { const v = repV(t, k); if (v && okV[k](v)) cand[k] = v; }
+          for (const k of ['nui', 'vatRegistered']) { const v = repV(t, k); if (v) bc[k] = v; }
+          if (!Object.keys(cand).filter(k => k !== 'mode').length && !Object.keys(bc).length) return err(409, 'nothing_reported');
+          if (body.expectedVersion !== undefined && body.expectedVersion !== t.version) return err(409, 'version_conflict', { version: t.version });
+          let bch = false; for (const [k, v] of Object.entries(bc)) { if (!S.biz[k]) { S.biz[k] = v; bch = true; } else if (S.biz[k] !== v) conflicts.push({ key: k, business: S.biz[k], reported: v }); }
+          if (bch) { S.biz.bizVersion++; S.terms.filter(x => x.id !== t.id && x.kind === 'kontabo-pos' && x.version > 0).forEach(x => { x.version++; }); }
+          Object.assign(t.desired, cand); t.version++; return json(200, { terminal: item(t), business: biz(), conflicts }); } }
+      if (m === 'GET' && po === '/fiscal/changes') { const it = S.changes.filter(x => !q.terminal || (q.terminal === 'business' ? x.scope === 'business' : x.terminalId === q.terminal)).sort((a, b) => b.id - a.id).slice(0, +(q.limit || 100)); return json(200, { items: it }); }
+      return err(404, 'not_found');
+    };
+    const puts = () => S.raw.filter(r => r.m === 'PUT').map(r => ({ p: r.p, ...JSON.parse(r.body) }));
+    const settle = async F => { await until(() => !F._fwSaving && !F._fwBusy); await wait(); };
+    const confirmOk = F => { const cf = F.state.confirm; F.state.confirm = null; return cf && cf.ok(); };
+    const fld = (v, k) => v.cards.flatMap(c => c.fields).find(f => f.key === k);
+    try {
+      // ── 3. the page against the mock: feature detection, the first read, the view
+      const F = new C({}), sess0 = { userId: 'm1', name: 'Arben Berisha', email: 'arben@albco.test', role: 'Pronar', perms: {}, api: true };
+      F.state.db = { ...F.seedEmpty({ name: 'AlbCo Partners', nui: '811234567', city: 'Prishtinë', plan: 'pro' }), users: [{ id: 'm1', name: 'Arben Berisha', email: 'arben@albco.test', role: 'Pronar', status: 'Aktiv', branch: 'Dega kryesore' }], roles: {}, audit: [], terminals: [], apiKeys: [], ...F.apiSessionExtras(sess0) };
+      F.saveApi({ url: 'http://127.0.0.1:8800/api/v1', accessToken: 'fw-acc', refreshToken: 'fw-ref', tenantId: TEN, tenantName: 'AlbCo Partners' });
+      F.state.session = sess0;
+      await F.ledgerProbe(false); eq(F._fwFeat, true, 'fiscal web: /health lists fiscalWeb:1 → the configuration tab talks to the server');
+      F.go('pos', 'Fiskalizimi'); eq([F.state.section, F.state.page, F.state.fiscalTab, !!F.renderVals().fwv.loading], ['pos', 'Fiskalizimi', 'Konfigurimi', true], 'POS › Fiskalizimi opens on „Konfigurimi" (loading until the overview arrives)');
+      await F.fwSync(); await settle(F); F.fwSync(); await wait();
+      eq(S.calls, ['GET /fiscal/overview'], 'fiscal web: one GET /fiscal/overview when the tab opens — not again before the refresh interval');
+      let v = F.renderVals().fwv;
+      eq([v.ready, v.chips.map(c => c.label), F.state.fw.sel, v.chips.map(c => c.dot)], [true, ['Arka · POS-001', 'RESTAURANTIU · POS-004', 'Arka 2 · POS-002'], 't-pos', ['#2563EB', '#8FA3B8', '#CBD5E1']],
+        'terminal picker: one chip per till, the first Kontabo POS selected; status colour (unmanaged blue, KONTABO BAR grey, offline light grey)');
+      eq([v.tiles.map(t => t.label), v.tiles.map(t => t.value)], [['Fiskalizimi', 'TVSH', 'Mjedisi', 'Çelësi', 'Certifikata', 'Në pritje', 'Me gabim', 'Të dërguar'], ['Aktiv', 'Në TVSH', 'TEST', 'Po', 'TEST', '2', '0', '120']], 'status strip: the 8 tiles from the heartbeat');
+      eq([fld(v, 'nui').value, fld(v, 'nui').dis, fld(v, 'nui').lockLbl, fld(v, 'nui').hint, fld(v, 'atkPosId').value, fld(v, 'atkPosId').dis, fld(v, 'env').dis, fld(v, 'env').lockLbl, fld(v, 'mode').dis, fld(v, 'vatRegistered').dis],
+        ['811234567', true, 'kyçur', 'siç e raporton arka', '1231', true, true, 'me stafin', false, true], 'cards: values the till reports while the web has none; registered ids and the env locked (lock icon), the mode free');
+      eq([v.cards.map(c => c.title), v.cards[0].fields.find(f => /SEF/.test(f.label)).value, v.lockBar, v.actions.map(a => a.label), v.actions[0].dis],
+        [['Të dhënat e biznesit · njësia · SEF', 'Statusi dhe ambienti', 'Kuponi'], '5130484-811234567-1231', true, ['Ruaj', 'Historiku', 'Importo vlerat nga arka'], true], 'three cards, the SEF id = unit-NUI-POS ID, the unlock bar, the footer (Ruaj disabled until something changes)');
+      eq([v.alerts.some(a => /pamenaxhuar/.test(a.t)), v.cards[1].rows[0].v, /çelësi.*krijohen dhe mbeten në arkë/i.test(v.cards[0].note)], [true, 'POS-76', true], 'alerts (unmanaged → import first), the printer read-only from the heartbeat, "çelësi krijohet në arkë"');
+      // ── 4. "Importo vlerat nga arka": the till's own values, no staff note, the till becomes managed
+      eq(F.fwImportAsk(), true, 'import asks first'); confirmOk(F); await settle(F);
+      eq([S.raw.find(r => r.p === '/fiscal/terminals/t-pos/import').body, S.terms[0].version, S.terms[0].desired, S.biz.nui, S.biz.vatRegistered, /importuan/.test(F.state.fw.msg.t)],
+        ['{"expectedVersion":0}', 1, { mode: 'ATK_ELECTRONIC', env: 'TEST', unitNo: '5130484', atkPosId: '1231', fiscalizationNo: '037388821441', coupon: {} }, '811234567', '1', true], 'import: POST …/import {expectedVersion}, the till managed (v1) with exactly what it reports; business NUI / VAT taken while the web had none');
+      v = F.renderVals().fwv; eq([v.alerts.some(a => /pamenaxhuar/.test(a.t)), v.chips[0].sub.includes('pret zbatimin'), v.alerts.some(a => /Në pritje të arkës/.test(a.t))], [false, true, true], 'after the import: managed, waiting for the till to apply v1');
+      // ── 5. a free key (the mode) needs a reason; the CAS PUT carries expectedVersion and no gate
+      const n0 = S.raw.length; F.fwEdit('mode', 'UNCONFIGURED'); eq([F.fwSave(), F.state.fw.errKey, S.raw.length - n0, !!fld(F.renderVals().fwv, 'reason')], [false, 'reason', 0, true], 'mode change without a reason: refused on the page (the reason field appears), nothing sent');
+      F.fwEdit('reason', 'Arka kalon në provë'); eq(F.fwSave(), true, 'with a reason: the confirmation opens');
+      eq([F.state.confirm.title, F.state.confirm.body.split('\n')[0]], ['Ruaj konfigurimin fiskal?', 'Arka · Fiskalizimi: ATK elektronik → Joaktiv'], 'confirmation: the per-key diff (e vjetra → e reja)');
+      confirmOk(F); await settle(F);
+      eq([puts().pop(), S.terms[0].version, F.state.fw.ed, /U ruajt/.test(F.state.fw.msg.t)], [{ p: '/fiscal/terminals/t-pos', expectedVersion: 1, changes: { mode: 'UNCONFIGURED' }, reason: 'Arka kalon në provë' }, 2, {}, true], 'free change: PUT /fiscal/terminals/{id} {expectedVersion, changes, reason} — no staff note, the edits cleared');
+      // ── 6. the coupon: business defaults, a till override, "Si biznesi" removes it; the page's own checks
+      F.setFw({ cScope: 'business' }); F.fwEdit('cb.freeText', '  Faleminderit!\r\nJu mirëpresim sërish  '); F.fwEdit('cb.lang', 'sq'); F.fwSave(); confirmOk(F); await settle(F);
+      eq([puts().pop(), S.terms[0].version], [{ p: '/fiscal/business', expectedVersion: 1, changes: { coupon: { freeText: 'Faleminderit!\nJu mirëpresim sërish', lang: 'sq' } } }, 3], 'coupon defaults: PUT /fiscal/business (text trimmed, CRLF → LF); the managed till\'s version goes up');
+      F.setFw({ cScope: 'terminal' }); v = F.renderVals().fwv; { const lang = fld(v, 'ct.lang'); eq([lang.hint, lang.opts.map(o => o.label), lang.opts.find(o => o.on === '1').label, /ardhshëm/.test(lang.note)], ['biznesi: shqip', ['Si biznesi', 'Shqip', 'Srpski'], 'Si biznesi', true], 'till override: "Si biznesi" until set, the business value as the hint, marked "zbatohet në versionin e ardhshëm"'); }
+      fld(v, 'ct.lang').opts.find(o => o.label === 'Srpski').go(); F.fwSave(); confirmOk(F); await settle(F);
+      eq(puts().pop(), { p: '/fiscal/terminals/t-pos', expectedVersion: 3, changes: { coupon: { lang: 'sr' } } }, 'till override: PUT /fiscal/terminals/{id} {coupon:{lang:"sr"}}');
+      fld(F.renderVals().fwv, 'ct.lang').opts[0].go(); F.fwSave(); confirmOk(F); await settle(F);
+      eq([puts().pop().changes, S.terms[0].desired.coupon], [{ coupon: { lang: null } }, {}], '"Si biznesi": the override is removed (null)');
+      const n1 = S.raw.length; F.fwEdit('ct.closingHour', '25:00'); eq([F.fwSave(), F.state.fw.errKey, S.raw.length - n1], [false, 'ct.closingHour', 0], 'closing hour 25:00 refused on the page');
+      F.fwEdit('ct.closingHour', ''); F.fwEdit('cb.freeText', 'x'.repeat(301)); eq([F.fwSave(), F.state.fw.errKey], [false, 'cb.freeText'], 'free text over 300 refused'); F.fwDiscard();
+      // ── 7. a locked key: 409 staff_required → the staff dialog → a wrong password is reported → the right one signs → the SAME PUT with the gate
+      const vA = S.terms[0].version; F.fwEdit('atkPosId', '1232'); F.fwSave(); eq(/Të kyçura: POS ID \(ATK\) — kërkohet fjalëkalimi i stafit/.test(F.state.confirm.body) && /regjistrim të ri/.test(F.state.confirm.body), true, 'confirmation names the locked key and the re-registration');
+      confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
+      { const fv = F.formVals(); eq([F.state.frm.ref.changes, fv.title, fv.fields[0].value, fv.fields[1].itype, fv.actions[0].label, fv.actions[0].disabled], [{ atkPosId: ['1231', '1232'] }, 'Fjalëkalimi i stafit të KONTABO', 'POS ID (ATK): 1231 → 1232', 'password', 'Zhblloko', true], 'staff dialog: the locked change, a password field, "Zhblloko" waits for the password'); }
+      F.setF({ pw: 'Gabim-2026!' }); await F.fwUnlockSubmit();
+      eq([/^Fjalëkalim i gabuar · mbeten 4 prova/.test(F.state.frm.err), F.state.frm.pw, S.gate.failures, S.calls.slice(-2), JSON.parse(S.raw[S.raw.length - 1].body).ok, !!S.nonces[JSON.parse(S.raw[S.raw.length - 1].body).nonce].used],
+        [true, '', 1, ['POST /fiscal/gate/nonce', 'POST /fiscal/gate/attempt'], false, true], 'wrong password: the derived key ≠ the chain\'s → POST /fiscal/gate/attempt {ok:false, nonce} (counter + audit), the field emptied');
+      F.setF({ pw: V1.password }); F.formVals().fields[1].key({ key: 'Enter', preventDefault() {} }); await until(() => !F.state.frm); await settle(F);
+      { const nt = S.notes[0], put = puts().pop(); eq([S.notes.length, nt.o.ndryshimet, nt.o.versioni, nt.o.scope, nt.o.terminal, nt.o.tenant, nt.o.pub, nt.o.v, nt.o.lloji, put.expectedVersion, put.changes, typeof put.gate.signature, S.terms[0].desired.atkPosId],
+        [1, { atkPosId: ['1231', '1232'] }, vA, 'terminal', 't-pos', TEN, V1.pub, 1, 'porta-fiskale-web-v1', vA, { atkPosId: '1232' }, 'string', '1232'], 'right password (ë/ç, Enter): the note signed in the browser is accepted — ndryshimet = the refusal\'s changes, versioni = expectedVersion, pub/v of the chain'); }
+      eq([S.calls.filter(x => x === 'POST /fiscal/gate/nonce').length, F.fwUnlocked(), /^E zhbllokuar .* mbeten 1[45]:\d\d$/.test(F.renderVals().fwv.unlockText), fld(F.renderVals().fwv, 'atkPosId').lockLbl], [2, true, true, 'e zhbllokuar'], 'the unlock\'s own nonce signs the first note (no third nonce); 15-minute unlock with a countdown, the lock icons open');
+      // within the unlock: no dialog, a fresh nonce per note
+      F.fwEdit('fiscalizationNo', '037388821442'); F.fwSave(); confirmOk(F); await settle(F);
+      eq([F.state.frm, S.notes.length, S.calls.filter(x => x === 'POST /fiscal/gate/nonce').length, S.terms[0].desired.fiscalizationNo], [null, 2, 3, '037388821442'], 'unlocked: the next locked change is signed at once with a new nonce, no dialog');
+      // a business key and a till key together: business first, then the till with the version the business PUT returned
+      F.fwEdit('nui', '812345678'); F.fwEdit('unitNo', '5130485'); F.fwSave(); confirmOk(F); await settle(F);
+      { const p2 = puts().filter(x => x.gate).slice(-2); eq([p2.map(x => x.p), p2[0].changes, p2[1].expectedVersion, S.notes.slice(-2).map(n => [n.o.scope, n.o.terminal, Object.keys(n.o.ndryshimet)[0]]), S.biz.nui, S.terms[0].desired.unitNo],
+        [['/fiscal/business', '/fiscal/terminals/t-pos'], { nui: '812345678' }, S.terms[0].version - 1, [['business', '', 'nui'], ['terminal', 't-pos', 'unitNo']], '812345678', '5130485'], 'NUI + unit together: PUT business (note scope business, terminal "") then PUT terminal with the version the business PUT returned'); }
+      eq([F.renderVals().fwv.alerts.some(a => /NUI ndryshon/.test(a.t)), F.renderVals().fwv.cards[0].fields.find(f => /SEF/.test(f.label)).value], [true, '5130485-812345678-1232'], 'NUI ≠ the company\'s NUI → an alert; the SEF id follows the new values');
+      // "Kyç tani": the next locked change asks again — closing the dialog stops the save, nothing changes
+      F.renderVals().fwv.lockNow(); eq([F.fwUnlocked(), fld(F.renderVals().fwv, 'atkPosId').dis], [false, true], '"Kyç tani": locked again at once');
+      F.fwEdit('atkPosId', '1233'); F.fwSave(); confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
+      F.setState({ frm: null }); F.fwSync(); await settle(F);
+      eq([/Ruajtja u ndal/.test(F.state.fw.msg.t), S.terms[0].desired.atkPosId, F.state.fw.ed.atkPosId], [true, '1232', '1233'], 'dialog closed: the save stops (edits kept), the server value untouched');
+      // the unlock runs out after 15 minutes
+      F.fwUnlockNow(); F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); eq(F.fwUnlocked(), true, '"Zhblloko…" alone unlocks');
+      F._fwKey.until = clockNow() - 1; F.fwTick(); eq([F._fwKey, /skadoi/.test(F.state.toast || '')], [null, true], 'after 15 minutes the tick locks again (and says so)');
+      F.fwDiscard();
+      // ── 8. the server's refusals
+      S.terms[0].version++; F.fwEdit('mode', 'ATK_ELECTRONIC'); F.fwEdit('reason', 'Rikthim në ATK'); F.fwSave(); confirmOk(F); await settle(F);
+      eq([/ndryshua në server ndërkohë/.test(F.state.fw.msg.t), F.state.fw.ed.mode, S.calls[S.calls.length - 1]], [true, 'ATK_ELECTRONIC', 'GET /fiscal/overview'], '409 version_conflict: reloaded, the edits kept');
+      F.fwSave(); confirmOk(F); await settle(F); eq([S.terms[0].desired.mode, puts().pop().expectedVersion], ['ATK_ELECTRONIC', S.terms[0].version - 1], 'saved again on the fresh version');
+      F.fwPick('t-old'); eq(F.state.fw.sel, 't-old', 'picker: another till');
+      v = F.renderVals().fwv; eq([v.tiles.map(t => t.value), v.alerts.some(a => /nuk i raporton ende/.test(a.t)), v.chips[2].sub], [['Joaktiv', 'Në TVSH', '—', '—', '—', '0', '—', '—'], true, 'Kontabo POS 0.15.0 · jashtë linje'], 'an old till (0.15.0): only the mode and the queue, the rest "—"; it says so');
+      F.fwImport(); await settle(F); eq(/0\.16\.0/.test(F.state.fw.msg.t), true, 'import from an old till: 409 nothing_reported, explained');
+      F.fwEdit('unitNo', '5130485'); F.fwEdit('atkPosId', '1232'); F.fwSave(); confirmOk(F); await settle(F);
+      eq([F.state.fw.errKey, S.terms[2].version], ['atkPosId', 0], '409 pos_id_taken: the POS ID field is marked, nothing saved');
+      F.fwDiscard(); F.fwPick('t-bar'); v = F.renderVals().fwv;
+      eq([v.actions.map(a => a.label), v.cards.flatMap(c => c.fields).filter(f => f.isText || f.isSeg || f.isArea).every(f => f.dis), v.alerts[0].t, F.fwSave(), F.fwImportAsk()], [['Historiku'], true, 'KONTABO BAR.', false, false], 'KONTABO BAR till: read-only ("konfigurohet në KONTABO BAR"), no save, no import');
+      await F.fwCommit({ biz: null, term: { mode: 'UNCONFIGURED' }, rows: [{}], reason: 'provë', errKeys: [] }); eq(/KONTABO BAR/.test(F.state.fw.msg.t), true, '409 managed_by_bar (should a request get through) is explained');
+      // a user without `fiskal` (and the server's canEdit false): read-only, nothing sent
+      F.fwPick('t-pos'); S.canEdit = false; F.state.session = { ...F.state.session, role: 'Kasier', perms: { pos: true } }; await F.fwLoad(); v = F.renderVals().fwv; const n2 = S.raw.length;
+      eq([v.hasRo, v.actions.map(a => a.label), v.lockBar, v.cards.flatMap(c => c.fields).filter(f => f.isText || f.isSeg || f.isArea).every(f => f.dis), F.fwSave(), F.fwImportAsk(), S.raw.length - n2], [true, ['Historiku'], false, true, false, false, 0], 'without the permission "Cilësimet e fiskalizimit": read-only, no Ruaj / Import / Zhblloko, nothing sent');
+      S.canEdit = true; F.state.session = { ...F.state.session, role: 'Pronar', perms: {} }; await F.fwLoad();
+      // the 5-tries block (the server's counter): the dialog says so and sends no password check
+      S.gate.blocked = true; S.gate.blockedUntil = '2026-09-20T10:15:00Z'; F.fwEdit('atkPosId', '1234'); F.fwSave(); confirmOk(F); await until(() => F.state.frm && F.state.frm.kind === 'fwStaff');
+      F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); eq([/bllokuar/.test(F.state.frm.err), F.fwUnlocked()], [true, false], '429 gate_blocked: the dialog says the password is blocked');
+      F.setState({ frm: null }); F.fwSync(); await settle(F); S.gate = { failures: 0, blocked: false, blockedUntil: null }; F.fwDiscard();
+      // ── 9. Historiku: the till's rows + the business rows, newest first, the staff-signed ones marked
+      await F.fwHistory(); v = F.renderVals().fwv;
+      eq([S.calls.slice(-2).sort(), v.histOpen, v.histItems.length, v.histItems[0].key, v.histItems.some(h => h.staff && h.key === 'POS ID (ATK)'), v.histItems.some(h => h.where === 'Biznesi' && h.key === 'NUI')],
+        [['GET /fiscal/changes?terminal=business&limit=200', 'GET /fiscal/changes?terminal=t-pos&limit=200'], true, S.changes.filter(x => x.scope === 'business' || x.terminalId === 't-pos').length, 'Fiskalizimi', true, true], 'Historiku: GET /fiscal/changes for the till and the business, merged newest first; staff-signed rows marked');
+      // ── 10. the render sweep of every state (loading, error, empty, ready, unlocked, history, the dialog)
+      { const errs = [], tryR = (what, f) => { try { f(); F.renderVals(); F.formVals(); } catch (e) { errs.push(what + ': ' + e.message); } }, keep = F.state.fw;
+        tryR('loading', () => { F.state.fw = null; }); tryR('error', () => { F.state.fw = { tid: TEN, err: 'x', data: null, ed: {} }; }); tryR('empty', () => { F.state.fw = { ...keep, data: { ...keep.data, terminals: [] } }; });
+        tryR('ready', () => { F.state.fw = keep; }); tryR('history busy', () => { F.state.fw = { ...keep, hist: { tid: 't-pos', busy: true, items: [] } }; }); tryR('history error', () => { F.state.fw = { ...keep, hist: { tid: 't-pos', busy: false, err: 'x', items: [] } }; });
+        tryR('alerts', () => { F.state.fw = { ...keep, data: { ...keep.data, terminals: keep.data.terminals.map(t => ({ ...t, online: false, reported: { ...t.reported, blockers: ['ids_mismatch', 'kod_i_ri'], proposals: ['nui'], failed: 3, oldestPendingAt: '2026-08-20T10:00:00Z', clockOffsetS: -300, certNotAfter: '2026-09-25T00:00:00Z', certEnv: 'PROD', link: 'offline' } })) } }; });
+        tryR('staff dialog', () => { F.state.fw = keep; F.state.frm = { kind: 'fwStaff', pw: 'x', busy: true, err: 'e', ref: { changes: { env: ['TEST', 'PROD'], 'coupon.lang': ['', 'sr'] }, scope: 'terminal' } }; });
+        tryR('staff dialog (unlock only)', () => { F.state.frm = { kind: 'fwStaff', pw: '', busy: false, err: '', ref: null }; });
+        F.state.frm = null; F.state.fw = keep; eq(errs, [], 'render sweep: every state of POS › Fiskalizimi renders (loading, error, empty, ready, alerts, history, the staff dialog)'); }
+      // ── 11. what crossed the wire: only the fiscal-web routes, writes with expectedVersion, no secret, no password, no seed — and nothing fiscal in the book
+      const okRoute = x => /^(GET \/fiscal\/overview|PUT \/fiscal\/business|PUT \/fiscal\/terminals\/[^/?]+|POST \/fiscal\/terminals\/[^/?]+\/import|POST \/fiscal\/gate\/(nonce|attempt)|GET \/fiscal\/changes\?terminal=[^&]+&limit=\d+)$/.test(x);
+      eq([S.calls.filter(x => !okRoute(x)), S.raw.filter(r => r.m === 'PUT' || /import$/.test(r.p)).every(r => Number.isInteger(JSON.parse(r.body).expectedVersion))], [[], true], 'only /fiscal/overview|business|terminals/{id}[/import]|gate/nonce|gate/attempt|changes — every write carries expectedVersion');
+      const allBodies = S.raw.map(r => r.body).join('\n'), seeds = FV.versions.map(x => x.seed);
+      eq([/"(?:[a-z_]*pem|private_?key|privateKey|cert(?:ificate)?|password|pass|tremol_pass|seed|pw)"\s*:/i.test(allBodies), FV.versions.some(x => allBodies.includes(x.password) || allBodies.includes(JSON.stringify(x.password).slice(1, -1))), seeds.some(sd => allBodies.includes(sd))], [false, false, false], 'requests: no pem / key / cert / password / tremol_pass field, never the staff password, never the seed');
+      const leak = x => FV.versions.some(p => JSON.stringify(x).includes(p.password)) || seeds.some(sd => JSON.stringify(x).includes(sd));
+      eq([leak(F.state), leak(mem), leak(F._pending || []), F.state.db.fiscal, Object.keys(F.posCatalogPayload()).includes('fiscal'), S.calls.some(x => /^(PUT|POST) \/state/.test(x))], [false, false, false, undefined, false, false], 'the password / seed are in no state, no storage, no queue; the book and the catalogue carry nothing fiscal; no /state write');
+      // ── 12. a new session / company / logout drops the page and the unlock
+      F.fwUnlockNow(); F.setF({ pw: V1.password }); await F.fwUnlockSubmit(); const kk = F._fwKey.seed; F.ledgerReset();
+      eq([F._fwKey, F.state.fw, F._fwFeat, Array.from(kk).every(b => b === 0)], [null, null, undefined, true], 'ledgerReset (login / company switch / logout): the staff unlock is dropped (the seed zeroed), the page state too');
+    } finally { ctx.fetch = prevFetch; }
+  }).catch(e => { console.log('FAIL POS › Fiskalizimi tests threw: ' + (e && e.stack || e)); process.exitCode = 1; });
 
 // ── Pagat: tatimi progresiv mbi te ardhurat nga paga + kontributet pensionale (Kosove) ──
 // Normat jane PARAMETRA (Cilesime > Tatimet > Pagat), jo numra te ngulitur. Keto prova mbrojne RRUGEN e
@@ -3317,9 +3543,30 @@ apiBlock.then(async () => {
      'katalogu > company.address mbaron me qytetin dhe `place` e mban veç — ashtu si e pret arka e barit');
   // numri i njesise hyn te NR. IDENTIFIKUES I SEF: nese bie, identifikuesi i kuponit ndryshon
   eq(typeof u.number === 'string', true, 'katalogu > unit.number eshte varg (hyn te SEF: njesia-NUI-PosId)');
-  // konfigurimi fiskal NUK dergohet kurre (rregulli i pronarit): arka e konfiguron vete
+  // konfigurimi fiskal NUK shkon kurre me katalogun: qe nga 07.10.2026 vjen nga ueb-i (POS › Fiskalizimi), por me rrugen e vet
+  // (GET /pos/terminal/fiscal, me porten e stafit), jo me katalogun qe e marrin te gjitha arkat
   eq([cat.fiscal, Object.keys(cat).includes('fiscal')], [undefined, false],
-     'katalogu NUK mban asnje bllok fiskal — fiskalizimi konfigurohet vetem ne vete arken (rregull i pronarit)');
+     'katalogu NUK mban asnje bllok fiskal — konfigurimi fiskal i arkave ka rrugen e vet (POS › Fiskalizimi)');
+}
+// 1ea42ff: „—" eshte menyra si librat tregojne nje fushe BOSH — nuk shtypet kurre si adrese ne kupon. Me pare `br.address||company.address`
+// e dergonte „—" (string jo bosh) te unit.address per degen kryesore te nje kompanie te re (seedEmpty: address = qyteti || „—").
+{
+  const d0 = JSON.parse(JSON.stringify(db())), main = () => db().branches.find(b => b.main) || db().branches[0];
+  c.commit(d => ({ branches: d.branches.map(b => b.id === main().id ? { ...b, address: '—', phone: '—' } : b), company: { ...d.company, address: 'Rr. Nëna Terezë 12', phone: '038 123 456' } }));
+  let u = c.posCatalogPayload().unit, br = c.posCatalogPayload().branches.find(b => b.main);
+  eq([u.address, u.phone, br.address, br.phone], ['Rr. Nëna Terezë 12', '038 123 456', '', ''], 'katalogu: adresa / telefoni „—" i deges nuk dergohen — unit merr ato te kompanise, branches[] merr bosh');
+  c.commit(d => ({ company: { ...d.company, address: '—', phone: '—' } }));
+  u = c.posCatalogPayload().unit; eq([u.address, u.phone], ['', ''], 'katalogu: as dega as kompania pa adrese → unit.address bosh (arka e raporton si mungese), kurre „—"');
+  // deget behen te ndryshueshme (ishin vetem-shtim): rreshti i tabeles hap formularin; emri i ri ndjek depot; ndryshimi shkruhet ne audit
+  const row = c.pageTable('Degët').rows.find(r => r.cells[0].t === main().id); eq(typeof row.open, 'function', 'Kompania › Degët: rreshti i deges hapet per ndryshim');
+  row.open(); eq([c.state.frm.kind, c.state.frm.edit, c.state.frm.address, c.formVals().title.startsWith('Redakto degën')], ['branch', main().id, '', true], 'formulari i deges: „—" shfaqet si fushe bosh, titulli „Redakto degën"');
+  const oldName = main().name, wh0 = db().warehouses.filter(w => w.branch === oldName).length;
+  c.setF({ name: oldName + ' Qendër', address: 'Rr. Agim Ramadani 5', unitNo: '5130484', licence: 'L5-0412' }); c.formVals().actions.find(a => a.label === 'Ruaj ndryshimet').go();
+  u = c.posCatalogPayload().unit;
+  eq([main().name, main().address, main().unitNo, u.name, u.address, u.number, db().warehouses.filter(w => w.branch === oldName + ' Qendër').length, /u ndryshua/.test(db().audit[0].a), c.state.frm],
+     [oldName + ' Qendër', 'Rr. Agim Ramadani 5', '5130484', oldName + ' Qendër', 'Rr. Agim Ramadani 5', '5130484', wh0, true, null], 'dega u ndryshua: koka e kuponit (unit) e merr menjehere, depot e ndjekin emrin e ri, audit');
+  c.openForm('branch', { edit: main().id, name: db().branches.find(b => !b.main).name }); eq(c.formVals().actions[0].disabled, true, 'formulari i deges: emri i nje dege tjeter refuzohet');
+  c.state.frm = null; c.state.db = d0;
 }
 
 // ── HR: nga punesimi te lista e pages, pagesa dhe ditari ──
